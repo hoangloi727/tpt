@@ -22,7 +22,7 @@ const revisionConflict = (message) => {
 };
 
 export class JsonRepository {
-  constructor(filePath, schema = 9) {
+  constructor(filePath, schema = 10) {
     this.filePath = filePath;
     this.schema = schema;
     this.previousSchema = schema;
@@ -41,6 +41,46 @@ export class JsonRepository {
           STORES.map((store) => [store, Array.isArray(stored.stores?.[store]) ? stored.stores[store] : []]),
         ),
       };
+      if (this.previousSchema < 10) {
+        const scoreStores = [
+          "score_entries",
+          "score_evidence",
+          "weekly_score_sheets",
+          "ranking_snapshots",
+        ];
+        const removedRecords = scoreStores.reduce(
+          (total, store) => total + this.state.stores[store].length,
+          0,
+        );
+        for (const store of scoreStores) this.state.stores[store] = [];
+        const scoreAuditCount = this.state.stores.audit_logs.filter((row) =>
+          scoreStores.includes(row.entity),
+        ).length;
+        this.state.stores.audit_logs = this.state.stores.audit_logs.filter(
+          (row) => !scoreStores.includes(row.entity),
+        );
+        this.state.stores.sync_outbox = this.state.stores.sync_outbox.filter(
+          (row) => !scoreStores.includes(row.entity_type),
+        );
+        this.state.stores.sync_conflicts = this.state.stores.sync_conflicts.filter(
+          (row) => !scoreStores.includes(row.entity_type),
+        );
+        this.state.stores.migration_logs.push(
+          this.normalize(
+            {
+              id: randomUUID(),
+              from_schema: this.previousSchema,
+              to_schema: this.schema,
+              status: "success",
+              removed_records: removedRecords + scoreAuditCount,
+              summary: `Cleared ${removedRecords} test score records and ${scoreAuditCount} score audit records before enabling daily score entry.`,
+              source: "migration-v10",
+            },
+            null,
+            { preserveMetadata: true },
+          ),
+        );
+      }
       if (this.previousSchema !== this.schema) await this.persist(this.state);
     } catch (error) {
       if (error.code !== "ENOENT") throw error;
@@ -151,8 +191,63 @@ export class JsonRepository {
     }
   }
 
+  assertDailyScoreEntry(draft, row) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(row.entry_date || "")) {
+      const error = new Error("Daily score entries require a valid entry_date.");
+      error.status = 400;
+      throw error;
+    }
+    const date = new Date(`${row.entry_date}T00:00:00Z`);
+    if (
+      Number.isNaN(date.getTime()) ||
+      date.toISOString().slice(0, 10) !== row.entry_date ||
+      date.getUTCDay() === 0 ||
+      date.getUTCDay() === 6
+    ) {
+      const error = new Error("Score entry_date must be a Monday-Friday date.");
+      error.status = 400;
+      throw error;
+    }
+    const week = this.findIn(draft, "school_weeks", row.week_id);
+    if (
+      !week ||
+      row.entry_date < week.start_date ||
+      row.entry_date > week.end_date
+    ) {
+      const error = new Error("Score entry_date must belong to its school week.");
+      error.status = 400;
+      throw error;
+    }
+    const sheet = this.findIn(draft, "weekly_score_sheets", row.sheet_id);
+    if (!sheet || sheet.week_id !== row.week_id) {
+      const error = new Error("Daily score entries require a matching weekly sheet.");
+      error.status = 400;
+      throw error;
+    }
+    if (sheet.status === "locked") {
+      const error = new Error("Bảng thi đua đã khóa và không thể sửa điểm.");
+      error.status = 409;
+      throw error;
+    }
+    const duplicate = draft.stores.score_entries.find(
+      (entry) =>
+        entry.id !== row.id &&
+        !entry.deleted_at &&
+        entry.sheet_id === row.sheet_id &&
+        entry.entry_date === row.entry_date &&
+        entry.class_id === row.class_id &&
+        entry.criteria_id === row.criteria_id,
+    );
+    if (duplicate) {
+      const error = new Error("A score already exists for this class, criterion, and date.");
+      error.status = 409;
+      throw error;
+    }
+  }
+
   putInto(draft, store, row, options = {}) {
     this.assertWritable(draft, store, row, options);
+    if (store === "score_entries") this.assertDailyScoreEntry(draft, row);
     const rows = draft.stores[store];
     const index = rows.findIndex((item) => item.id === row.id);
     const existing = index >= 0 ? rows[index] : null;
@@ -315,7 +410,17 @@ export class JsonRepository {
         ) {
           continue;
         }
-        draft.stores[store] = payload.data[store].map((row) =>
+        const rows =
+          payload.schema < 10 &&
+          [
+            "score_entries",
+            "score_evidence",
+            "weekly_score_sheets",
+            "ranking_snapshots",
+          ].includes(store)
+            ? []
+            : payload.data[store];
+        draft.stores[store] = rows.map((row) =>
           this.normalize(row, null, {
             preserveMetadata: options.sync === false,
             resolveConflict: options.sync !== false,

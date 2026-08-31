@@ -583,6 +583,33 @@
         font-weight: 750;
         border-bottom-color: var(--blue);
       }
+      .score-day-picker {
+        display: grid;
+        grid-template-columns: repeat(5, minmax(110px, 1fr));
+        gap: 6px;
+        margin-bottom: 10px;
+        overflow-x: auto;
+      }
+      .score-day-picker button {
+        min-width: 110px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #fff;
+        color: var(--text);
+        padding: 8px 10px;
+        text-align: left;
+      }
+      .score-day-picker button span {
+        display: block;
+        margin-top: 2px;
+        color: var(--muted);
+        font-size: 11px;
+      }
+      .score-day-picker button.active {
+        border-color: var(--blue);
+        background: var(--blue-soft);
+        color: var(--blue);
+      }
       .score-wrap {
         overflow: auto;
         max-height: calc(100vh - 250px);

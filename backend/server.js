@@ -14,7 +14,7 @@ const authFile = resolve(process.env.AUTH_FILE || resolve(dirname(dataFile), "us
 const host = process.env.HOST || "127.0.0.1";
 const port = Number(process.env.PORT || 3000);
 
-const repository = await new JsonRepository(dataFile, 9).open();
+const repository = await new JsonRepository(dataFile, 10).open();
 const users = await new UserStore(authFile).open();
 const sessions = new SessionManager();
 const handleApi = createApiHandler({ repository, sessions, users });

@@ -273,9 +273,17 @@
 
     async mergeAll(payload) {
       this.beforeWrite();
-      const stats = { inserted: 0, updated: 0, kept_current: 0, stores: {} };
+      const stats = { inserted: 0, updated: 0, kept_current: 0, stores: {} },
+        legacyScoreStores = new Set([
+          "score_entries",
+          "score_evidence",
+          "weekly_score_sheets",
+          "ranking_snapshots",
+        ]);
       for (const store of this.stores) {
         if (!Array.isArray(payload.data?.[store])) continue;
+        if (Number(payload.schema || 0) < 10 && legacyScoreStores.has(store))
+          continue;
         const current = new Map(
           (await this.allIncludingDeleted(store)).map((row) => [row.id, row]),
         );

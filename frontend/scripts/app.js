@@ -4,7 +4,7 @@
         const APP = {
           name: "Trợ lý Tổng phụ trách Đội TẠ UYÊN",
           version: PUBLIC_CONFIG.APP_VERSION || "3.1.0-rc.1",
-          schema: Number(PUBLIC_CONFIG.SCHEMA_VERSION || 9),
+          schema: Number(PUBLIC_CONFIG.SCHEMA_VERSION || 10),
           dbName: PUBLIC_CONFIG.DB_NAME || "TPT_DOI_DB",
           appId:
             PUBLIC_CONFIG.APP_ID || "vn.giaoducso40.tpt.thcs.standard",
@@ -224,6 +224,7 @@
           yearId: "",
           semesterId: "all",
           weekId: "",
+          scoreDate: "",
           campusId: "all",
           scoreTab: "entry",
           taskView: "list",
@@ -4042,8 +4043,11 @@
                 .filter((x) => x.week_id === state.weekId)
                 .map((x) => x.class_id),
             ),
-            missing = classes.filter((x) => !filled.has(x.id));
-          const rankings = await calculateRanking(false),
+            rankings = await calculateRanking(false),
+            completeClasses = new Set(
+              rankings.filter((row) => row.complete).map((row) => row.id),
+            ),
+            missing = classes.filter((x) => !completeClasses.has(x.id)),
             done = tasks.filter((x) => x.status === "done").length,
             progress = tasks.length
               ? Math.round((done / tasks.length) * 100)
@@ -4064,7 +4068,7 @@
         <button class="kpi warning" data-filter-task="soon"><span class="num">${soon.length}</span><span class="label">Sắp đến hạn trong 3 ngày</span></button>
         <button class="kpi danger" data-filter-task="overdue"><span class="num">${overdue.length}</span><span class="label">Việc quá hạn</span></button>
         <button class="kpi" data-go="calendar"><span class="num">${upcoming.length}</span><span class="label">Hoạt động sắp diễn ra</span></button>
-        <button class="kpi warning" data-go="scores"><span class="num">${missing.length}</span><span class="label">Lớp chưa nhập thi đua</span></button>
+        <button class="kpi warning" data-go="scores"><span class="num">${missing.length}</span><span class="label">Lớp chưa nhập đủ điểm ngày</span></button>
         <button class="kpi success" data-go="scores"><span class="num">${sheet && ["approved", "locked"].includes(sheet.status) ? classes.length : 0}</span><span class="label">Lớp thuộc bảng đã duyệt</span></button>
       </div>
       <div class="grid-2">
@@ -4927,13 +4931,47 @@
             score *= Number(criterion.weight || 1);
           return score;
         }
+        function scoreWeekdays(week) {
+          if (!week?.start_date) return [];
+          const labels = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu"],
+            start = new Date(`${week.start_date}T00:00:00`),
+            days = [];
+          for (let offset = 0; offset < 7 && days.length < 5; offset++) {
+            const date = new Date(start);
+            date.setDate(start.getDate() + offset);
+            if (date.getDay() >= 1 && date.getDay() <= 5)
+              days.push({ date: localISO(date), label: labels[date.getDay() - 1] });
+          }
+          return days;
+        }
+        function scoreAdjustment(entries, criteria, set) {
+          return entries.reduce((total, entry) => {
+            const criterion = criteria.find((row) => row.id === entry.criteria_id);
+            return total +
+              (criterion && entry.entry_state === "value"
+                ? criterionScore(entry, criterion, set)
+                : 0);
+          }, 0);
+        }
+        function classScoreSummary(ctx, classId) {
+          const entries = ctx.entries.filter((entry) => entry.class_id === classId),
+            selectedEntries = entries.filter(
+              (entry) => entry.entry_date === state.scoreDate,
+            );
+          return {
+            dayAdjustment: scoreAdjustment(selectedEntries, ctx.criteria, ctx.set),
+            weeklyTotal:
+              (ctx.set?.formula === "base" ? Number(ctx.set.base_score || 0) : 0) +
+              scoreAdjustment(entries, ctx.criteria, ctx.set),
+          };
+        }
         async function renderScores() {
           const ctx = await scoreContext(),
             week = state.cache.weeks.find((x) => x.id === state.weekId);
           setContent(
             pageHead(
               "Thi đua lớp",
-              "Nhập nhanh, duyệt, khóa và truy vết điểm thi đua theo tuần.",
+              "Nhập điểm từng ngày, duyệt, khóa và truy vết theo tuần.",
               `<button class="btn" id="criteriaConfig">Bộ tiêu chí</button><button class="btn" id="undoScore" ${state.lastScoreUndo ? "" : "disabled"}>↶ Hoàn tác</button><button class="btn primary" id="scoreWorkflow">${workflowLabel(ctx.sheet)}</button>`,
 
 
@@ -4989,15 +5027,14 @@
           if (!ctx.sheet)
             return (area.innerHTML =
               '<div class="empty">Chưa khởi tạo bảng tuần. Chọn “Khởi tạo bảng tuần” để bắt đầu nhập.</div>');
-          const map = entryMap(ctx.entries),
+          if (!ctx.days.length)
+            return (area.innerHTML =
+              '<div class="empty">Tuần đang chọn chưa có ngày học từ Thứ Hai đến Thứ Sáu.</div>');
+          const map = entryMap(ctx.selectedEntries),
             locked = ctx.sheet.status === "locked";
-          area.innerHTML = `<div class="score-wrap"><table class="score-table"><thead><tr><th style="min-width:110px">Lớp</th>${ctx.criteria.map((c) => `<th title="${esc(c.name)}">${esc(c.code)}<br><small>${esc(c.group)}</small></th>`).join("")}<th>Tổng</th><th>Trạng thái</th></tr></thead><tbody>${ctx.classes
+          area.innerHTML = `<div class="score-day-picker" aria-label="Chọn ngày nhập điểm">${ctx.days.map((day) => `<button type="button" data-score-date="${day.date}" class="${day.date === state.scoreDate ? "active" : ""}"><strong>${day.label}</strong><span>${fmtDate(day.date)}</span></button>`).join("")}</div><div class="score-wrap"><table class="score-table"><thead><tr><th style="min-width:110px">Lớp</th>${ctx.criteria.map((c) => `<th title="${esc(c.name)}">${esc(c.code)}<br><small>${esc(c.group)}</small></th>`).join("")}<th>Điểm ngày</th><th>Tổng tuần</th><th>Trạng thái ngày</th></tr></thead><tbody>${ctx.classes
             .map((cl, ri) => {
-              let total =
-                  ctx.set.formula === "base"
-                    ? Number(ctx.set.base_score || 0)
-                    : 0,
-                filled = 0;
+              let filled = 0;
               const cells = ctx.criteria
                 .map((c, ci) => {
                   const e = map.get(cl.id + "|" + c.id),
@@ -5008,17 +5045,24 @@
                           ? "MIỄN"
                           : (e?.value ?? "");
                   if (e && e.entry_state === "value") {
-                    total += criterionScore(e, c, ctx.set);
                     filled++;
                   } else if (e) filled++;
                   return `<td><input class="score-input ${e ? "" : "missing"}" data-row="${ri}" data-col="${ci}" data-class="${cl.id}" data-criterion="${c.id}" data-entry="${e?.id || ""}" value="${esc(v)}" ${locked ? "disabled" : ""} aria-label="${esc(cl.class_name)} - ${esc(c.name)}"></td>`;
                 })
                 .join("");
-              return `<tr><td><strong>${esc(cl.class_name)}</strong><br><small>${esc(campusName(cl.campus_id))}</small></td>${cells}<td class="score-total" data-total="${cl.id}">${total.toFixed(1)}</td><td>${filled === ctx.criteria.length ? '<span class="badge green">Đủ</span>' : `<span class="badge yellow">${filled}/${ctx.criteria.length}</span>`}</td></tr>`;
+              const totals = classScoreSummary(ctx, cl.id);
+              return `<tr><td><strong>${esc(cl.class_name)}</strong><br><small>${esc(campusName(cl.campus_id))}</small></td>${cells}<td class="score-total">${totals.dayAdjustment.toFixed(1)}</td><td class="score-total" data-total="${cl.id}">${totals.weeklyTotal.toFixed(1)}</td><td>${filled === ctx.criteria.length ? '<span class="badge green">Đủ</span>' : `<span class="badge yellow">${filled}/${ctx.criteria.length}</span>`}</td></tr>`;
             })
             .join(
               "",
-            )}</tbody></table></div><div class="notice mt">Ô trống = chưa nhập; nhập <strong>0</strong> = có dữ liệu bằng 0; nhập <strong>KAD</strong> = không áp dụng; nhập <strong>MIỄN</strong> = được miễn. Có thể dán một vùng dữ liệu từ Excel bắt đầu tại ô đang chọn.</div>`;
+            )}</tbody></table></div><div class="notice mt">Điểm tuần = điểm chuẩn một lần + tổng điều chỉnh từ Thứ Hai đến Thứ Sáu. Ô trống = chưa nhập; nhập <strong>0</strong> = có dữ liệu bằng 0; nhập <strong>KAD</strong> = không áp dụng; nhập <strong>MIỄN</strong> = được miễn. Có thể dán một vùng dữ liệu từ Excel bắt đầu tại ô đang chọn.</div>`;
+          $$('[data-score-date]').forEach(
+            (button) =>
+              (button.onclick = () => {
+                state.scoreDate = button.dataset.scoreDate;
+                renderScores();
+              }),
+          );
           $$(".score-input").forEach((i) => {
             i.addEventListener("change", saveScoreCell);
             i.addEventListener("keydown", scoreKeyNav);
@@ -5091,6 +5135,7 @@
               class_id: i.dataset.class,
               criteria_id: i.dataset.criterion,
               week_id: state.weekId,
+              entry_date: state.scoreDate,
               entry_state,
               value,
               reason: old?.reason || "",
@@ -5101,10 +5146,10 @@
             action: old ? "score_update" : "score_create",
             entity: "score_entries",
             entity_id: saved.id,
-            summary: `${i.dataset.class}|${i.dataset.criterion}`,
+            summary: `${state.scoreDate}|${i.dataset.class}|${i.dataset.criterion}`,
             old_value: old?.value ?? old?.entry_state ?? null,
             new_value: value ?? entry_state,
-            reason: "Nhập trực tiếp bảng tuần",
+            reason: "Nhập trực tiếp điểm ngày",
           });
           state.lastScoreUndo = old
             ? { type: "restore", row: old }
@@ -5134,7 +5179,7 @@
               .map((r) => r.split("\t")),
             startR = Number(e.currentTarget.dataset.row),
             startC = Number(e.currentTarget.dataset.col),
-            map = entryMap(ctx.entries),
+            map = entryMap(ctx.selectedEntries),
             batch = [];
           for (let r = 0; r < matrix.length; r++)
             for (let c = 0; c < matrix[r].length; c++) {
@@ -5175,6 +5220,7 @@
                 class_id: cl.id,
                 criteria_id: criterion.id,
                 week_id: state.weekId,
+                entry_date: state.scoreDate,
                 entry_state,
                 value,
               });
@@ -5223,10 +5269,17 @@
           }
           const sheet = ctx.sheet;
           if (sheet.status === "draft") {
-            const expected = ctx.classes.length * ctx.criteria.length;
-            if (ctx.entries.length < expected)
+            const expected =
+                ctx.classes.length * ctx.criteria.length * ctx.days.length,
+              filled = new Set(
+                ctx.entries.map(
+                  (entry) =>
+                    `${entry.entry_date}|${entry.class_id}|${entry.criteria_id}`,
+                ),
+              ).size;
+            if (filled < expected)
               return toast(
-                `Còn ${expected - ctx.entries.length} ô chưa nhập/KAD/MIỄN. Chưa thể đánh dấu đủ.`,
+                `Còn ${expected - filled} ô ngày chưa nhập/KAD/MIỄN. Chưa thể đánh dấu đủ.`,
                 "bad",
               );
             sheet.status = "complete";
@@ -5320,7 +5373,6 @@
             (official && !["approved", "locked"].includes(ctx.sheet.status))
           )
             return [];
-          const map = entryMap(ctx.entries);
           const ranked = ctx.classes
             .map((cl) => {
               let total =
@@ -5328,21 +5380,29 @@
                     ? Number(ctx.set.base_score || 0)
                     : 0,
                 filled = 0;
-              ctx.criteria.forEach((c) => {
-                const e = map.get(cl.id + "|" + c.id);
-                if (e) {
-                  filled++;
-                  if (e.entry_state === "value")
-                    total += criterionScore(e, c, ctx.set);
-                }
-              });
+              const entries = ctx.entries.filter((entry) => entry.class_id === cl.id);
+              total += scoreAdjustment(entries, ctx.criteria, ctx.set);
+              filled = new Set(
+                entries.map((entry) => `${entry.entry_date}|${entry.criteria_id}`),
+              ).size;
+              const daily = Object.fromEntries(
+                ctx.days.map((day) => [
+                  day.date,
+                  scoreAdjustment(
+                    entries.filter((entry) => entry.entry_date === day.date),
+                    ctx.criteria,
+                    ctx.set,
+                  ),
+                ]),
+              );
               return {
                 id: cl.id,
                 class_name: cl.class_name,
                 campus_id: cl.campus_id,
                 total,
+                daily,
                 filled,
-                complete: filled === ctx.criteria.length,
+                complete: filled === ctx.criteria.length * ctx.days.length,
               };
             })
             .filter((x) => x.filled > 0)
@@ -5365,24 +5425,26 @@
           const area = $("#scoreArea"),
             official = ["approved", "locked"].includes(ctx.sheet?.status),
             rank = await calculateRanking(false);
-          area.innerHTML = `${!official ? '<div class="notice warn">Bảng chưa được duyệt. Xếp hạng dưới đây là tạm thời, không dùng cho báo cáo chính thức.</div>' : ""}<div class="table-wrap"><table><thead><tr><th>Hạng</th><th>Lớp</th><th>Cơ sở</th><th>Tổng điểm</th><th>Mức dữ liệu</th><th>Loại</th></tr></thead><tbody>${rank.map((r) => `<tr><td><strong>${r.rank}</strong></td><td>${esc(r.class_name)}</td><td>${esc(campusName(r.campus_id))}</td><td><strong>${r.total.toFixed(1)}</strong></td><td>${r.complete ? '<span class="badge green">Đủ</span>' : '<span class="badge yellow">Chưa đủ</span>'}</td><td>${official ? '<span class="badge green">Chính thức</span>' : '<span class="badge yellow">Tạm thời</span>'}</td></tr>`).join("") || '<tr><td colspan="6" class="empty">Chưa có dữ liệu xếp hạng.</td></tr>'}</tbody></table></div>`;
+          area.innerHTML = `${!official ? '<div class="notice warn">Bảng chưa được duyệt. Xếp hạng dưới đây là tạm thời, không dùng cho báo cáo chính thức.</div>' : ""}<div class="table-wrap"><table><thead><tr><th>Hạng</th><th>Lớp</th><th>Cơ sở</th>${ctx.days.map((day) => `<th>${day.label.replace("Thứ ", "T")}</th>`).join("")}<th>Tổng tuần</th><th>Mức dữ liệu</th><th>Loại</th></tr></thead><tbody>${rank.map((r) => `<tr><td><strong>${r.rank}</strong></td><td>${esc(r.class_name)}</td><td>${esc(campusName(r.campus_id))}</td>${ctx.days.map((day) => `<td>${Number(r.daily[day.date] || 0).toFixed(1)}</td>`).join("")}<td><strong>${r.total.toFixed(1)}</strong></td><td>${r.complete ? '<span class="badge green">Đủ</span>' : '<span class="badge yellow">Chưa đủ</span>'}</td><td>${official ? '<span class="badge green">Chính thức</span>' : '<span class="badge yellow">Tạm thời</span>'}</td></tr>`).join("") || `<tr><td colspan="${ctx.days.length + 6}" class="empty">Chưa có dữ liệu xếp hạng.</td></tr>`}</tbody></table></div>`;
         }
         function renderScoreAnomalies(ctx) {
-          const map = entryMap(ctx.entries),
-            items = [];
+          const items = [],
+            expected = ctx.criteria.length * ctx.days.length;
           ctx.classes.forEach((cl) => {
-            const count = ctx.criteria.filter((c) =>
-              map.has(cl.id + "|" + c.id),
-            ).length;
+            const count = new Set(
+              ctx.entries
+                .filter((entry) => entry.class_id === cl.id)
+                .map((entry) => `${entry.entry_date}|${entry.criteria_id}`),
+            ).size;
             if (!count)
               items.push({
                 level: "red",
                 text: `Lớp ${cl.class_name} chưa có dữ liệu.`,
               });
-            else if (count < ctx.criteria.length)
+            else if (count < expected)
               items.push({
                 level: "yellow",
-                text: `Lớp ${cl.class_name} còn thiếu ${ctx.criteria.length - count} tiêu chí.`,
+                text: `Lớp ${cl.class_name} còn thiếu ${expected - count} ô điểm ngày.`,
               });
           });
           ctx.entries.forEach((e) => {
@@ -5390,7 +5452,7 @@
             if (c?.evidence_required && !e.evidence_id)
               items.push({
                 level: "yellow",
-                text: `Thiếu minh chứng bắt buộc tại lớp ${ctx.classes.find((x) => x.id === e.class_id)?.class_name}, tiêu chí ${c.code}.`,
+                text: `Thiếu minh chứng bắt buộc ngày ${fmtDate(e.entry_date)}, lớp ${ctx.classes.find((x) => x.id === e.class_id)?.class_name}, tiêu chí ${c.code}.`,
               });
             if (
               e.entry_state === "value" &&
@@ -5745,11 +5807,20 @@
             body = !["approved", "locked"].includes(d.ctx.sheet?.status)
               ? '<div class="notice warn">Bảng tuần chưa được duyệt nên chưa có xếp hạng chính thức.</div>'
               : simpleTable(
-                  ["Hạng", "Lớp", "Cơ sở", "Tổng điểm"],
+                  [
+                    "Hạng",
+                    "Lớp",
+                    "Cơ sở",
+                    ...d.ctx.days.map((day) => day.label),
+                    "Tổng tuần",
+                  ],
                   d.rank.map((x) => [
                     x.rank,
                     x.class_name,
                     campusName(x.campus_id),
+                    ...d.ctx.days.map((day) =>
+                      Number(x.daily[day.date] || 0).toFixed(1),
+                    ),
                     x.total.toFixed(1),
                   ]),
                 );
@@ -5798,11 +5869,18 @@
           let head = [],
             rows = [];
           if (type === "scores") {
-            head = ["Hạng", "Lớp", "Cơ sở", "Tổng điểm"];
+            head = [
+              "Hạng",
+              "Lớp",
+              "Cơ sở",
+              ...d.ctx.days.map((day) => `${day.label} (${day.date})`),
+              "Tổng tuần",
+            ];
             rows = d.rank.map((x) => [
               x.rank,
               x.class_name,
               campusName(x.campus_id),
+              ...d.ctx.days.map((day) => x.daily[day.date] || 0),
               x.total,
             ]);
           } else {
@@ -5857,8 +5935,15 @@
         async function buildAssistantAnswer(q) {
           q = (q || "").trim().toLowerCase();
           const d = await reportData(),
-            filled = new Set(d.ctx.entries.map((x) => x.class_id)),
-            missing = d.classes.filter((x) => !filled.has(x.id)),
+            expected = d.ctx.criteria.length * d.ctx.days.length,
+            missing = d.classes.filter((cl) => {
+              const filled = new Set(
+                d.ctx.entries
+                  .filter((entry) => entry.class_id === cl.id)
+                  .map((entry) => `${entry.entry_date}|${entry.criteria_id}`),
+              ).size;
+              return filled < expected;
+            }),
             stamp = `Dữ liệu lúc ${fmtDateTime(now())}; phạm vi ${d.week?.name || "năm học"}, ${campusName(state.campusId)}.`;
           let title = "Kết quả tra cứu",
             html = "";
@@ -5888,10 +5973,10 @@
                       `<span class="badge yellow" style="margin:3px">${esc(x.class_name)}</span>`,
                   )
                   .join("")
-              : "Không có lớp chưa nhập trong bảng hiện tại.";
+              : "Tất cả lớp đã nhập đủ điểm ngày trong bảng hiện tại.";
           } else if (q.includes("bất thường")) {
             title = "Dấu hiệu cần kiểm tra";
-            html = `Có ${missing.length} lớp chưa có dữ liệu; ${
+            html = `Có ${missing.length} lớp chưa nhập đủ điểm ngày; ${
               d.ctx.entries.filter((x) => {
                 const c = d.ctx.criteria.find((y) => y.id === x.criteria_id);
                 return (
@@ -5971,6 +6056,9 @@
                   numeric: true,
                 }),
               ),
+            week = state.cache.weeks.find((x) => x.id === state.weekId),
+            days = scoreWeekdays(week),
+            validDates = new Set(days.map((day) => day.date)),
             sheet = sheets.find(
               (x) =>
                 x.week_id === state.weekId && x.criteria_set_id === set?.id,
@@ -5978,10 +6066,25 @@
             entries = (await scoped("score_entries")).filter(
               (x) =>
                 x.week_id === state.weekId &&
-                (!sheet || x.sheet_id === sheet.id),
+                (!sheet || x.sheet_id === sheet.id) &&
+                validDates.has(x.entry_date),
             );
           state.criteriaSetId = set?.id || "";
-          return { sets: allSets, set, criteria, classes, sheet, entries };
+          if (!validDates.has(state.scoreDate))
+            state.scoreDate = validDates.has(today()) ? today() : days[0]?.date || "";
+          const selectedEntries = entries.filter(
+            (entry) => entry.entry_date === state.scoreDate,
+          );
+          return {
+            sets: allSets,
+            set,
+            criteria,
+            classes,
+            sheet,
+            entries,
+            days,
+            selectedEntries,
+          };
         }
         async function showCriteriaConfig(selectedId = "") {
           const sets = (await scoped("criteria_sets")).sort((a, b) =>

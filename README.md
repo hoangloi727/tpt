@@ -34,6 +34,8 @@ The backend owns primary CRUD persistence, revision checks, audit records, opera
 
 Root and superadmin accounts have unrestricted access. New ordinary users default to dashboard-only access; superadmins manage accounts, roles, password resets, disabled status, and future permission keys from the User Management page.
 
+Class competition points are entered for Monday through Friday within each school week. Weekly rankings apply the configured base score once, then add all daily criterion adjustments. The weekly sheet remains the approval and locking boundary.
+
 ## Verification
 
 ```sh
