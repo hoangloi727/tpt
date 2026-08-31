@@ -27,8 +27,22 @@
         <h1 id="activationTitle">TRỢ LÝ TỔNG PHỤ TRÁCH ĐỘI TẠ UYÊN</h1>
         <p>Dữ liệu được lưu trên máy chủ riêng, đồng bộ Google Drive khi đã cấu hình.</p>
         <form id="activationForm">
+          <div class="field hidden" id="displayNameField">
+            <label for="displayName">Tên hiển thị của root</label>
+            <input id="displayName" autocomplete="name" disabled />
+          </div>
           <div class="field">
-            <label for="activationCode">Mật khẩu mở ứng dụng</label>
+            <label for="activationUsername">Tên đăng nhập</label>
+            <input
+              id="activationUsername"
+              autocomplete="username"
+              autocapitalize="none"
+              spellcheck="false"
+              required
+            />
+          </div>
+          <div class="field">
+            <label for="activationCode" id="activationPasswordLabel">Mật khẩu</label>
             <div class="password-wrap">
               <input
                 id="activationCode"
@@ -44,8 +58,17 @@
               </button>
             </div>
           </div>
+          <div class="field hidden" id="confirmPasswordField">
+            <label for="confirmActivationCode">Nhập lại mật khẩu</label>
+            <input
+              id="confirmActivationCode"
+              type="password"
+              autocomplete="new-password"
+              disabled
+            />
+          </div>
           <div class="activation-status" id="activationStatus" role="status">
-            Nhập mật khẩu để mở phiên làm việc. Ứng dụng không ghi nhớ mật khẩu.
+            Nhập tài khoản để mở phiên làm việc. Ứng dụng không ghi nhớ mật khẩu.
           </div>
           <button
             class="btn primary"
@@ -130,7 +153,7 @@
           ><span class="dot" id="networkDot"></span
           ><span id="networkText">Trực tuyến</span
           ><button class="sync-state" id="syncState" type="button" data-state="local" title="Mở trạng thái đồng bộ">Đã lưu trên máy chủ</button>
-          <button class="icon-btn" id="lockNow" type="button" title="Khóa ứng dụng" aria-label="Khóa ứng dụng">🔒</button>
+          <button class="icon-btn" id="lockNow" type="button" title="Đăng xuất" aria-label="Đăng xuất">⇥</button>
         </div>
       </header>
       <main class="content" id="content" tabindex="-1"></main>

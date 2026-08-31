@@ -946,6 +946,10 @@
         color: var(--muted);
         margin: 0 0 18px;
       }
+      .activation-card form {
+        display: grid;
+        gap: 11px;
+      }
       .password-wrap {
         display: grid;
         grid-template-columns: 1fr 42px;

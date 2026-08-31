@@ -7,17 +7,19 @@ School administration UI with a dependency-free Node.js persistence server.
 Requirements: Node.js 20 or newer.
 
 ```sh
-APP_PASSWORD='replace-this-password' npm start
+npm start
 ```
 
-Open `http://127.0.0.1:3000`. The server writes application data to `data/database.json` by default.
+Open `http://127.0.0.1:3000`. On the first run, the browser requires creation of the protected root account. Passwords are stored only as `scrypt` hashes.
+
+The server writes business data to `data/database.json` and accounts to `data/users.json` by default.
 
 Optional environment variables:
 
-- `APP_PASSWORD`: application unlock password.
 - `HOST`: bind address; defaults to `127.0.0.1`.
 - `PORT`: HTTP port; defaults to `3000`.
 - `DATA_FILE`: durable JSON database path; defaults to `data/database.json`.
+- `AUTH_FILE`: account database path; defaults to `users.json` beside `DATA_FILE`.
 
 ## Structure
 
@@ -29,6 +31,8 @@ Optional environment variables:
 - `data/`: runtime data, excluded from Git.
 
 The backend owns primary CRUD persistence, revision checks, audit records, operation journals, and sync-outbox generation. Google Drive synchronization remains in the browser because Google Identity authorization is initiated by a user gesture.
+
+Root and superadmin accounts have unrestricted access. New ordinary users default to dashboard-only access; superadmins manage accounts, roles, password resets, disabled status, and future permission keys from the User Management page.
 
 ## Verification
 

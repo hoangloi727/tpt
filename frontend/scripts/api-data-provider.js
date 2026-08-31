@@ -57,23 +57,53 @@
       this.onSyncNeeded = options.onSyncNeeded;
       this.baseUrl = "/api";
       this.token = "";
+      this.currentUser = null;
       this.db = null;
     }
 
-    async authenticate(password) {
+    async authStatus() {
+      const response = await fetch(`${this.baseUrl}/auth/status`, {
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) throw new Error("Không thể kiểm tra trạng thái đăng nhập.");
+      return response.json();
+    }
+
+    async setupRoot(details) {
+      const response = await fetch(`${this.baseUrl}/auth/setup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(details),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Không thể tạo tài khoản root.");
+      this.token = result.token;
+      this.currentUser = result.user;
+      return result.user;
+    }
+
+    async authenticate(username, password) {
       const response = await fetch(`${this.baseUrl}/session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ password }),
+        body: JSON.stringify({ username, password }),
       });
-      if (!response.ok) return false;
+      if (!response.ok) return null;
       const result = await response.json();
       this.token = result.token;
-      return true;
+      this.currentUser = result.user;
+      return result.user;
     }
 
     disconnectMemory() {
+      if (this.token) {
+        fetch(`${this.baseUrl}/session`, {
+          method: "DELETE",
+          headers: { Authorization: `Bearer ${this.token}` },
+        }).catch(() => {});
+      }
       this.token = "";
+      this.currentUser = null;
     }
 
     async request(path, options = {}) {
@@ -97,6 +127,30 @@
       return decodeBinary(payload);
     }
 
+    listUsers() {
+      return this.request("/admin/users");
+    }
+
+    createUser(details) {
+      return this.request("/admin/users", {
+        method: "POST",
+        body: JSON.stringify(details),
+      });
+    }
+
+    updateUser(id, changes) {
+      return this.request(`/admin/users/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: JSON.stringify(changes),
+      });
+    }
+
+    deleteUser(id) {
+      return this.request(`/admin/users/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+      });
+    }
+
     async open() {
       const result = await this.request("/health");
       this.upgradedFrom = Number(result.previousSchema ?? result.schema ?? this.schema);
@@ -115,7 +169,7 @@
 
     get(store, id) {
       return this.request(
-        `/stores/${encodeURIComponent(store)}/${encodeURIComponent(id)}`,
+        `/stores/${encodeURIComponent(store)}/${encodeURIComponent(id)}?optional=1`,
         { allowMissing: true },
       );
     }

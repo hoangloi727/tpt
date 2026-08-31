@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { createApiHandler } from "./api.js";
-import { SessionManager } from "./auth.js";
+import { SessionManager, UserStore } from "./auth.js";
 import { JsonRepository } from "./repository.js";
 import { createStaticHandler } from "./static.js";
 
@@ -10,13 +10,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 const projectRoot = resolve(here, "..");
 const frontendRoot = resolve(projectRoot, "frontend");
 const dataFile = resolve(process.env.DATA_FILE || resolve(projectRoot, "data", "database.json"));
+const authFile = resolve(process.env.AUTH_FILE || resolve(dirname(dataFile), "users.json"));
 const host = process.env.HOST || "127.0.0.1";
 const port = Number(process.env.PORT || 3000);
-const password = process.env.APP_PASSWORD || "TaUyen2025";
 
 const repository = await new JsonRepository(dataFile, 9).open();
-const sessions = new SessionManager(password);
-const handleApi = createApiHandler({ repository, sessions });
+const users = await new UserStore(authFile).open();
+const sessions = new SessionManager();
+const handleApi = createApiHandler({ repository, sessions, users });
 const handleStatic = createStaticHandler(frontendRoot);
 
 const server = createServer((request, response) => {
@@ -27,7 +28,5 @@ const server = createServer((request, response) => {
 
 server.listen(port, host, () => {
   console.log(`TPT server listening at http://${host}:${port}`);
-  if (!process.env.APP_PASSWORD) {
-    console.warn("APP_PASSWORD is not set; using the legacy development password.");
-  }
+  if (users.setupRequired()) console.warn("Root account setup is required in the browser.");
 });

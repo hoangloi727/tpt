@@ -238,6 +238,8 @@
           modalReturnFocus: null,
           activeBackup: null,
           unlocked: false,
+          setupRequired: false,
+          user: null,
           unlockTimeoutMinutes: 10,
           sync: {
             code: "local",
@@ -257,22 +259,32 @@
             this.timer = null;
             this.bound = false;
           }
-          async verify(value) {
+          async verify({ username, password, displayName, confirmPassword }) {
             if (Date.now() < this.blockedUntil)
               return {
                 ok: false,
                 wait: Math.ceil((this.blockedUntil - Date.now()) / 1000),
               };
-            let authenticated = false;
+            let user = null,
+              errorMessage = "";
             try {
-              authenticated = await db.authenticate(value);
-            } catch (_) {}
-            if (authenticated) {
+              if (state.setupRequired) {
+                if (password !== confirmPassword)
+                  throw new Error("Mật khẩu nhập lại không khớp.");
+                user = await db.setupRoot({ username, password, displayName });
+                state.setupRequired = false;
+                updateActivationMode();
+              } else user = await db.authenticate(username, password);
+            } catch (error) {
+              errorMessage = error.message;
+            }
+            if (user) {
               this.failedAttempts = 0;
               this.blockedUntil = 0;
               this.lastActivityAt = Date.now();
               state.unlocked = true;
-              return { ok: true, wait: 0 };
+              state.user = user;
+              return { ok: true, wait: 0, user };
             }
             this.failedAttempts += 1;
             const delay =
@@ -280,7 +292,7 @@
                 ? 0
                 : Math.min(30, 2 ** (this.failedAttempts - 3));
             this.blockedUntil = Date.now() + delay * 1000;
-            return { ok: false, wait: delay };
+            return { ok: false, wait: delay, message: errorMessage };
           }
           start() {
             if (!this.bound) {
@@ -331,7 +343,9 @@
           updateLabel() {
             const el = $("#sessionChip");
             if (el)
-              el.textContent = `Khóa sau ${state.unlockTimeoutMinutes} phút`;
+              el.textContent = state.user
+                ? `${state.user.displayName} • ${state.user.role === "superadmin" ? "root" : "user"}`
+                : `Khóa sau ${state.unlockTimeoutMinutes} phút`;
           }
           lock(message = "Ứng dụng đã khóa.") {
             if (
@@ -339,11 +353,20 @@
               !$("#activationScreen").classList.contains("hidden")
             )
               return;
+            // An authenticated session proves root setup is complete. Never flash the setup form on logout.
+            state.setupRequired = false;
             state.unlocked = false;
+            state.user = null;
             cloud?.disconnectMemory?.();
             db?.disconnectMemory?.();
             closeModal();
             showActivation(message);
+            db.authStatus()
+              .then((status) => {
+                state.setupRequired = !!status.setupRequired;
+                updateActivationMode();
+              })
+              .catch(() => {});
           }
         }
         const sessionLock = new SessionLockManager();
@@ -2916,8 +2939,14 @@
           ["reports", "▥", "Báo cáo"],
           ["assistant", "◎", "Trợ lý tổng hợp"],
           ["backup", "⇄", "Sao lưu – đồng bộ"],
+          ["users", "♜", "Quản lý người dùng"],
           ["settings", "⚙", "Thiết lập"],
         ];
+        function canAccessPage(page) {
+          if (state.user?.role === "superadmin") return true;
+          const permissions = state.user?.permissions || [];
+          return permissions.includes("*") || permissions.includes(page) || permissions.includes(`page:${page}`);
+        }
         const ENTITY = {
           plans: {
             title: "Kế hoạch",
@@ -3101,8 +3130,13 @@
           try {
             bindActivation();
             sessionLock.start();
+            const authStatus = await db.authStatus();
+            state.setupRequired = !!authStatus.setupRequired;
+            updateActivationMode();
             showActivation(
-              "Nhập mật khẩu để mở phiên làm việc. Ứng dụng không ghi nhớ mật khẩu.",
+              state.setupRequired
+                ? "Khởi tạo tài khoản root đầu tiên để quản trị hệ thống."
+                : "Nhập tài khoản để mở phiên làm việc. Ứng dụng không ghi nhớ mật khẩu.",
             );
             registerPWA();
             if (cloud.isConfigured() && navigator.onLine)
@@ -3121,22 +3155,29 @@
             e.preventDefault();
             const button = $("#activateButton"),
               status = $("#activationStatus"),
-              input = $("#activationCode"),
-              result = await sessionLock.verify(input.value);
-            input.value = "";
+              passwordInput = $("#activationCode"),
+              confirmInput = $("#confirmActivationCode"),
+              result = await sessionLock.verify({
+                username: $("#activationUsername").value,
+                password: passwordInput.value,
+                displayName: $("#displayName").value,
+                confirmPassword: confirmInput.value,
+              });
+            passwordInput.value = "";
+            confirmInput.value = "";
             if (!result.ok) {
               status.style.color = "var(--red)";
               status.textContent = result.wait
                 ? `Mật khẩu không đúng. Thử lại sau ${result.wait} giây.`
-                : "Mật khẩu không đúng.";
-              input.focus();
+                : result.message || "Tên đăng nhập hoặc mật khẩu không đúng.";
+              passwordInput.focus();
               if (result.wait) {
                 button.disabled = true;
                 setTimeout(() => {
                   button.disabled = false;
                   status.textContent = "Có thể thử lại mật khẩu.";
                   status.style.color = "var(--muted)";
-                  input.focus();
+                  passwordInput.focus();
                 }, result.wait * 1000);
               }
               return;
@@ -3144,9 +3185,10 @@
             button.disabled = true;
             status.style.color = "var(--muted)";
             status.textContent = "Đang mở dữ liệu trên máy chủ…";
-            const driveAttempt = cloud.connectFromUserGesture({
-              selectAccount: false,
-            });
+            const driveAttempt =
+              state.user?.role === "superadmin"
+                ? cloud.connectFromUserGesture({ selectAccount: false })
+                : Promise.resolve(false);
             driveAttempt.catch(() => {});
             try {
               await launchApp();
@@ -3159,28 +3201,48 @@
             }
           };
         }
+        function updateActivationMode() {
+          const setupRequired = state.setupRequired,
+            displayName = $("#displayName"),
+            confirmation = $("#confirmActivationCode");
+          $("#displayNameField").classList.toggle("hidden", !setupRequired);
+          $("#confirmPasswordField").classList.toggle("hidden", !setupRequired);
+          displayName.disabled = !setupRequired;
+          confirmation.disabled = !setupRequired;
+          displayName.required = setupRequired;
+          confirmation.required = setupRequired;
+          $("#activationPasswordLabel").textContent = setupRequired
+            ? "Mật khẩu root"
+            : "Mật khẩu";
+          $("#activationCode").autocomplete = state.setupRequired
+            ? "new-password"
+            : "current-password";
+          $("#activateButton").textContent = state.setupRequired
+            ? "Tạo tài khoản root"
+            : "Đăng nhập";
+        }
         function showActivation(
-          message = "Nhập mật khẩu để mở phiên làm việc. Ứng dụng không ghi nhớ mật khẩu.",
+          message = "Nhập tài khoản để mở phiên làm việc. Ứng dụng không ghi nhớ mật khẩu.",
         ) {
+          updateActivationMode();
           $("#activationScreen").classList.remove("hidden");
           $("#appShell").classList.add("hidden");
           $("#appShell").setAttribute("inert", "");
           $("#appShell").setAttribute("aria-hidden", "true");
           $("#activationStatus").textContent = message;
           $("#activationStatus").style.color = "var(--muted)";
+          $("#activationUsername").value = "";
+          $("#displayName").value = "";
           $("#activationCode").value = "";
-          setTimeout(() => $("#activationCode").focus(), 30);
+          $("#confirmActivationCode").value = "";
+          setTimeout(() => $("#activationUsername").focus(), 30);
         }
         async function launchApp() {
-          $("#activationScreen").classList.add("hidden");
-          $("#appShell").classList.remove("hidden");
-          $("#appShell").removeAttribute("inert");
-          $("#appShell").removeAttribute("aria-hidden");
           if (!db.db) {
             await tabCoordinator.start();
             await db.open();
             bindShell();
-            if (!tabCoordinator.readOnly) {
+            if (!tabCoordinator.readOnly && state.user?.role === "superadmin") {
               await recoverInterruptedOperations();
               await ensureSeed();
               await migrateEnhancedData();
@@ -3194,23 +3256,36 @@
             updateNetwork();
             window.addEventListener("online", updateNetwork);
             window.addEventListener("offline", updateNetwork);
-            cloud.start();
-            if (cloud.hasToken() && cloud.account)
-              cloud.onLocalReady().catch(() => {});
+            if (state.user?.role === "superadmin") {
+              cloud.start();
+              if (cloud.hasToken() && cloud.account)
+                cloud.onLocalReady().catch(() => {});
+            }
           }
           sessionLock.setTimeoutMinutes(
             Number(await setting("auto_lock_minutes")) || 10,
           );
+          const superadmin = state.user?.role === "superadmin";
+          $("#quickAdd").classList.toggle("hidden", !superadmin);
+          $("#syncState").classList.toggle("hidden", !superadmin);
           document.body.dataset.paper =
             (await setting("paper_orientation")) || "landscape";
           const route = location.hash.replace(/^#/, ""),
-            initialPage = NAV.some(([id]) => id === route)
+            initialPage = NAV.some(([id]) => id === route) && canAccessPage(route)
               ? route
               : "dashboard";
           if (!location.hash)
             history.replaceState(null, "", `#${initialPage}`);
           await go(initialPage, false, true);
-          if (!tabCoordinator.readOnly && !(await setting("onboarded")))
+          $("#activationScreen").classList.add("hidden");
+          $("#appShell").classList.remove("hidden");
+          $("#appShell").removeAttribute("inert");
+          $("#appShell").removeAttribute("aria-hidden");
+          if (
+            state.user?.role === "superadmin" &&
+            !tabCoordinator.readOnly &&
+            !(await setting("onboarded"))
+          )
             showOnboarding();
         }
         function registerPWA() {
@@ -3302,7 +3377,7 @@
           );
           $("#quickAdd").onclick = showQuickAdd;
           $("#mobileContext").onclick = showMobileContext;
-          $("#lockNow").onclick = () => sessionLock.lock();
+          $("#lockNow").onclick = () => sessionLock.lock("Đã đăng xuất. Hãy đăng nhập để tiếp tục.");
           $("#syncState").onclick = () => go("backup");
           const followRoute = () => {
             const page = location.hash.replace(/^#/, "");
@@ -3690,7 +3765,7 @@
         }
         function renderNav() {
           $("#nav").replaceChildren(
-            ...NAV.map(([id, ico, label]) => {
+            ...NAV.filter(([id]) => canAccessPage(id)).map(([id, ico, label]) => {
               const b = document.createElement("button");
               b.dataset.page = id;
               b.className = id === state.page ? "active" : "";
@@ -3704,6 +3779,10 @@
         }
         async function go(page, focus = true, fromHistory = false) {
           if (!NAV.some(([id]) => id === page)) page = "dashboard";
+          if (!canAccessPage(page)) {
+            toast("Tài khoản không có quyền mở phân hệ này.", "bad");
+            page = "dashboard";
+          }
           if (!fromHistory && location.hash !== `#${page}`)
             history.pushState(null, "", `#${page}`);
           state.page = page;
@@ -3726,6 +3805,7 @@
             reports: renderReports,
             assistant: renderAssistant,
             backup: renderBackup,
+            users: renderUserManagement,
             settings: renderSettings,
           };
           try {
@@ -3968,12 +4048,15 @@
             progress = tasks.length
               ? Math.round((done / tasks.length) * 100)
               : 0,
-            lastBackup = await setting("last_backup_at");
+            lastBackup = await setting("last_backup_at"),
+            canManage = state.user?.role === "superadmin";
           setContent(
             pageHead(
               "Tổng quan",
               "Thông tin cần hành động trong phạm vi đang chọn.",
-              `<button class="btn" data-go="reports">Tạo báo cáo</button><button class="btn primary" data-add="tasks">＋ Công việc</button>`,
+              canManage
+                ? `<button class="btn" data-go="reports">Tạo báo cáo</button><button class="btn primary" data-add="tasks">＋ Công việc</button>`
+                : "",
             ) +
               `
       <div class="kpi-grid">
@@ -3990,7 +4073,7 @@
             .slice(0, 7)
             .map(
               (t) =>
-                `<li><span class="badge ${t.due_date < today() ? "red" : "yellow"}">${t.due_date < today() ? "Quá hạn" : fmtDate(t.due_date)}</span><div class="main"><strong>${esc(t.title)}</strong><small>${esc(t.group || "Công việc")} • ${esc(campusName(t.campus_id))}</small></div><button class="link-btn" data-edit-task="${t.id}">Mở</button></li>`,
+                `<li><span class="badge ${t.due_date < today() ? "red" : "yellow"}">${t.due_date < today() ? "Quá hạn" : fmtDate(t.due_date)}</span><div class="main"><strong>${esc(t.title)}</strong><small>${esc(t.group || "Công việc")} • ${esc(campusName(t.campus_id))}</small></div>${canManage ? `<button class="link-btn" data-edit-task="${t.id}">Mở</button>` : ""}</li>`,
             )
             .join("") ||
           '<li class="muted">Không có việc khẩn trong phạm vi đã chọn.</li>'
@@ -4000,7 +4083,7 @@
           <div class="split mt"><span>Trạng thái bảng tuần</span>${statusBadge(sheet?.status || "Chưa tạo")}</div>
           <div class="split mt"><span>Lớp đã có dữ liệu</span><strong>${filled.size}/${classes.length}</strong></div>
           <div class="split mt"><span>Sao lưu gần nhất</span><strong>${lastBackup ? fmtDateTime(lastBackup) : "Chưa sao lưu"}</strong></div>
-          <button class="btn small mt" data-go="backup">Sao lưu ngay</button>
+          ${canManage ? '<button class="btn small mt" data-go="backup">Sao lưu ngay</button>' : ""}
         </div></div>
       </div>
       <div class="grid-2 mt">
@@ -7422,6 +7505,78 @@
           }
         }
 
+        const permissionList = (value) =>
+          [...new Set(String(value || "").split(/[\s,]+/).map((item) => item.trim().toLowerCase()).filter(Boolean))];
+
+        async function renderUserManagement() {
+          const users = await db.listUsers();
+          setContent(
+            pageHead(
+              "Quản lý người dùng",
+              "Tạo tài khoản, cấp vai trò và chuẩn bị quyền truy cập theo từng phân hệ.",
+              '<button class="btn primary" id="addUser">＋ Thêm người dùng</button>',
+            ) +
+              `<div class="notice"><strong>Root/superadmin có toàn quyền.</strong> Người dùng thường mặc định chỉ có quyền <code>dashboard</code>. Có thể lưu thêm khóa quyền ngay bây giờ; giao diện và API sẽ áp dụng các khóa <code>page:...</code> và <code>store:...:read/write</code> khi được cấp.</div><div class="table-wrap"><table><thead><tr><th>Tài khoản</th><th>Tên hiển thị</th><th>Vai trò</th><th>Quyền</th><th>Trạng thái</th><th>Lần đăng nhập cuối</th><th>Thao tác</th></tr></thead><tbody>${users
+                .map(
+                  (user) =>
+                    `<tr><td><strong>${esc(user.username)}</strong>${user.root ? ' <span class="badge blue">root</span>' : ""}</td><td>${esc(user.displayName)}</td><td>${user.role === "superadmin" ? '<span class="badge red">Superadmin</span>' : '<span class="badge">User</span>'}</td><td class="wrap">${user.role === "superadmin" ? "Toàn quyền" : esc((user.permissions || []).join(", ") || "Chưa cấp")}</td><td>${user.disabled ? '<span class="badge red">Đã khóa</span>' : '<span class="badge green">Hoạt động</span>'}</td><td>${user.lastLoginAt ? fmtDateTime(user.lastLoginAt) : "Chưa đăng nhập"}</td><td><div class="row-actions"><button class="link-btn" data-edit-user="${user.id}">${user.root ? "Đổi tên/mật khẩu" : "Sửa"}</button>${user.root ? '<span class="muted">Được bảo vệ</span>' : `<button class="link-btn red" data-delete-user="${user.id}">Xóa</button>`}</div></td></tr>`,
+                )
+                .join("")}</tbody></table></div>`,
+          );
+          $("#addUser").onclick = () => openUserForm();
+          $$('[data-edit-user]').forEach(
+            (button) =>
+              (button.onclick = () =>
+                openUserForm(users.find((user) => user.id === button.dataset.editUser))),
+          );
+          $$('[data-delete-user]').forEach(
+            (button) =>
+              (button.onclick = async () => {
+                const user = users.find((item) => item.id === button.dataset.deleteUser);
+                if (!confirm(`Xóa tài khoản ${user?.username}?`)) return;
+                await db.deleteUser(button.dataset.deleteUser);
+                toast("Đã xóa tài khoản");
+                renderUserManagement();
+              }),
+          );
+        }
+
+        function openUserForm(user = null) {
+          const editing = !!user;
+          openModal(
+            editing ? "Sửa tài khoản" : "Thêm người dùng",
+            `<form id="userForm"><div class="form-grid"><div class="field"><label class="required">Tên đăng nhập</label><input name="username" value="${esc(user?.username || "")}" minlength="3" maxlength="32" pattern="[a-z0-9._\\-]+" autocapitalize="none" required></div><div class="field"><label class="required">Tên hiển thị</label><input name="displayName" value="${esc(user?.displayName || "")}" required></div><div class="field"><label>Vai trò</label><select name="role" ${user?.root ? "disabled" : ""}><option value="user" ${user?.role !== "superadmin" ? "selected" : ""}>User</option><option value="superadmin" ${user?.role === "superadmin" ? "selected" : ""}>Superadmin/root</option></select></div><div class="field"><label>${editing ? "Mật khẩu mới (để trống nếu giữ nguyên)" : "Mật khẩu, tối thiểu 10 ký tự"}</label><input name="password" type="password" minlength="10" autocomplete="new-password" ${editing ? "" : "required"}></div><div class="field full"><label>Khóa quyền, cách nhau bằng dấu phẩy</label><textarea name="permissions" placeholder="dashboard, page:tasks, store:tasks:read">${esc((user?.permissions || ["dashboard"]).filter((value) => value !== "*").join(", "))}</textarea><small class="hint">Superadmin luôn có toàn quyền. User mặc định dùng <code>dashboard</code>.</small></div>${editing && !user.root ? `<label class="check-row field full"><input type="checkbox" name="disabled" ${user.disabled ? "checked" : ""}> Khóa tài khoản này</label>` : ""}</div></form>`,
+            '<button class="btn" id="cancelUser">Hủy</button><button class="btn primary" id="saveUser">Lưu tài khoản</button>',
+          );
+          $("#cancelUser").onclick = closeModal;
+          $("#saveUser").onclick = async () => {
+            const form = $("#userForm");
+            if (!form.reportValidity()) return;
+            const values = Object.fromEntries(new FormData(form)),
+              details = {
+                username: values.username,
+                displayName: values.displayName,
+                role: values.role,
+                permissions: permissionList(values.permissions),
+                ...(values.password ? { password: values.password } : {}),
+                ...(editing ? { disabled: !!values.disabled } : {}),
+              };
+            try {
+              if (editing) await db.updateUser(user.id, details);
+              else await db.createUser(details);
+              closeModal();
+              if (editing && user.id === state.user?.id) {
+                sessionLock.lock("Tài khoản đã cập nhật. Hãy đăng nhập lại.");
+                return;
+              }
+              toast(editing ? "Đã cập nhật tài khoản" : "Đã tạo tài khoản");
+              renderUserManagement();
+            } catch (error) {
+              toast(error.message, "bad");
+            }
+          };
+        }
+
         const SETTINGS_TABS = [
           ["school", "Thông tin trường"],
           ["context", "Cơ sở – năm học – học kỳ – tuần"],
@@ -8076,14 +8231,15 @@
         async function renderSecurityPanel(panel) {
           const timeout = Number(await setting("auto_lock_minutes")) || 10,
             syncInfo = cloud.status();
-          panel.innerHTML = `<div class="grid-2"><div class="card"><div class="card-head"><h2>Khóa phiên làm việc</h2></div><div class="card-body"><div class="field"><label>Tự khóa khi không hoạt động</label><select id="autoLockMinutes">${[5, 10, 15, 30].map((minutes) => `<option value="${minutes}" ${timeout === minutes ? "selected" : ""}>${minutes} phút</option>`).join("")}</select></div><div class="toolbar mt"><button class="btn primary" id="saveAutoLock">Lưu thời gian</button><button class="btn" id="lockApplication">Khóa ngay</button></div><div class="notice warn">Mật khẩu được máy chủ xác minh và không được ghi nhớ trong trình duyệt. Hãy đặt <code>APP_PASSWORD</code> khi triển khai.</div></div></div><div class="card"><div class="card-head"><h2>Định danh phát hành</h2></div><div class="card-body"><div class="split"><span>APP_ID</span><code>${esc(APP.appId)}</code></div><div class="split mt"><span>Hồ sơ trường</span><code>${esc(APP.schoolProfileId)}</code></div><div class="split mt"><span>Namespace Drive</span><code>${esc(APP.namespace)}</code></div><div class="split mt"><span>Thiết bị</span><code>${esc(DEVICE_ID)}</code></div><p class="muted">${syncInfo.configured ? `Drive đã cấu hình; ${syncInfo.connected ? "đang kết nối đúng Gmail" : "cần kết nối trong phiên này"}.` : "Drive chưa cấu hình; dữ liệu hiện lưu trên máy chủ ứng dụng."}</p><button class="btn" id="openSyncSettings">Mở Sao lưu – đồng bộ</button></div></div></div>`;
+          panel.innerHTML = `<div class="grid-2"><div class="card"><div class="card-head"><h2>Khóa phiên làm việc</h2></div><div class="card-body"><div class="field"><label>Tự khóa khi không hoạt động</label><select id="autoLockMinutes">${[5, 10, 15, 30].map((minutes) => `<option value="${minutes}" ${timeout === minutes ? "selected" : ""}>${minutes} phút</option>`).join("")}</select></div><div class="toolbar mt"><button class="btn primary" id="saveAutoLock">Lưu thời gian</button><button class="btn" id="lockApplication">Khóa ngay</button></div><div class="notice warn">Mật khẩu được máy chủ băm bằng <code>scrypt</code> và không được ghi nhớ trong trình duyệt. Quản lý tài khoản tại phân hệ Người dùng.</div></div></div><div class="card"><div class="card-head"><h2>Định danh phát hành</h2></div><div class="card-body"><div class="split"><span>APP_ID</span><code>${esc(APP.appId)}</code></div><div class="split mt"><span>Hồ sơ trường</span><code>${esc(APP.schoolProfileId)}</code></div><div class="split mt"><span>Namespace Drive</span><code>${esc(APP.namespace)}</code></div><div class="split mt"><span>Thiết bị</span><code>${esc(DEVICE_ID)}</code></div><p class="muted">${syncInfo.configured ? `Drive đã cấu hình; ${syncInfo.connected ? "đang kết nối đúng Gmail" : "cần kết nối trong phiên này"}.` : "Drive chưa cấu hình; dữ liệu hiện lưu trên máy chủ ứng dụng."}</p><button class="btn" id="openSyncSettings">Mở Sao lưu – đồng bộ</button></div></div></div>`;
           $("#saveAutoLock").onclick = async () => {
             const minutes = Number($("#autoLockMinutes").value);
             await setting("auto_lock_minutes", minutes);
             sessionLock.setTimeoutMinutes(minutes);
             toast(`Đã đặt tự khóa sau ${minutes} phút.`);
           };
-          $("#lockApplication").onclick = () => sessionLock.lock();
+          $("#lockApplication").onclick = () =>
+            sessionLock.lock("Đã đăng xuất. Hãy đăng nhập để tiếp tục.");
           $("#openSyncSettings").onclick = () => go("backup");
         }
         async function renderConfigCategory(key) {
