@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0b6bcb" />
+    <meta name="referrer" content="strict-origin-when-cross-origin" />
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <meta
+      name="description"
+      content="Trợ lý ngoại tuyến quản lý công tác Đội, thi đua lớp và báo cáo dành cho Tổng phụ trách ĐộI."
+    />
+    <title>Trợ lý Tổng phụ trách Đội TẠ UYÊN</title>
+    <link rel="stylesheet" href="./styles/app.css" />
+  </head>
+  <body data-paper="landscape">
+    <section
+      class="activation-screen"
+      id="activationScreen"
+      aria-labelledby="activationTitle"
+    >
+      <div class="activation-card">
+        <div class="activation-logo" aria-hidden="true">Đ</div>
+        <h1 id="activationTitle">TRỢ LÝ TỔNG PHỤ TRÁCH ĐỘI TẠ UYÊN</h1>
+        <p>Dữ liệu được lưu trên máy chủ riêng, đồng bộ Google Drive khi đã cấu hình.</p>
+        <form id="activationForm">
+          <div class="field">
+            <label for="activationCode">Mật khẩu mở ứng dụng</label>
+            <div class="password-wrap">
+              <input
+                id="activationCode"
+                type="password"
+                autocomplete="current-password"
+                required
+              /><button
+                type="button"
+                id="toggleActivationCode"
+                aria-label="Hiện hoặc ẩn mã truy cập"
+              >
+                ◉
+              </button>
+            </div>
+          </div>
+          <div class="activation-status" id="activationStatus" role="status">
+            Nhập mật khẩu để mở phiên làm việc. Ứng dụng không ghi nhớ mật khẩu.
+          </div>
+          <button
+            class="btn primary"
+            id="activateButton"
+            style="width: 100%"
+            type="submit"
+          >
+            Mở ứng dụng
+          </button>
+        </form>
+        <p class="muted" style="font-size:11px;text-align:center;margin-top:8px">
+          Khi trực tuyến, thao tác mở cũng khởi tạo kết nối Google Drive nếu cấu hình hợp lệ.
+        </p>
+        <div class="activation-support">
+          Phát triển bởi: Thầy Trường - Zalo: 0329203951
+        </div>
+      </div>
+    </section>
+    <div class="app hidden" id="appShell">
+      <aside class="sidebar" id="sidebar">
+        <div class="brand">
+          <div class="brand-mark">Đ</div>
+          <div class="brand-text">
+            <strong>TRỢ LÝ TỔNG PHỤ TRÁCH TẠ UYÊN</strong><span>Công tác Đội</span>
+          </div>
+        </div>
+        <nav class="nav" id="nav" aria-label="Điều hướng chính"></nav>
+        <div class="sidebar-foot">
+          Máy chủ riêng • Google Drive cá nhân khi được cấp quyền
+        </div>
+      </aside>
+      <header class="topbar">
+        <button
+          class="icon-btn"
+          id="toggleSidebar"
+          title="Thu gọn thanh bên"
+          aria-label="Thu gọn thanh bên"
+        >
+          ☰
+        </button>
+        <select
+          class="context-select"
+          id="yearSelect"
+          aria-label="Năm học"
+        ></select>
+        <button
+          class="icon-btn mobile-context-btn"
+          id="mobileContext"
+          type="button"
+          title="Chọn năm, học kỳ, tuần và cơ sở"
+          aria-label="Chọn phạm vi dữ liệu"
+        >
+          ☷
+        </button>
+        <select
+          class="context-select"
+          id="semesterSelect"
+          aria-label="Học kỳ"
+        ></select>
+        <select
+          class="context-select"
+          id="weekSelect"
+          aria-label="Tuần"
+        ></select>
+        <select
+          class="context-select"
+          id="campusSelect"
+          aria-label="Cơ sở"
+        ></select>
+        <div class="searchbox">
+          <label class="sr-only" for="globalSearch">Tìm kiếm</label
+          ><input
+            id="globalSearch"
+            placeholder="Tìm công việc, lớp, hoạt động…"
+            autocomplete="off"
+          />
+        </div>
+        <button class="btn primary" id="quickAdd">＋ Thêm nhanh</button>
+        <div class="status-line">
+          <span class="session-chip" id="sessionChip">Khóa sau 10 phút</span>
+          <span class="save-state" id="saveState">Chưa thay đổi</span
+          ><span class="dot" id="networkDot"></span
+          ><span id="networkText">Trực tuyến</span
+          ><button class="sync-state" id="syncState" type="button" data-state="local" title="Mở trạng thái đồng bộ">Đã lưu trên máy chủ</button>
+          <button class="icon-btn" id="lockNow" type="button" title="Khóa ứng dụng" aria-label="Khóa ứng dụng">🔒</button>
+        </div>
+      </header>
+      <main class="content" id="content" tabindex="-1"></main>
+    </div>
+    <div class="modal-layer" id="modalLayer" aria-hidden="true">
+      <section class="modal" id="modal" role="dialog" aria-modal="true">
+        <div class="modal-head">
+          <h2 id="modalTitle"></h2>
+          <button class="icon-btn" id="modalClose" aria-label="Đóng">×</button>
+        </div>
+        <div class="modal-body" id="modalBody"></div>
+        <div class="modal-foot" id="modalFoot"></div>
+      </section>
+    </div>
+    <div class="toast-zone" id="toasts" aria-live="polite"></div>
+    <input
+      type="file"
+      id="backupFileInput"
+      class="hidden"
+      accept=".json,.tdt,.tptbackup,application/json"
+    />
+    <input
+      type="file"
+      id="csvFileInput"
+      class="hidden"
+      accept=".csv,text/csv"
+    />
+    <input
+      type="file"
+      id="documentFileInput"
+      class="hidden"
+      multiple
+      accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.png,.jpg,.jpeg,.webp,.zip"
+    />
+    <input
+      type="file"
+      id="versionFileInput"
+      class="hidden"
+      accept=".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.png,.jpg,.jpeg,.webp,.zip"
+    />
+    <script src="./app-config.js"></script>
+    <script src="./scripts/api-data-provider.js"></script>
+    <script src="./scripts/app.js"></script>
+  </body>
+</html>

@@ -1,4 +1,18 @@
 AGENTS.md
+Repository-Specific Architecture
+
+- Run the application with `npm start`; opening `frontend/index.html` directly bypasses the required authenticated API.
+- `frontend/scripts/app.js` still contains the legacy `LocalDataProvider`, but runtime persistence uses `frontend/scripts/api-data-provider.js` through `window.ApiDataProvider`.
+- Keep `frontend/index.html` as the static shell; application styles belong in `frontend/styles/app.css` and browser logic belongs in `frontend/scripts/`.
+- `backend/server.js` serves both `/api/*` and the static `frontend/` tree. It binds to `127.0.0.1:3000` unless `HOST` or `PORT` is set.
+- Records are stored in `data/database.json` by default. `data/` is intentionally gitignored; override it with `DATA_FILE`.
+- Set `APP_PASSWORD` outside source for deployment. Without it, the server retains the legacy development password for compatibility.
+- `backend/stores.js` and the `STORES` list in `frontend/index.html` must stay aligned when changing the schema.
+- API writes own revision checks, metadata, audit entries, operation-journal entries, and Drive sync-outbox entries; do not duplicate those in frontend features.
+- Binary attachments cross the API as explicit base64 `Blob` envelopes. Preserve this conversion when changing request serialization.
+- Google Identity and Drive `appDataFolder` synchronization remain browser-side because authorization requires a user gesture. Primary CRUD persistence is server-side.
+- `npm run check` performs syntax checks only; no automated behavior suite exists yet.
+
 Project Overview
 
 This is an existing project that may contain working code, configuration, assets, and dependencies.

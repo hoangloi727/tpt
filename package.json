@@ -1,0 +1,13 @@
+{
+  "name": "tro-ly-tong-phu-trach-doi",
+  "version": "3.1.0-rc.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node backend/server.js",
+    "check": "node --check backend/server.js && node --check backend/api.js && node --check backend/auth.js && node --check backend/repository.js && node --check backend/static.js && node --check frontend/scripts/api-data-provider.js && node --check frontend/scripts/app.js && node --check frontend/sw.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
