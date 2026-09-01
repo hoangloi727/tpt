@@ -4,7 +4,7 @@
         const APP = {
           name: "Trợ lý Tổng phụ trách Đội",
           version: PUBLIC_CONFIG.APP_VERSION || "3.1.0-rc.1",
-          schema: Number(PUBLIC_CONFIG.SCHEMA_VERSION || 12),
+          schema: Number(PUBLIC_CONFIG.SCHEMA_VERSION || 13),
           dbName: PUBLIC_CONFIG.DB_NAME || "TPT_DOI_DB",
           appId:
             PUBLIC_CONFIG.APP_ID || "vn.giaoducso40.tpt.thcs.standard",
@@ -43,6 +43,7 @@
           "criteria_groups",
           "criteria",
           "weekly_score_sheets",
+          "score_grader_assignments",
           "score_entries",
           "score_evidence",
           "ranking_snapshots",
@@ -203,6 +204,7 @@
           taskView: "list",
           calendarDate: new Date(),
           lastScoreUndo: null,
+          scoreClassIds: new Set(),
           settingsTab: "school",
           documentFolderId: "root",
           documentView: "grid",
@@ -230,6 +232,7 @@
             state.campusId = "all";
             state.criteriaSetId = "";
             state.lastScoreUndo = null;
+            state.scoreClassIds = new Set();
             state.schoolLogo = null;
           }
           state.user = user;
@@ -604,11 +607,14 @@
           ["reports", "▥", "Báo cáo"],
           ["assistant", "◎", "Trợ lý tổng hợp"],
           ["backup", "⇄", "Sao lưu – khôi phục"],
+          ["account", "♙", "Tài khoản của tôi"],
           ["users", "♜", "Quản lý người dùng"],
           ["settings", "⚙", "Thiết lập"],
         ];
         function canAccessPage(page) {
+          if (page === "account") return true;
           if (["superadmin", "admin"].includes(state.user?.role)) return true;
+          if (page === "scores" && state.scoreClassIds.size) return true;
           const permissions = state.user?.permissions || [];
           return permissions.includes("*") || permissions.includes(page) || permissions.includes(`page:${page}`);
         }
@@ -938,6 +944,7 @@
             await ensureScheduledDirectoryBackup();
           }
           await loadContext();
+          await loadScoreAssignment();
           const [activeSchool] = await db.all("schools");
           state.schoolLogo = activeSchool?.brand_logo || null;
           updateSchoolBranding();
@@ -1463,6 +1470,7 @@
         }
         async function refreshContext() {
           await loadContext();
+          await loadScoreAssignment();
           await go(state.page, false);
         }
         function showMobileContext() {
@@ -1534,6 +1542,7 @@
             reports: renderReports,
             assistant: renderAssistant,
             backup: renderBackup,
+            account: renderAccount,
             users: renderUserManagement,
             settings: renderSettings,
           };
@@ -1720,6 +1729,21 @@
                 state.campusId === "all" ||
                 x.campus_id === state.campusId),
           );
+        }
+        const canManageScores = () =>
+          ["superadmin", "admin"].includes(state.user?.role);
+        async function loadScoreAssignment() {
+          if (canManageScores()) {
+            state.scoreClassIds = new Set();
+            return;
+          }
+          const assignments = await db.all("score_grader_assignments"),
+            assignment = assignments.find(
+              (row) =>
+                row.user_id === state.user?.id &&
+                row.school_year_id === state.yearId,
+            );
+          state.scoreClassIds = new Set(assignment?.class_ids || []);
         }
         const campusName = (id) =>
           id === "all"
@@ -2673,19 +2697,22 @@
         }
         async function renderScores() {
           const ctx = await scoreContext(),
-            week = state.cache.weeks.find((x) => x.id === state.weekId);
+            week = state.cache.weeks.find((x) => x.id === state.weekId),
+            manager = canManageScores();
+          if (!manager && !["entry", "ranking"].includes(state.scoreTab))
+            state.scoreTab = "entry";
           setContent(
             pageHead(
               "Thi đua lớp",
               "Nhập điểm từng ngày, duyệt, khóa và truy vết theo tuần.",
-              `<button class="btn" id="criteriaConfig">Bộ tiêu chí</button><button class="btn" id="undoScore" ${state.lastScoreUndo ? "" : "disabled"}>↶ Hoàn tác</button><button class="btn primary" id="scoreWorkflow">${workflowLabel(ctx.sheet)}</button>`,
+              `${manager ? '<button class="btn" id="assignScoreGraders">Phân công chấm điểm</button><button class="btn" id="criteriaConfig">Bộ tiêu chí</button>' : ""}<button class="btn" id="undoScore" ${state.lastScoreUndo ? "" : "disabled"}>↶ Hoàn tác</button>${manager ? `<button class="btn primary" id="scoreWorkflow">${workflowLabel(ctx.sheet)}</button>` : ""}`,
 
 
             ) +
               `
       <div class="notice warn"><strong>${esc(ctx.set?.name || "Chưa có bộ tiêu chí")}</strong><br>${esc(ctx.set?.basis || "Cần tạo bộ tiêu chí trước khi nhập điểm.")} ${ctx.set ? `Công thức: ${ctx.set.formula === "base" ? `Điểm chuẩn ${ctx.set.base_score || 0}, sau đó cộng/trừ` : "Cộng điểm từng nhóm"}.` : ""}</div>
       <div class="toolbar"><strong>${esc(week?.name || "Chưa chọn tuần")}</strong><span>${week ? `${fmtDate(week.start_date)} – ${fmtDate(week.end_date)}` : ""}</span><label class="muted">Bộ tiêu chí <select id="scoreSetSelect">${ctx.sets.map((s) => `<option value="${s.id}" ${s.id === ctx.set?.id ? "selected" : ""}>${esc(s.name)} • v${esc(s.version || "1.0")}</option>`).join("")}</select></label><span style="margin-left:auto">Trạng thái: ${statusBadge(ctx.sheet?.status || "Chưa tạo")}</span></div>
-      <div class="tabs"><button data-score-tab="entry" class="${state.scoreTab === "entry" ? "active" : ""}">Nhập điểm</button><button data-score-tab="ranking" class="${state.scoreTab === "ranking" ? "active" : ""}">Xếp hạng</button><button data-score-tab="anomaly" class="${state.scoreTab === "anomaly" ? "active" : ""}">Kiểm tra bất thường</button><button data-score-tab="history" class="${state.scoreTab === "history" ? "active" : ""}">Nhật ký điều chỉnh</button></div><div id="scoreArea"></div>`,
+      <div class="tabs"><button data-score-tab="entry" class="${state.scoreTab === "entry" ? "active" : ""}">Nhập điểm</button><button data-score-tab="ranking" class="${state.scoreTab === "ranking" ? "active" : ""}">Xếp hạng</button>${manager ? `<button data-score-tab="anomaly" class="${state.scoreTab === "anomaly" ? "active" : ""}">Kiểm tra bất thường</button><button data-score-tab="history" class="${state.scoreTab === "history" ? "active" : ""}">Nhật ký điều chỉnh</button>` : ""}</div><div id="scoreArea"></div>`,
           );
           if (state.scoreTab === "entry") renderScoreEntry(ctx);
           if (state.scoreTab === "ranking") renderScoreRanking(ctx);
@@ -2698,13 +2725,16 @@
                 renderScores();
               }),
           );
-          $("#criteriaConfig").onclick = showCriteriaConfig;
+          if ($("#assignScoreGraders"))
+            $("#assignScoreGraders").onclick = showScoreGraderAssignments;
+          if ($("#criteriaConfig")) $("#criteriaConfig").onclick = showCriteriaConfig;
           if ($("#scoreSetSelect"))
             $("#scoreSetSelect").onchange = (e) => {
               state.criteriaSetId = e.target.value;
               renderScores();
             };
-          $("#scoreWorkflow").onclick = () => scoreWorkflow(ctx);
+          if ($("#scoreWorkflow"))
+            $("#scoreWorkflow").onclick = () => scoreWorkflow(ctx);
           $("#undoScore").onclick = undoScore;
         }
         function workflowLabel(sheet) {
@@ -2720,6 +2750,112 @@
             }[sheet.status] || "Quản lý trạng thái"
           );
         }
+        async function showScoreGraderAssignments() {
+          const [allUsers, assignments, allClasses] = await Promise.all([
+              db.listUsers(),
+              db.all("score_grader_assignments"),
+              db.all("classes"),
+            ]),
+            users = allUsers.filter(
+              (user) => user.role === "user" && !user.disabled,
+            ),
+            classes = allClasses
+              .filter(
+                (schoolClass) =>
+                  schoolClass.active !== false &&
+                  (!schoolClass.school_year_id ||
+                    schoolClass.school_year_id === state.yearId),
+              )
+              .sort((a, b) =>
+                String(a.class_name).localeCompare(
+                  String(b.class_name),
+                  "vi",
+                  { numeric: true },
+                ),
+              );
+          if (!users.length)
+            return toast(
+              "Chưa có tài khoản User đang hoạt động để phân công.",
+              "bad",
+            );
+          openModal(
+            "Phân công chấm điểm theo lớp",
+            `<div class="notice">Mỗi lớp chỉ giao cho một User trong năm học đang chọn. Admin và Superadmin luôn có thể quản lý tất cả lớp.</div><div class="field mt"><label>Người chấm điểm</label><select id="scoreGraderUser">${users.map((user) => `<option value="${user.id}">${esc(user.displayName)} (${esc(user.username)})</option>`).join("")}</select></div><div class="toolbar mt"><button class="btn small" id="selectAllGraderClasses" type="button">Chọn lớp còn trống</button><button class="btn small" id="clearGraderClasses" type="button">Bỏ chọn tất cả</button></div><div class="form-grid" id="scoreGraderClasses"></div>`,
+            '<button class="btn" id="cancelScoreGrader">Hủy</button><button class="btn primary" id="saveScoreGrader">Lưu phân công</button>',
+            true,
+          );
+          const renderClasses = () => {
+            const userId = $("#scoreGraderUser").value,
+              current = assignments.find(
+                (assignment) =>
+                  assignment.user_id === userId &&
+                  assignment.school_year_id === state.yearId,
+              ),
+              assignedToOthers = new Map();
+            for (const assignment of assignments) {
+              if (
+                assignment.user_id === userId ||
+                assignment.school_year_id !== state.yearId
+              )
+                continue;
+              const owner = users.find(
+                (user) => user.id === assignment.user_id,
+              );
+              for (const classId of assignment.class_ids || [])
+                assignedToOthers.set(
+                  classId,
+                  owner?.displayName || owner?.username || "User khác",
+                );
+            }
+            $("#scoreGraderClasses").innerHTML = classes.length
+              ? classes
+                  .map((schoolClass) => {
+                    const owner = assignedToOthers.get(schoolClass.id),
+                      checked = current?.class_ids?.includes(schoolClass.id);
+                    return `<label class="check-row"><input type="checkbox" data-grader-class="${schoolClass.id}" ${checked ? "checked" : ""} ${owner ? "disabled" : ""}><span><strong>${esc(schoolClass.class_name)}</strong><br><small class="muted">${owner ? `Đã giao: ${esc(owner)}` : esc(campusName(schoolClass.campus_id))}</small></span></label>`;
+                  })
+                  .join("")
+              : '<div class="empty">Chưa có lớp trong năm học này.</div>';
+          };
+          renderClasses();
+          $("#scoreGraderUser").onchange = renderClasses;
+          $("#selectAllGraderClasses").onclick = () =>
+            $$('[data-grader-class]:not(:disabled)').forEach(
+              (checkbox) => (checkbox.checked = true),
+            );
+          $("#clearGraderClasses").onclick = () =>
+            $$('[data-grader-class]').forEach(
+              (checkbox) => (checkbox.checked = false),
+            );
+          $("#cancelScoreGrader").onclick = closeModal;
+          $("#saveScoreGrader").onclick = async () => {
+            const userId = $("#scoreGraderUser").value,
+              current = assignments.find(
+                (assignment) =>
+                  assignment.user_id === userId &&
+                  assignment.school_year_id === state.yearId,
+              ),
+              classIds = $$('[data-grader-class]:checked').map(
+                (checkbox) => checkbox.dataset.graderClass,
+              );
+            try {
+              if (classIds.length)
+                await db.put("score_grader_assignments", {
+                  ...(current || {}),
+                  user_id: userId,
+                  school_year_id: state.yearId,
+                  class_ids: classIds,
+                });
+              else if (current)
+                await db.remove("score_grader_assignments", current.id);
+              closeModal();
+              toast("Đã lưu phân công chấm điểm");
+              renderScores();
+            } catch (error) {
+              toast(error.message, "bad");
+            }
+          };
+        }
         function entryMap(entries) {
           return new Map(
             entries.map((e) => [e.class_id + "|" + e.criteria_id, e]),
@@ -2732,7 +2868,12 @@
               '<div class="empty">Chưa có bộ tiêu chí hoạt động. Hãy mở “Bộ tiêu chí” để cấu hình.</div>');
           if (!ctx.sheet)
             return (area.innerHTML =
-              '<div class="empty">Chưa khởi tạo bảng tuần. Chọn “Khởi tạo bảng tuần” để bắt đầu nhập.</div>');
+              canManageScores()
+                ? '<div class="empty">Chưa khởi tạo bảng tuần. Chọn “Khởi tạo bảng tuần” để bắt đầu nhập.</div>'
+                : '<div class="empty">Admin chưa khởi tạo bảng chấm điểm cho tuần này.</div>');
+          if (!ctx.classes.length)
+            return (area.innerHTML =
+              '<div class="empty">Bạn chưa được phân công lớp nào trong năm học đang chọn.</div>');
           if (!ctx.days.length)
             return (area.innerHTML =
               '<div class="empty">Tuần đang chọn chưa có ngày học từ Thứ Hai đến Thứ Sáu.</div>');
@@ -3756,7 +3897,11 @@
                   .sort((a, b) => (a.order || 0) - (b.order || 0))
               : [],
             classes = (await scoped("classes"))
-              .filter((x) => x.active !== false)
+              .filter(
+                (x) =>
+                  x.active !== false &&
+                  (canManageScores() || state.scoreClassIds.has(x.id)),
+              )
               .sort((a, b) =>
                 String(a.class_name).localeCompare(String(b.class_name), "vi", {
                   numeric: true,
@@ -5136,6 +5281,59 @@
 
         const permissionList = (value) =>
           [...new Set(String(value || "").split(/[\s,]+/).map((item) => item.trim().toLowerCase()).filter(Boolean))];
+
+        function renderAccount() {
+          const user = state.user,
+            roleLabel =
+              user?.role === "superadmin"
+                ? "Superadmin"
+                : user?.role === "admin"
+                  ? "Admin trường"
+                  : "User";
+          setContent(
+            pageHead(
+              "Tài khoản của tôi",
+              "Cập nhật tên hiển thị hoặc đổi mật khẩu đăng nhập.",
+            ) +
+              `<div class="grid-2"><div class="card"><div class="card-head"><h2>Thông tin cá nhân</h2></div><div class="card-body"><form id="ownAccountForm"><div class="field"><label>Tên đăng nhập</label><input value="${esc(user?.username || "")}" readonly aria-readonly="true"><small class="hint">Tên đăng nhập, vai trò, quyền và trường chỉ do Admin/Superadmin quản lý.</small></div><div class="field mt"><label class="required">Tên hiển thị</label><input name="displayName" value="${esc(user?.displayName || "")}" maxlength="120" required></div></form><button class="btn primary mt" id="saveOwnProfile">Lưu tên hiển thị</button></div></div><div class="card"><div class="card-head"><h2>Đổi mật khẩu</h2><span class="badge blue">${roleLabel}</span></div><div class="card-body"><form id="ownPasswordForm"><div class="field"><label class="required">Mật khẩu hiện tại</label><input name="currentPassword" type="password" autocomplete="current-password" minlength="10" required></div><div class="field mt"><label class="required">Mật khẩu mới</label><input name="password" type="password" autocomplete="new-password" minlength="10" required></div><div class="field mt"><label class="required">Nhập lại mật khẩu mới</label><input name="confirmPassword" type="password" autocomplete="new-password" minlength="10" required></div></form><div class="notice warn mt">Sau khi đổi mật khẩu, tất cả phiên đăng nhập của tài khoản sẽ kết thúc.</div><button class="btn primary mt" id="changeOwnPassword">Đổi mật khẩu</button></div></div></div>`,
+          );
+          $("#saveOwnProfile").onclick = async () => {
+            const form = $("#ownAccountForm");
+            if (!form.reportValidity()) return;
+            try {
+              const updated = await db.updateOwnAccount({
+                  displayName: new FormData(form).get("displayName"),
+                }),
+                refreshedUser = { ...state.user, ...updated };
+              db.currentUser = refreshedUser;
+              applyAuthenticatedUser(refreshedUser);
+              sessionLock.updateLabel();
+              toast("Đã cập nhật tên hiển thị");
+              renderAccount();
+            } catch (error) {
+              toast(error.message, "bad");
+            }
+          };
+          $("#changeOwnPassword").onclick = async () => {
+            const form = $("#ownPasswordForm");
+            if (!form.reportValidity()) return;
+            const values = Object.fromEntries(new FormData(form));
+            if (values.password !== values.confirmPassword)
+              return toast("Mật khẩu mới nhập lại không khớp.", "bad");
+            try {
+              await db.updateOwnAccount({
+                displayName: state.user.displayName,
+                currentPassword: values.currentPassword,
+                password: values.password,
+              });
+              sessionLock.lock(
+                "Đã đổi mật khẩu. Hãy đăng nhập lại bằng mật khẩu mới.",
+              );
+            } catch (error) {
+              toast(error.message, "bad");
+            }
+          };
+        }
 
         async function renderUserManagement() {
           const users = await db.listUsers(),

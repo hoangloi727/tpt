@@ -19,7 +19,7 @@ const host = process.env.HOST || "127.0.0.1";
 const port = Number(process.env.PORT || 3000);
 
 const database = await new SqliteDatabase(sqliteFile).open();
-const repository = await new SqliteRepository(database, dataFile, 11).open();
+const repository = await new SqliteRepository(database, dataFile).open();
 const users = await new UserStore(
   database,
   authFile,

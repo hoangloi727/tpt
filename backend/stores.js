@@ -22,6 +22,7 @@ export const STORES = [
   "criteria_groups",
   "criteria",
   "weekly_score_sheets",
+  "score_grader_assignments",
   "score_entries",
   "score_evidence",
   "ranking_snapshots",

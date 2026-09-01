@@ -12,6 +12,7 @@ const DASHBOARD_STORES = new Set([
   "school_years",
   "score_entries",
   "semesters",
+  "schools",
   "tasks",
   "weekly_score_sheets",
 ]);
@@ -61,6 +62,7 @@ const sessionUser = (user, school) => ({
 });
 
 const canReadStore = (user, store) =>
+  store === "score_grader_assignments" ||
   ["superadmin", "admin"].includes(user.role) ||
   hasPermission(user, `store:${store}:read`) ||
   (hasPermission(user, "dashboard") && DASHBOARD_STORES.has(store));
@@ -68,6 +70,32 @@ const canReadStore = (user, store) =>
 const canWriteStore = (user, store) =>
   ["superadmin", "admin"].includes(user.role) ||
   hasPermission(user, `store:${store}:write`);
+
+const isManager = (user) => ["superadmin", "admin"].includes(user.role);
+
+const graderAssignments = (repository, user) =>
+  repository
+    .all("score_grader_assignments", false, user.selectedSchoolId)
+    .filter((row) => row.user_id === user.id);
+
+const canGrade = (repository, user, row) =>
+  isManager(user) ||
+  graderAssignments(repository, user).some(
+    (assignment) =>
+      assignment.school_year_id ===
+        (row.school_year_id || row.academic_year_id) &&
+      assignment.class_ids?.includes(row.class_id),
+  );
+
+const clearGraderAssignments = async (repository, userId, schoolId) => {
+  const assignments = repository
+    .all("score_grader_assignments", false, schoolId)
+    .filter((row) => row.user_id === userId);
+  for (const assignment of assignments)
+    await repository.remove("score_grader_assignments", assignment.id, false, {
+      schoolId,
+    });
+};
 
 export const createApiHandler = ({ repository, sessions, users }) =>
   async function handleApi(request, response, url) {
@@ -123,6 +151,42 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         const updated = sessionUser(user, school);
         sessions.update(request.headers.authorization, updated);
         return sendJson(response, 200, { user: updated });
+      }
+      if (request.method === "PATCH" && url.pathname === "/api/account") {
+        const body = await readJson(request),
+          allowedFields = new Set([
+            "displayName",
+            "currentPassword",
+            "password",
+          ]);
+        if (Object.keys(body).some((key) => !allowedFields.has(key)))
+          return sendJson(response, 400, {
+            error: "Chỉ được thay đổi tên hiển thị và mật khẩu của chính mình.",
+          });
+        if (body.password) {
+          const verified = await users.authenticate(
+            user.username,
+            body.currentPassword,
+            user.selectedSchoolId,
+          );
+          if (!verified)
+            return sendJson(response, 400, {
+              error: "Mật khẩu hiện tại không đúng.",
+            });
+        }
+        const updated = await users.update(user.id, {
+          displayName: body.displayName,
+          ...(body.password ? { password: body.password } : {}),
+        });
+        if (body.password) sessions.revokeUser(user.id);
+        else {
+          const refreshed =
+            updated.role === "superadmin"
+              ? updated
+              : sessionUser(updated, repository.school(updated.schoolId));
+          sessions.refreshUser(user.id, refreshed);
+        }
+        return sendJson(response, 200, updated);
       }
       if (request.method === "GET" && url.pathname === "/api/health") {
         return sendJson(response, 200, {
@@ -190,6 +254,12 @@ export const createApiHandler = ({ repository, sessions, users }) =>
             if (changes.role === "superadmin") changes.role = "admin";
           }
           const updated = await users.update(id, changes);
+          if (updated.disabled || updated.role !== "user")
+            await clearGraderAssignments(
+              repository,
+              id,
+              target.schoolId || user.selectedSchoolId,
+            );
           if (passwordChanged || updated.disabled) sessions.revokeUser(id);
           else {
             const refreshed =
@@ -203,6 +273,12 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         if (request.method === "DELETE") {
           if (id === user.id) return sendJson(response, 400, { error: "Không thể xóa phiên đang đăng nhập." });
           const removed = await users.remove(id);
+          if (removed)
+            await clearGraderAssignments(
+              repository,
+              id,
+              target.schoolId || user.selectedSchoolId,
+            );
           sessions.revokeUser(id);
           return sendJson(response, removed ? 200 : 404, { removed });
         }
@@ -233,6 +309,16 @@ export const createApiHandler = ({ repository, sessions, users }) =>
       if (request.method === "GET") {
         if (!canReadStore(user, store)) return forbidden(response);
         if (!id) {
+          if (store === "score_grader_assignments") {
+            const rows = repository.all(store, false, user.selectedSchoolId);
+            return sendJson(
+              response,
+              200,
+              isManager(user)
+                ? rows
+                : rows.filter((row) => row.user_id === user.id),
+            );
+          }
           return sendJson(
             response,
             200,
@@ -244,6 +330,13 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           );
         }
         const record = repository.get(store, id, user.selectedSchoolId);
+        if (
+          store === "score_grader_assignments" &&
+          record &&
+          !isManager(user) &&
+          record.user_id !== user.id
+        )
+          return forbidden(response);
         return record
           ? sendJson(response, 200, record)
           : url.searchParams.get("optional") === "1"
@@ -251,7 +344,16 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           : sendJson(response, 404, { error: "Record not found." });
       }
 
-      if (!canWriteStore(user, store)) return forbidden(response);
+      const assignedGrader =
+        !isManager(user) && graderAssignments(repository, user).length > 0;
+      if (
+        (store === "score_grader_assignments" && !isManager(user)) ||
+        (store === "score_entries" && !isManager(user) && !assignedGrader) ||
+        (store === "audit_logs" && !isManager(user) && !assignedGrader) ||
+        (!["score_entries", "audit_logs"].includes(store) &&
+          !canWriteStore(user, store))
+      )
+        return forbidden(response);
       if (store === "schools" && request.method === "DELETE") {
         return sendJson(response, 400, {
           error: "Không thể xóa trường đang dùng để đăng nhập.",
@@ -259,6 +361,29 @@ export const createApiHandler = ({ repository, sessions, users }) =>
       }
       if (request.method === "POST" && id === "bulk") {
         const body = await readJson(request);
+        if (
+          store === "score_grader_assignments" &&
+          (body.rows || []).some((row) => {
+            const target = users.get(row.user_id);
+            return (
+              !target ||
+              target.role !== "user" ||
+              target.schoolId !== user.selectedSchoolId
+            );
+          })
+        )
+          return forbidden(response);
+        if (
+          store === "score_entries" &&
+          (body.rows || []).some((row) => !canGrade(repository, user, row))
+        )
+          return forbidden(response);
+        if (
+          store === "audit_logs" &&
+          !isManager(user) &&
+          (body.rows || []).some((row) => row.entity !== "score_entries")
+        )
+          return forbidden(response);
         return sendJson(
           response,
           200,
@@ -270,6 +395,23 @@ export const createApiHandler = ({ repository, sessions, users }) =>
       }
       if (request.method === "POST" && !id) {
         const body = await readJson(request);
+        if (store === "score_grader_assignments") {
+          const target = users.get(body.row?.user_id);
+          if (
+            !target ||
+            target.role !== "user" ||
+            target.schoolId !== user.selectedSchoolId
+          )
+            return forbidden(response);
+        }
+        if (
+          (store === "score_entries" &&
+            !canGrade(repository, user, body.row || {})) ||
+          (store === "audit_logs" &&
+            !isManager(user) &&
+            body.row?.entity !== "score_entries")
+        )
+          return forbidden(response);
         return sendJson(
           response,
           200,
@@ -280,6 +422,15 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         );
       }
       if (request.method === "DELETE" && id) {
+        if (
+          store === "score_entries" &&
+          !canGrade(
+            repository,
+            user,
+            repository.get(store, id, user.selectedSchoolId) || {},
+          )
+        )
+          return forbidden(response);
         return sendJson(
           response,
           200,
@@ -292,6 +443,8 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         );
       }
       if (request.method === "DELETE" && !id) {
+        if (store === "score_entries" && !isManager(user))
+          return forbidden(response);
         return sendJson(
           response,
           200,

@@ -160,6 +160,13 @@
       });
     }
 
+    updateOwnAccount(changes) {
+      return this.request("/account", {
+        method: "PATCH",
+        body: JSON.stringify(changes),
+      });
+    }
+
     deleteUser(id) {
       return this.request(`/admin/users/${encodeURIComponent(id)}`, {
         method: "DELETE",

@@ -16,7 +16,7 @@ const revisionConflict = (message) => {
 };
 
 export class SqliteRepository {
-  constructor(database, legacyFilePath, schema = 12) {
+  constructor(database, legacyFilePath, schema = 13) {
     this.database = database;
     this.legacyFilePath = legacyFilePath;
     this.schema = schema;
@@ -34,9 +34,10 @@ export class SqliteRepository {
         schema: this.schema,
         stores: this.database.loadRecords(STORES),
       };
-      if (this.previousSchema < 12) {
-        for (const rows of Object.values(this.state.stores))
-          for (const row of rows) delete row.sync_status;
+      if (this.previousSchema < this.schema) {
+        if (this.previousSchema < 12)
+          for (const rows of Object.values(this.state.stores))
+            for (const row of rows) delete row.sync_status;
         await this.persist(this.state, { business_schema: this.schema });
       }
       return this;
@@ -370,10 +371,69 @@ export class SqliteRepository {
     }
   }
 
+  assertScoreGraderAssignment(draft, row) {
+    if (
+      !row.user_id ||
+      !row.school_year_id ||
+      !Array.isArray(row.class_ids)
+    ) {
+      const error = new Error("Phân công chấm điểm thiếu người dùng, năm học hoặc danh sách lớp.");
+      error.status = 400;
+      throw error;
+    }
+    row.class_ids = [...new Set(row.class_ids.filter(Boolean))];
+    const duplicate = draft.stores.score_grader_assignments.find(
+      (assignment) =>
+        assignment.id !== row.id &&
+        !assignment.deleted_at &&
+        assignment.school_profile_id === row.school_profile_id &&
+        assignment.school_year_id === row.school_year_id &&
+        assignment.user_id === row.user_id,
+    );
+    if (duplicate) {
+      const error = new Error("Người dùng đã có phân công trong năm học này.");
+      error.status = 409;
+      throw error;
+    }
+    const assignedElsewhere = draft.stores.score_grader_assignments.find(
+      (assignment) =>
+        assignment.id !== row.id &&
+        !assignment.deleted_at &&
+        assignment.school_profile_id === row.school_profile_id &&
+        assignment.school_year_id === row.school_year_id &&
+        assignment.class_ids?.some((classId) => row.class_ids.includes(classId)),
+    );
+    if (assignedElsewhere) {
+      const error = new Error("Một hoặc nhiều lớp đã được phân công cho người dùng khác.");
+      error.status = 409;
+      throw error;
+    }
+    const invalidClass = row.class_ids.find((classId) => {
+      const schoolClass = this.findIn(
+        draft,
+        "classes",
+        classId,
+        row.school_profile_id,
+      );
+      return (
+        !schoolClass ||
+        (schoolClass.school_year_id &&
+          schoolClass.school_year_id !== row.school_year_id)
+      );
+    });
+    if (invalidClass) {
+      const error = new Error("Phân công chứa lớp không thuộc năm học hiện tại.");
+      error.status = 400;
+      throw error;
+    }
+  }
+
   putInto(draft, store, row, options = {}) {
     if (options.schoolId)
       row = { ...row, school_profile_id: options.schoolId };
     this.assertWritable(draft, store, row, options);
+    if (store === "score_grader_assignments")
+      this.assertScoreGraderAssignment(draft, row);
     if (store === "score_entries") this.assertDailyScoreEntry(draft, row);
     const rows = draft.stores[store];
     if (store === "schools" && options.schoolId) {
