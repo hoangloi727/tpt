@@ -54,7 +54,6 @@
       this.allowArchivedYear = options.allowArchivedYear;
       this.onSave = options.onSave;
       this.onChange = options.onChange;
-      this.onSyncNeeded = options.onSyncNeeded;
       this.baseUrl = "/api";
       this.token = "";
       this.currentUser = null;
@@ -82,15 +81,24 @@
       return result.user;
     }
 
-    async authenticate(username, password) {
+    async authenticate(username, password, schoolId) {
       const response = await fetch(`${this.baseUrl}/session`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, schoolId }),
       });
       if (!response.ok) return null;
       const result = await response.json();
       this.token = result.token;
+      this.currentUser = result.user;
+      return result.user;
+    }
+
+    async switchSchool(schoolId) {
+      const result = await this.request("/session/school", {
+        method: "POST",
+        body: JSON.stringify({ schoolId }),
+      });
       this.currentUser = result.user;
       return result.user;
     }
@@ -129,6 +137,13 @@
 
     listUsers() {
       return this.request("/admin/users");
+    }
+
+    createSchool(name) {
+      return this.request("/admin/schools", {
+        method: "POST",
+        body: JSON.stringify({ name }),
+      });
     }
 
     createUser(details) {
@@ -174,7 +189,7 @@
       );
     }
 
-    async write(path, body, { silent = false, sync = true, change } = {}) {
+    async write(path, body, { silent = false, change } = {}) {
       this.beforeWrite();
       if (!silent) this.onSave("Đang lưu trên máy chủ…", "saving");
       try {
@@ -186,7 +201,6 @@
           this.onSave(`Đã lưu trên máy chủ lúc ${new Date().toLocaleTimeString("vi-VN")}`);
         }
         if (change) this.onChange(change.store, change.id);
-        if (sync) this.onSyncNeeded();
         return result;
       } catch (error) {
         this.onSave(
@@ -211,7 +225,6 @@
         },
         {
           silent: options.silent,
-          sync: options.sync !== false,
           change: { store, id: row.id || "new" },
         },
       );
@@ -229,7 +242,6 @@
         },
         {
           silent: options.silent,
-          sync: options.sync !== false,
           change: { store, id: "bulk" },
         },
       );
@@ -242,7 +254,6 @@
         { method: "DELETE" },
       );
       this.onChange(store, id);
-      this.onSyncNeeded();
       return result;
     }
 
@@ -265,10 +276,7 @@
     }
 
     replaceAll(payload, options = {}) {
-      return this.write("/import/replace", { payload, options }, {
-        silent: true,
-        sync: options.sync !== false,
-      });
+      return this.write("/import/replace", { payload, options }, { silent: true });
     }
 
     async mergeAll(payload) {
@@ -311,7 +319,6 @@
         }
         stats.stores[store] = local;
       }
-      this.onSyncNeeded(100);
       return stats;
     }
   }

@@ -1,18 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { readFile } from "node:fs/promises";
 import {
   EXTERNAL_BACKUP_EXCLUDED_STORES,
+  HARD_DELETE_STORES,
   STORES,
-  SYNC_EXCLUDED_STORES,
 } from "./stores.js";
 
 const now = () => new Date().toISOString();
-
-const withoutBinary = (record) =>
-  Object.fromEntries(
-    Object.entries(record).filter(([, value]) => value?.__type !== "Blob"),
-  );
 
 const revisionConflict = (message) => {
   const error = new Error(message);
@@ -21,9 +15,10 @@ const revisionConflict = (message) => {
   return error;
 };
 
-export class JsonRepository {
-  constructor(filePath, schema = 10) {
-    this.filePath = filePath;
+export class SqliteRepository {
+  constructor(database, legacyFilePath, schema = 12) {
+    this.database = database;
+    this.legacyFilePath = legacyFilePath;
     this.schema = schema;
     this.previousSchema = schema;
     this.state = null;
@@ -31,9 +26,28 @@ export class JsonRepository {
   }
 
   async open() {
-    await mkdir(dirname(this.filePath), { recursive: true });
+    if (this.database.metadata("business_initialized") === "true") {
+      this.previousSchema = Number(
+        this.database.metadata("business_schema") || this.schema,
+      );
+      this.state = {
+        schema: this.schema,
+        stores: this.database.loadRecords(STORES),
+      };
+      if (this.previousSchema < 12) {
+        for (const rows of Object.values(this.state.stores))
+          for (const row of rows) delete row.sync_status;
+        await this.persist(this.state, { business_schema: this.schema });
+      }
+      return this;
+    }
+    let stored = null;
     try {
-      const stored = JSON.parse(await readFile(this.filePath, "utf8"));
+      stored = JSON.parse(await readFile(this.legacyFilePath, "utf8"));
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    if (stored) {
       this.previousSchema = Number(stored.schema || this.schema);
       this.state = {
         schema: this.schema,
@@ -59,12 +73,6 @@ export class JsonRepository {
         this.state.stores.audit_logs = this.state.stores.audit_logs.filter(
           (row) => !scoreStores.includes(row.entity),
         );
-        this.state.stores.sync_outbox = this.state.stores.sync_outbox.filter(
-          (row) => !scoreStores.includes(row.entity_type),
-        );
-        this.state.stores.sync_conflicts = this.state.stores.sync_conflicts.filter(
-          (row) => !scoreStores.includes(row.entity_type),
-        );
         this.state.stores.migration_logs.push(
           this.normalize(
             {
@@ -81,15 +89,53 @@ export class JsonRepository {
           ),
         );
       }
-      if (this.previousSchema !== this.schema) await this.persist(this.state);
-    } catch (error) {
-      if (error.code !== "ENOENT") throw error;
+    } else {
       this.state = {
         schema: this.schema,
         stores: Object.fromEntries(STORES.map((store) => [store, []])),
       };
-      await this.persist(this.state);
     }
+    for (const rows of Object.values(this.state.stores))
+      for (const row of rows) {
+        delete row.sync_status;
+        row.school_profile_id =
+          row.school_profile_id || "thcs-local-profile-001";
+      }
+    if (stored && !this.state.stores.schools.length) {
+      const recoveredSchoolId =
+        Object.values(this.state.stores)
+          .flat()
+          .find((row) => row.school_profile_id)?.school_profile_id ||
+        "thcs-local-profile-001";
+      this.state.stores.schools.push({
+        id: "school-main",
+        school_profile_id: recoveredSchoolId,
+        name: "TRƯỜNG (CHƯA CẤU HÌNH)",
+        created_at: now(),
+        updated_at: now(),
+        revision: 1,
+        source: "legacy-school-recovery",
+        device_id: "server",
+      });
+    }
+    await this.persist(this.state, {
+      business_initialized: true,
+      business_schema: this.schema,
+      legacy_business_imported_at: stored ? now() : "none",
+      legacy_business_record_count: Object.values(this.state.stores).reduce(
+        (total, rows) => total + rows.length,
+        0,
+      ),
+    });
+    const importedCount = Object.values(
+      this.database.loadRecords(STORES),
+    ).reduce((total, rows) => total + rows.length, 0);
+    const expectedCount = Object.values(this.state.stores).reduce(
+      (total, rows) => total + rows.length,
+      0,
+    );
+    if (importedCount !== expectedCount)
+      throw new Error("SQLite business-data migration verification failed.");
     return this;
   }
 
@@ -101,10 +147,8 @@ export class JsonRepository {
     }
   }
 
-  async persist(state) {
-    const temporary = `${this.filePath}.${process.pid}.tmp`;
-    await writeFile(temporary, `${JSON.stringify(state)}\n`, { mode: 0o600 });
-    await rename(temporary, this.filePath);
+  persist(state, metadata = { business_schema: this.schema }) {
+    return this.database.replaceRecords(state, metadata);
   }
 
   mutate(task) {
@@ -119,29 +163,97 @@ export class JsonRepository {
     return this.queue;
   }
 
-  all(store, includeDeleted = false) {
+  all(store, includeDeleted = false, schoolId = null) {
     this.assertStore(store);
-    const rows = this.state.stores[store];
+    const rows = this.state.stores[store].filter(
+      (row) => !schoolId || row.school_profile_id === schoolId,
+    );
     return structuredClone(includeDeleted ? rows : rows.filter((row) => !row.deleted_at));
   }
 
-  get(store, id) {
+  get(store, id, schoolId = null) {
     this.assertStore(store);
-    const row = this.state.stores[store].find((item) => item.id === id);
+    const row = this.state.stores[store].find(
+      (item) =>
+        item.id === id &&
+        (!schoolId || item.school_profile_id === schoolId),
+    );
     return row ? structuredClone(row) : null;
   }
 
-  findIn(draft, store, id) {
-    return draft.stores[store].find((item) => item.id === id) || null;
+  listSchools() {
+    return this.all("schools")
+      .map((school) => ({
+        id: school.school_profile_id,
+        name: school.name || "Trường chưa đặt tên",
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name, "vi"));
+  }
+
+  school(id) {
+    return this.listSchools().find((school) => school.id === id) || null;
+  }
+
+  defaultSchoolId() {
+    return this.listSchools()[0]?.id || "thcs-local-profile-001";
+  }
+
+  async ensureSchool(name) {
+    const existing = this.listSchools()[0];
+    if (existing) return existing;
+    return this.createSchool(name, "thcs-local-profile-001");
+  }
+
+  async createSchool(name, requestedId = "") {
+    const schoolName = String(name || "").trim().slice(0, 200);
+    if (!schoolName) {
+      const error = new Error("Tên trường không được để trống.");
+      error.status = 400;
+      throw error;
+    }
+    if (
+      this.listSchools().some(
+        (school) =>
+          school.name.localeCompare(schoolName, "vi", {
+            sensitivity: "base",
+          }) === 0,
+      )
+    ) {
+      const error = new Error("Tên trường đã tồn tại.");
+      error.status = 409;
+      throw error;
+    }
+    const schoolId = requestedId || `school-${randomUUID()}`;
+    await this.put(
+      "schools",
+      { id: schoolId, name: schoolName },
+      { schoolId, audit: false, journal: false },
+    );
+    return this.school(schoolId);
+  }
+
+  findIn(draft, store, id, schoolId = null) {
+    return (
+      draft.stores[store].find(
+        (item) =>
+          item.id === id &&
+          (!schoolId || item.school_profile_id === schoolId),
+      ) || null
+    );
   }
 
   normalize(row, existing, options = {}) {
     const stamp = now();
-    const yearId = row.school_year_id || row.academic_year_id || null;
+    const { sync_status: _syncStatus, ...cleanRow } = row,
+      yearId = row.school_year_id || row.academic_year_id || null;
     return {
-      ...row,
+      ...cleanRow,
       id: row.id || randomUUID(),
-      school_profile_id: row.school_profile_id || "thcs-local-profile-001",
+      school_profile_id:
+        options.schoolId ||
+        row.school_profile_id ||
+        existing?.school_profile_id ||
+        "thcs-local-profile-001",
       ...(yearId
         ? {
             school_year_id: row.school_year_id || yearId,
@@ -160,9 +272,6 @@ export class JsonRepository {
           ) + 1,
       source: row.source || existing?.source || "node-server",
       device_id: row.device_id || existing?.device_id || "server",
-      sync_status: options.preserveMetadata
-        ? row.sync_status || existing?.sync_status || "synced"
-        : "pending",
     };
   }
 
@@ -183,7 +292,12 @@ export class JsonRepository {
     ) {
       return;
     }
-    const year = this.findIn(draft, "school_years", yearId);
+    const year = this.findIn(
+      draft,
+      "school_years",
+      yearId,
+      row.school_profile_id,
+    );
     if (year?.read_only || year?.status === "archived") {
       const error = new Error("Năm học đã đóng và đang ở chế độ chỉ đọc.");
       error.status = 409;
@@ -208,7 +322,12 @@ export class JsonRepository {
       error.status = 400;
       throw error;
     }
-    const week = this.findIn(draft, "school_weeks", row.week_id);
+    const week = this.findIn(
+      draft,
+      "school_weeks",
+      row.week_id,
+      row.school_profile_id,
+    );
     if (
       !week ||
       row.entry_date < week.start_date ||
@@ -218,7 +337,12 @@ export class JsonRepository {
       error.status = 400;
       throw error;
     }
-    const sheet = this.findIn(draft, "weekly_score_sheets", row.sheet_id);
+    const sheet = this.findIn(
+      draft,
+      "weekly_score_sheets",
+      row.sheet_id,
+      row.school_profile_id,
+    );
     if (!sheet || sheet.week_id !== row.week_id) {
       const error = new Error("Daily score entries require a matching weekly sheet.");
       error.status = 400;
@@ -232,6 +356,7 @@ export class JsonRepository {
     const duplicate = draft.stores.score_entries.find(
       (entry) =>
         entry.id !== row.id &&
+        entry.school_profile_id === row.school_profile_id &&
         !entry.deleted_at &&
         entry.sheet_id === row.sheet_id &&
         entry.entry_date === row.entry_date &&
@@ -246,10 +371,22 @@ export class JsonRepository {
   }
 
   putInto(draft, store, row, options = {}) {
+    if (options.schoolId)
+      row = { ...row, school_profile_id: options.schoolId };
     this.assertWritable(draft, store, row, options);
     if (store === "score_entries") this.assertDailyScoreEntry(draft, row);
     const rows = draft.stores[store];
-    const index = rows.findIndex((item) => item.id === row.id);
+    if (store === "schools" && options.schoolId) {
+      const tenantSchool = rows.find(
+        (item) => item.school_profile_id === options.schoolId,
+      );
+      if (tenantSchool) row = { ...row, id: tenantSchool.id };
+    }
+    const index = rows.findIndex(
+      (item) =>
+        item.id === row.id &&
+        (!options.schoolId || item.school_profile_id === options.schoolId),
+    );
     const existing = index >= 0 ? rows[index] : null;
     if (
       existing &&
@@ -261,9 +398,6 @@ export class JsonRepository {
       throw revisionConflict("Bản ghi đã thay đổi ở nơi khác; dữ liệu chưa được ghi đè.");
     }
     const record = this.normalize(row, existing, options);
-    if (options.preserveMetadata && options.sync === false) {
-      record.sync_status = row.sync_status || "synced";
-    }
     if (index >= 0) rows[index] = record;
     else rows.push(record);
 
@@ -279,7 +413,7 @@ export class JsonRepository {
             summary: record.name || record.title || record.code || record.class_name || "",
           },
           null,
-          { preserveMetadata: true },
+          { preserveMetadata: true, schoolId: record.school_profile_id },
         ),
       );
     }
@@ -296,28 +430,9 @@ export class JsonRepository {
             committed_at: now(),
           },
           null,
-          { preserveMetadata: true },
+          { preserveMetadata: true, schoolId: record.school_profile_id },
         ),
       );
-    }
-    if (options.sync !== false && !SYNC_EXCLUDED_STORES.has(store)) {
-      draft.stores.sync_outbox.push({
-        id: randomUUID(),
-        operation_id: randomUUID(),
-        entity_type: store,
-        entity_id: record.id,
-        action: record.deleted_at ? "delete" : action,
-        base_revision: Number(existing?.revision || 0),
-        new_revision: Number(record.revision || 1),
-        payload: withoutBinary(record),
-        device_id: record.device_id,
-        school_profile_id: record.school_profile_id,
-        academic_year_id: record.academic_year_id || record.school_year_id || null,
-        status: "pending",
-        attempts: 0,
-        created_at: now(),
-        updated_at: now(),
-      });
     }
     return record;
   }
@@ -354,44 +469,72 @@ export class JsonRepository {
             committed_at: now(),
           },
           null,
-          { preserveMetadata: true },
+          {
+            preserveMetadata: true,
+            schoolId: options.schoolId || rows[0]?.school_profile_id,
+          },
         ),
       );
       return rows.length;
     });
   }
 
-  remove(store, id, hard = false) {
+  remove(store, id, hard = false, options = {}) {
     this.assertStore(store);
     return this.mutate((draft) => {
       const rows = draft.stores[store];
-      const index = rows.findIndex((row) => row.id === id);
+      const index = rows.findIndex(
+        (row) =>
+          row.id === id &&
+          (!options.schoolId || row.school_profile_id === options.schoolId),
+      );
       if (index < 0) return null;
-      if (hard || SYNC_EXCLUDED_STORES.has(store)) {
+      if (
+        options.schoolId &&
+        rows[index].school_profile_id !== options.schoolId
+      )
+        return null;
+      if (hard || HARD_DELETE_STORES.has(store)) {
         rows.splice(index, 1);
         return true;
       }
       return structuredClone(
-        this.putInto(draft, store, { ...rows[index], deleted_at: now() }),
+        this.putInto(
+          draft,
+          store,
+          { ...rows[index], deleted_at: now() },
+          options,
+        ),
       );
     });
   }
 
-  clear(store) {
+  clear(store, schoolId = null) {
     this.assertStore(store);
     return this.mutate((draft) => {
-      draft.stores[store] = [];
+      draft.stores[store] = schoolId
+        ? draft.stores[store].filter(
+            (row) => row.school_profile_id !== schoolId,
+          )
+        : [];
       return true;
     });
   }
 
-  exportAll() {
+  exportAll(schoolId = null) {
+    const data = Object.fromEntries(
+      STORES.map((store) => [
+        store,
+        this.all(store, true, schoolId),
+      ]),
+    );
     return {
-      app: "Trợ lý Tổng phụ trách Đội TẠ UYÊN",
+      app: "Trợ lý Tổng phụ trách Đội",
       version: "3.1.0-rc.1",
       schema: this.schema,
       exported_at: now(),
-      data: structuredClone(this.state.stores),
+      school_profile_id: schoolId,
+      data,
     };
   }
 
@@ -402,12 +545,36 @@ export class JsonRepository {
       throw error;
     }
     return this.mutate((draft) => {
+      const schoolId = options.schoolId || null;
       for (const store of STORES) {
         if (
           EXTERNAL_BACKUP_EXCLUDED_STORES.has(store) ||
-          ["sync_outbox", "sync_conflicts"].includes(store) ||
           !Array.isArray(payload.data[store])
         ) {
+          continue;
+        }
+        if (store === "schools" && schoolId) {
+          const current = draft.stores.schools.find(
+              (row) => row.school_profile_id === schoolId,
+            ),
+            source = payload.data.schools[0];
+          if (current && source) {
+            const restored = this.normalize(
+              { ...source, id: current.id, school_profile_id: schoolId },
+              current,
+              {
+                preserveMetadata: options.preserveMetadata === true,
+                resolveConflict: options.resolveConflict !== false,
+                schoolId,
+              },
+            );
+            draft.stores.schools = [
+              ...draft.stores.schools.filter(
+                (row) => row.school_profile_id !== schoolId,
+              ),
+              restored,
+            ];
+          }
           continue;
         }
         const rows =
@@ -420,35 +587,21 @@ export class JsonRepository {
           ].includes(store)
             ? []
             : payload.data[store];
-        draft.stores[store] = rows.map((row) =>
+        const incoming = rows.map((row) =>
           this.normalize(row, null, {
-            preserveMetadata: options.sync === false,
-            resolveConflict: options.sync !== false,
+            preserveMetadata: options.preserveMetadata === true,
+            resolveConflict: options.resolveConflict !== false,
+            schoolId,
           }),
         );
-      }
-      if (options.sync !== false) {
-        draft.stores.sync_outbox = [];
-        for (const store of STORES) {
-          if (SYNC_EXCLUDED_STORES.has(store)) continue;
-          for (const row of draft.stores[store]) {
-            row.sync_status = "pending";
-            draft.stores.sync_outbox.push({
-              id: randomUUID(),
-              operation_id: randomUUID(),
-              entity_type: store,
-              entity_id: row.id,
-              action: row.deleted_at ? "delete" : "upsert",
-              base_revision: Math.max(0, Number(row.revision || 1) - 1),
-              new_revision: Number(row.revision || 1),
-              payload: withoutBinary(row),
-              status: "pending",
-              attempts: 0,
-              created_at: now(),
-              updated_at: now(),
-            });
-          }
-        }
+        draft.stores[store] = schoolId
+          ? [
+              ...draft.stores[store].filter(
+                (row) => row.school_profile_id !== schoolId,
+              ),
+              ...incoming,
+            ]
+          : incoming;
       }
       return true;
     });

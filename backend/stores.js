@@ -40,8 +40,6 @@ export const STORES = [
   "generated_reports",
   "audit_logs",
   "app_settings",
-  "sync_outbox",
-  "sync_conflicts",
   "config_categories",
   "config_items",
   "custom_field_definitions",
@@ -62,9 +60,7 @@ export const STORES = [
   "report_packages",
 ];
 
-export const SYNC_EXCLUDED_STORES = new Set([
-  "sync_outbox",
-  "sync_conflicts",
+export const HARD_DELETE_STORES = new Set([
   "operation_journal",
   "internal_snapshots",
   "form_drafts",

@@ -13,7 +13,7 @@
       name="description"
       content="Trợ lý ngoại tuyến quản lý công tác Đội, thi đua lớp và báo cáo dành cho Tổng phụ trách ĐộI."
     />
-    <title>Trợ lý Tổng phụ trách Đội TẠ UYÊN</title>
+    <title>Trợ lý Tổng phụ trách Đội</title>
     <link rel="stylesheet" href="./styles/app.css" />
   </head>
   <body data-paper="landscape">
@@ -24,9 +24,17 @@
     >
       <div class="activation-card">
         <div class="activation-logo" aria-hidden="true">Đ</div>
-        <h1 id="activationTitle">TRỢ LÝ TỔNG PHỤ TRÁCH ĐỘI TẠ UYÊN</h1>
-        <p>Dữ liệu được lưu trên máy chủ riêng, đồng bộ Google Drive khi đã cấu hình.</p>
+        <h1 id="activationTitle">TRỢ LÝ TỔNG PHỤ TRÁCH ĐỘI</h1>
+        <p>Dữ liệu được lưu trên máy chủ riêng và có thể sao lưu ra tệp cục bộ.</p>
         <form id="activationForm">
+          <div class="field" id="schoolSelectField">
+            <label for="activationSchool">Trường</label>
+            <select id="activationSchool" required></select>
+          </div>
+          <div class="field hidden" id="schoolNameField">
+            <label for="activationSchoolName">Tên trường đầu tiên</label>
+            <input id="activationSchoolName" maxlength="200" disabled />
+          </div>
           <div class="field hidden" id="displayNameField">
             <label for="displayName">Tên hiển thị của root</label>
             <input id="displayName" autocomplete="name" disabled />
@@ -79,9 +87,6 @@
             Mở ứng dụng
           </button>
         </form>
-        <p class="muted" style="font-size:11px;text-align:center;margin-top:8px">
-          Khi trực tuyến, thao tác mở cũng khởi tạo kết nối Google Drive nếu cấu hình hợp lệ.
-        </p>
         <div class="activation-support">
           Phát triển bởi: Thầy Trường - Zalo: 0329203951
         </div>
@@ -92,12 +97,12 @@
         <div class="brand">
           <div class="brand-mark">Đ</div>
           <div class="brand-text">
-            <strong>TRỢ LÝ TỔNG PHỤ TRÁCH TẠ UYÊN</strong><span>Công tác Đội</span>
+            <strong id="selectedSchoolName">TRỢ LÝ TỔNG PHỤ TRÁCH ĐỘI</strong><span>Công tác Đội</span>
           </div>
         </div>
         <nav class="nav" id="nav" aria-label="Điều hướng chính"></nav>
         <div class="sidebar-foot">
-          Máy chủ riêng • Google Drive cá nhân khi được cấp quyền
+          Máy chủ riêng • Sao lưu tệp và thư mục cục bộ
         </div>
       </aside>
       <header class="topbar">
@@ -109,6 +114,11 @@
         >
           ☰
         </button>
+        <select
+          class="context-select hidden"
+          id="schoolSelect"
+          aria-label="Trường đang quản lý"
+        ></select>
         <select
           class="context-select"
           id="yearSelect"
@@ -151,8 +161,7 @@
           <span class="session-chip" id="sessionChip">Khóa sau 10 phút</span>
           <span class="save-state" id="saveState">Chưa thay đổi</span
           ><span class="dot" id="networkDot"></span
-          ><span id="networkText">Trực tuyến</span
-          ><button class="sync-state" id="syncState" type="button" data-state="local" title="Mở trạng thái đồng bộ">Đã lưu trên máy chủ</button>
+          ><span id="networkText">Trực tuyến</span>
           <button class="icon-btn" id="lockNow" type="button" title="Đăng xuất" aria-label="Đăng xuất">⇥</button>
         </div>
       </header>

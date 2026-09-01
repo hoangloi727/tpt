@@ -54,32 +54,53 @@ const readJson = (request) =>
 const forbidden = (response) =>
   sendJson(response, 403, { error: "Tài khoản không có quyền thực hiện thao tác này." });
 
+const sessionUser = (user, school) => ({
+  ...user,
+  selectedSchoolId: school.id,
+  selectedSchoolName: school.name,
+});
+
 const canReadStore = (user, store) =>
-  user.role === "superadmin" ||
+  ["superadmin", "admin"].includes(user.role) ||
   hasPermission(user, `store:${store}:read`) ||
   (hasPermission(user, "dashboard") && DASHBOARD_STORES.has(store));
 
 const canWriteStore = (user, store) =>
-  user.role === "superadmin" || hasPermission(user, `store:${store}:write`);
+  ["superadmin", "admin"].includes(user.role) ||
+  hasPermission(user, `store:${store}:write`);
 
 export const createApiHandler = ({ repository, sessions, users }) =>
   async function handleApi(request, response, url) {
     try {
       if (request.method === "GET" && url.pathname === "/api/auth/status") {
-        return sendJson(response, 200, { setupRequired: users.setupRequired() });
+        return sendJson(response, 200, {
+          setupRequired: users.setupRequired(),
+          schools: repository.listSchools(),
+        });
       }
       if (request.method === "POST" && url.pathname === "/api/auth/setup") {
-        const user = await users.setupRoot(await readJson(request));
-        return sendJson(response, 201, sessions.create(user));
+        if (!users.setupRequired())
+          return sendJson(response, 409, {
+            error: "Tài khoản root đã được khởi tạo.",
+          });
+        const body = await readJson(request);
+        const school = repository.listSchools().length
+          ? repository.school(body.schoolId)
+          : await repository.ensureSchool(body.schoolName);
+        if (!school) return sendJson(response, 400, { error: "Hãy chọn trường hợp lệ." });
+        const user = await users.setupRoot({ ...body, schoolId: school.id });
+        return sendJson(response, 201, sessions.create(sessionUser(user, school)));
       }
       if (request.method === "POST" && url.pathname === "/api/session") {
         if (users.setupRequired()) {
           return sendJson(response, 409, { error: "Cần khởi tạo tài khoản root trước." });
         }
         const body = await readJson(request);
-        const user = await users.authenticate(body.username, body.password);
+        const school = repository.school(body.schoolId);
+        if (!school) return sendJson(response, 400, { error: "Hãy chọn trường hợp lệ." });
+        const user = await users.authenticate(body.username, body.password, school.id);
         if (!user) return sendJson(response, 401, { error: "Tên đăng nhập hoặc mật khẩu không đúng." });
-        return sendJson(response, 200, sessions.create(user));
+        return sendJson(response, 200, sessions.create(sessionUser(user, school)));
       }
 
       const session = sessions.verify(request.headers.authorization);
@@ -93,6 +114,16 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         sessions.remove(request.headers.authorization);
         return sendJson(response, 200, { ok: true });
       }
+      if (request.method === "POST" && url.pathname === "/api/session/school") {
+        if (user.role !== "superadmin") return forbidden(response);
+        const body = await readJson(request),
+          school = repository.school(body.schoolId);
+        if (!school)
+          return sendJson(response, 400, { error: "Hãy chọn trường hợp lệ." });
+        const updated = sessionUser(user, school);
+        sessions.update(request.headers.authorization, updated);
+        return sendJson(response, 200, { user: updated });
+      }
       if (request.method === "GET" && url.pathname === "/api/health") {
         return sendJson(response, 200, {
           ok: true,
@@ -102,19 +133,62 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         });
       }
 
-      if (url.pathname === "/api/admin/users") {
+      if (url.pathname === "/api/admin/schools") {
         if (user.role !== "superadmin") return forbidden(response);
-        if (request.method === "GET") return sendJson(response, 200, users.list());
+        if (request.method === "GET")
+          return sendJson(response, 200, repository.listSchools());
         if (request.method === "POST") {
-          return sendJson(response, 201, await users.create(await readJson(request)));
+          const body = await readJson(request);
+          return sendJson(
+            response,
+            201,
+            await repository.createSchool(body.name),
+          );
+        }
+      }
+
+      if (url.pathname === "/api/admin/users") {
+        if (!["superadmin", "admin"].includes(user.role)) return forbidden(response);
+        if (request.method === "GET")
+          return sendJson(
+            response,
+            200,
+            users.list(
+              user.selectedSchoolId,
+              user.role === "superadmin",
+            ),
+          );
+        if (request.method === "POST") {
+          const body = await readJson(request);
+          if (user.role === "admin") {
+            if (body.role === "superadmin") body.role = "admin";
+          }
+          return sendJson(
+            response,
+            201,
+            await users.create({ ...body, schoolId: user.selectedSchoolId }),
+          );
         }
       }
       const userMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
       if (userMatch) {
-        if (user.role !== "superadmin") return forbidden(response);
+        if (!["superadmin", "admin"].includes(user.role)) return forbidden(response);
         const id = decodeURIComponent(userMatch[1]);
+        const target = users.get(id);
+        if (
+          !target ||
+          (target.schoolId !== user.selectedSchoolId &&
+            !(user.role === "superadmin" && target.role === "superadmin")) ||
+          (user.role === "admin" && target.role === "superadmin")
+        )
+          return forbidden(response);
         if (request.method === "PATCH") {
-          const updated = await users.update(id, await readJson(request));
+          const changes = await readJson(request);
+          changes.schoolId = user.selectedSchoolId;
+          if (user.role === "admin") {
+            if (changes.role === "superadmin") changes.role = "admin";
+          }
+          const updated = await users.update(id, changes);
           sessions.revokeUser(id);
           return sendJson(response, 200, updated);
         }
@@ -128,12 +202,19 @@ export const createApiHandler = ({ repository, sessions, users }) =>
 
       if (request.method === "GET" && url.pathname === "/api/export") {
         if (!hasPermission(user, "data:export")) return forbidden(response);
-        return sendJson(response, 200, repository.exportAll());
+        return sendJson(response, 200, repository.exportAll(user.selectedSchoolId));
       }
       if (request.method === "POST" && url.pathname === "/api/import/replace") {
         if (!hasPermission(user, "data:import")) return forbidden(response);
         const body = await readJson(request);
-        return sendJson(response, 200, await repository.replaceAll(body.payload, body.options));
+        return sendJson(
+          response,
+          200,
+          await repository.replaceAll(body.payload, {
+            ...body.options,
+            schoolId: user.selectedSchoolId,
+          }),
+        );
       }
 
       const match = url.pathname.match(/^\/api\/stores\/([^/]+)(?:\/([^/]+))?$/);
@@ -147,10 +228,14 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           return sendJson(
             response,
             200,
-            repository.all(store, url.searchParams.get("includeDeleted") === "1"),
+            repository.all(
+              store,
+              url.searchParams.get("includeDeleted") === "1",
+              user.selectedSchoolId,
+            ),
           );
         }
-        const record = repository.get(store, id);
+        const record = repository.get(store, id, user.selectedSchoolId);
         return record
           ? sendJson(response, 200, record)
           : url.searchParams.get("optional") === "1"
@@ -159,23 +244,51 @@ export const createApiHandler = ({ repository, sessions, users }) =>
       }
 
       if (!canWriteStore(user, store)) return forbidden(response);
+      if (store === "schools" && request.method === "DELETE") {
+        return sendJson(response, 400, {
+          error: "Không thể xóa trường đang dùng để đăng nhập.",
+        });
+      }
       if (request.method === "POST" && id === "bulk") {
         const body = await readJson(request);
-        return sendJson(response, 200, await repository.bulkPut(store, body.rows || [], body.options));
+        return sendJson(
+          response,
+          200,
+          await repository.bulkPut(store, body.rows || [], {
+            ...body.options,
+            schoolId: user.selectedSchoolId,
+          }),
+        );
       }
       if (request.method === "POST" && !id) {
         const body = await readJson(request);
-        return sendJson(response, 200, await repository.put(store, body.row || {}, body.options));
+        return sendJson(
+          response,
+          200,
+          await repository.put(store, body.row || {}, {
+            ...body.options,
+            schoolId: user.selectedSchoolId,
+          }),
+        );
       }
       if (request.method === "DELETE" && id) {
         return sendJson(
           response,
           200,
-          await repository.remove(store, id, url.searchParams.get("hard") === "1"),
+          await repository.remove(
+            store,
+            id,
+            url.searchParams.get("hard") === "1",
+            { schoolId: user.selectedSchoolId },
+          ),
         );
       }
       if (request.method === "DELETE" && !id) {
-        return sendJson(response, 200, await repository.clear(store));
+        return sendJson(
+          response,
+          200,
+          await repository.clear(store, user.selectedSchoolId),
+        );
       }
       return sendJson(response, 405, { error: "Method not allowed." });
     } catch (error) {

@@ -2,32 +2,22 @@
       (() => {
         const PUBLIC_CONFIG = Object.freeze(window.TPT_APP_CONFIG || {});
         const APP = {
-          name: "Trợ lý Tổng phụ trách Đội TẠ UYÊN",
+          name: "Trợ lý Tổng phụ trách Đội",
           version: PUBLIC_CONFIG.APP_VERSION || "3.1.0-rc.1",
-          schema: Number(PUBLIC_CONFIG.SCHEMA_VERSION || 10),
+          schema: Number(PUBLIC_CONFIG.SCHEMA_VERSION || 12),
           dbName: PUBLIC_CONFIG.DB_NAME || "TPT_DOI_DB",
           appId:
             PUBLIC_CONFIG.APP_ID || "vn.giaoducso40.tpt.thcs.standard",
           schoolProfileId:
             PUBLIC_CONFIG.SCHOOL_PROFILE_ID || "thcs-local-profile-001",
-          namespace:
-            PUBLIC_CONFIG.APP_NAMESPACE || "tpt_thcs_standard_profile_001",
+          defaultSchoolProfileId:
+            PUBLIC_CONFIG.SCHOOL_PROFILE_ID || "thcs-local-profile-001",
           schoolName: PUBLIC_CONFIG.SCHOOL_NAME || "TRƯỜNG",
           schoolLevel: PUBLIC_CONFIG.SCHOOL_LEVEL || "TH-THCS",
-          googleClientId: String(PUBLIC_CONFIG.GOOGLE_CLIENT_ID || "").trim(),
-          expectedEmailHash: String(
-            PUBLIC_CONFIG.EXPECTED_GOOGLE_EMAIL_SHA256 || "",
-          )
-            .trim()
-            .toLowerCase(),
-          expectedPermissionId: String(
-            PUBLIC_CONFIG.EXPECTED_DRIVE_PERMISSION_ID || "",
-          ).trim(),
           repositoryName: String(PUBLIC_CONFIG.REPOSITORY_NAME || "").trim(),
           basePath: String(PUBLIC_CONFIG.BASE_PATH || "./").trim() || "./",
           backupFormat: "TPT-BACKUP-3",
-          driveFormat: "TPT-DRIVE-SYNC-1",
-          buildId: PUBLIC_CONFIG.BUILD_ID || "20260814-drive-rc1",
+          buildId: PUBLIC_CONFIG.BUILD_ID || "20260831-api",
         };
         const STORES = [
           "profiles",
@@ -71,8 +61,6 @@
           "generated_reports",
           "audit_logs",
           "app_settings",
-          "sync_outbox",
-          "sync_conflicts",
           "config_categories",
           "config_items",
           "custom_field_definitions",
@@ -107,8 +95,6 @@
           ...SYSTEM_STORES,
           "attachments",
           "file_versions",
-          "sync_outbox",
-          "sync_conflicts",
         ]);
         const EXTERNAL_BACKUP_EXCLUDED_STORES = new Set([
           "operation_journal",
@@ -116,19 +102,6 @@
           "form_drafts",
           "restore_staging",
           "backup_handles",
-        ]);
-        const SYNC_EXCLUDED_STORES = new Set([
-          "sync_outbox",
-          "sync_conflicts",
-          "operation_journal",
-          "internal_snapshots",
-          "form_drafts",
-          "restore_staging",
-          "backup_handles",
-          "backup_records",
-          "migration_logs",
-          "license_events",
-          "app_settings",
         ]);
         const $ = (s) => document.querySelector(s),
           $$ = (s) => [...document.querySelectorAll(s)];
@@ -240,16 +213,37 @@
           activeBackup: null,
           unlocked: false,
           setupRequired: false,
+          loginSchools: [],
+          schoolId: "",
           user: null,
           unlockTimeoutMinutes: 10,
-          sync: {
-            code: "local",
-            message: "Đã lưu trên máy chủ",
-            account: null,
-            pending: 0,
-            lastSyncedAt: null,
-          },
         };
+
+        function applyAuthenticatedUser(user) {
+          if (state.schoolId && state.schoolId !== user.selectedSchoolId) {
+            state.yearId = "";
+            state.semesterId = "all";
+            state.weekId = "";
+            state.scoreDate = "";
+            state.campusId = "all";
+            state.criteriaSetId = "";
+            state.lastScoreUndo = null;
+          }
+          state.user = user;
+          state.schoolId = user.selectedSchoolId;
+          APP.schoolProfileId = user.selectedSchoolId;
+          APP.schoolName = user.selectedSchoolName;
+          if (
+            !state.loginSchools.some(
+              (school) => school.id === user.selectedSchoolId,
+            )
+          )
+            state.loginSchools.push({
+              id: user.selectedSchoolId,
+              name: user.selectedSchoolName,
+            });
+          updateSchoolBranding();
+        }
 
         class SessionLockManager {
           constructor() {
@@ -260,7 +254,14 @@
             this.timer = null;
             this.bound = false;
           }
-          async verify({ username, password, displayName, confirmPassword }) {
+          async verify({
+            username,
+            password,
+            displayName,
+            confirmPassword,
+            schoolId,
+            schoolName,
+          }) {
             if (Date.now() < this.blockedUntil)
               return {
                 ok: false,
@@ -272,10 +273,16 @@
               if (state.setupRequired) {
                 if (password !== confirmPassword)
                   throw new Error("Mật khẩu nhập lại không khớp.");
-                user = await db.setupRoot({ username, password, displayName });
+                user = await db.setupRoot({
+                  username,
+                  password,
+                  displayName,
+                  schoolId,
+                  schoolName,
+                });
                 state.setupRequired = false;
                 updateActivationMode();
-              } else user = await db.authenticate(username, password);
+              } else user = await db.authenticate(username, password, schoolId);
             } catch (error) {
               errorMessage = error.message;
             }
@@ -284,7 +291,7 @@
               this.blockedUntil = 0;
               this.lastActivityAt = Date.now();
               state.unlocked = true;
-              state.user = user;
+              applyAuthenticatedUser(user);
               return { ok: true, wait: 0, user };
             }
             this.failedAttempts += 1;
@@ -345,7 +352,7 @@
             const el = $("#sessionChip");
             if (el)
               el.textContent = state.user
-                ? `${state.user.displayName} • ${state.user.role === "superadmin" ? "root" : "user"}`
+                ? `${state.user.displayName} • ${state.user.role === "superadmin" ? "root" : state.user.role}`
                 : `Khóa sau ${state.unlockTimeoutMinutes} phút`;
           }
           lock(message = "Ứng dụng đã khóa.") {
@@ -358,13 +365,13 @@
             state.setupRequired = false;
             state.unlocked = false;
             state.user = null;
-            cloud?.disconnectMemory?.();
             db?.disconnectMemory?.();
             closeModal();
             showActivation(message);
             db.authStatus()
               .then((status) => {
                 state.setupRequired = !!status.setupRequired;
+                state.loginSchools = status.schools || [];
                 updateActivationMode();
               })
               .catch(() => {});
@@ -469,2350 +476,6 @@
         }
         const tabCoordinator = new TabCoordinator();
 
-        class LocalDataProvider {
-          constructor() {
-            this.db = null;
-          }
-          open() {
-            return new Promise((resolve, reject) => {
-              const req = indexedDB.open(APP.dbName, APP.schema);
-              req.onupgradeneeded = (e) => {
-                this.upgradedFrom = e.oldVersion;
-                this.upgradedTo = e.newVersion;
-                const db = e.target.result,
-                  tx = e.target.transaction,
-                  commonIndexes = [
-                    ["updated_at", "updated_at"],
-                    ["school_year_id", "school_year_id"],
-                    ["campus_id", "campus_id"],
-                    ["status", "status"],
-                    ["week_id", "week_id"],
-                    ["folder_id", "folder_id"],
-                    ["category_key", "category_key"],
-                    ["related_id", "related_id"],
-                    ["school_profile_id", "school_profile_id"],
-                    ["academic_year_id", "academic_year_id"],
-                    ["tier", "tier"],
-                    ["scope", "scope"],
-                    ["device_id", "device_id"],
-                    ["operation_id", "operation_id"],
-                    ["batch_id", "batch_id"],
-                    ["sync_status", "sync_status"],
-                    ["drive_file_id", "drive_file_id"],
-                  ];
-                for (const name of STORES) {
-                  let s;
-                  if (!db.objectStoreNames.contains(name)) {
-                    s = db.createObjectStore(name, { keyPath: "id" });
-                  } else s = tx.objectStore(name);
-                  for (const [indexName, keyPath] of commonIndexes)
-                    if (!s.indexNames.contains(indexName))
-                      s.createIndex(indexName, keyPath, { unique: false });
-                }
-              };
-              req.onsuccess = () => {
-                this.db = req.result;
-                this.db.onversionchange = () => {
-                  this.db.close();
-                  toast(
-                    "Cơ sở dữ liệu vừa được nâng cấp ở thẻ khác. Hãy tải lại trang.",
-                    "bad",
-                  );
-                };
-                resolve(this);
-              };
-              req.onerror = () => reject(req.error);
-              req.onblocked = () =>
-                reject(
-                  new Error(
-                    "Một thẻ khác đang giữ phiên bản cơ sở dữ liệu cũ. Hãy đóng thẻ đó rồi thử lại.",
-                  ),
-                );
-            });
-          }
-          tx(store, mode = "readonly") {
-            return this.db.transaction(store, mode).objectStore(store);
-          }
-          all(store) {
-            return new Promise((res, rej) => {
-              const r = this.tx(store).getAll();
-              r.onsuccess = () => res(r.result.filter((x) => !x.deleted_at));
-              r.onerror = () => rej(r.error);
-            });
-          }
-          allIncludingDeleted(store) {
-            return new Promise((res, rej) => {
-              const r = this.tx(store).getAll();
-              r.onsuccess = () => res(r.result);
-              r.onerror = () => rej(r.error);
-            });
-          }
-          get(store, id) {
-            return new Promise((res, rej) => {
-              const r = this.tx(store).get(id);
-              r.onsuccess = () => res(r.result);
-              r.onerror = () => rej(r.error);
-            });
-          }
-          async assertRecordWritable(store, row) {
-            tabCoordinator.assertWritable();
-            const yearId = row.school_year_id || row.academic_year_id;
-            if (
-              !yearId ||
-              [
-                "school_years",
-                "year_transition_logs",
-                "audit_logs",
-                "operation_journal",
-                "internal_snapshots",
-                "backup_records",
-                "report_packages",
-              ].includes(store) ||
-              state.yearEditOverrides.has(yearId)
-            )
-              return;
-            const year = await this.get("school_years", yearId);
-            if (year?.read_only || year?.status === "archived")
-              throw new Error(
-                "Năm học đã đóng và đang ở chế độ chỉ đọc. Cần mở quyền sửa có ghi lý do trong Trung tâm cấu hình.",
-              );
-          }
-          normalizeRecord(
-            row,
-            existing = null,
-            preserveMetadata = false,
-            resolveConflict = false,
-          ) {
-            const stamp = now();
-            const yearId = row.school_year_id || row.academic_year_id || null;
-            return {
-              ...row,
-              id: row.id || uid(),
-              school_profile_id: row.school_profile_id || APP.schoolProfileId,
-              ...(yearId
-                ? {
-                    school_year_id: row.school_year_id || yearId,
-                    academic_year_id: row.academic_year_id || yearId,
-                  }
-                : {}),
-              created_at: row.created_at || existing?.created_at || stamp,
-              updated_at: preserveMetadata
-                ? row.updated_at || existing?.updated_at || stamp
-                : stamp,
-              revision: preserveMetadata
-                ? Number(row.revision || existing?.revision || 1)
-                : Math.max(
-                    Number(existing?.revision || 0),
-                    resolveConflict ? Number(row.revision || 0) : 0,
-                  ) + 1,
-              source: row.source || existing?.source || "local-web",
-              device_id: preserveMetadata
-                ? row.device_id || existing?.device_id || DEVICE_ID
-                : DEVICE_ID,
-              sync_status: preserveMetadata
-                ? row.sync_status || existing?.sync_status || "synced"
-                : "pending",
-            };
-          }
-          async put(
-            store,
-            row,
-            {
-              audit = true,
-              journal = true,
-              preserveMetadata = false,
-              sync = true,
-              resolveConflict = false,
-              silent = false,
-            } = {},
-          ) {
-            await this.assertRecordWritable(store, row);
-            if (!silent) setSave("Đang lưu trên thiết bị…", "saving");
-            const shouldSync = sync && !SYNC_EXCLUDED_STORES.has(store),
-              names = [store];
-            if (audit && store !== "audit_logs") names.push("audit_logs");
-            if (journal && store !== "operation_journal")
-              names.push("operation_journal");
-            if (shouldSync) names.push("sync_outbox");
-            return new Promise((res, rej) => {
-              const tx = this.db.transaction([...new Set(names)], "readwrite"),
-                os = tx.objectStore(store),
-                id = row.id || uid(),
-                getReq = os.get(id);
-              let rec,
-                conflict = null;
-              getReq.onsuccess = () => {
-                try {
-                  const existing = getReq.result || null;
-                  if (
-                    existing &&
-                    Number.isFinite(Number(row.revision)) &&
-                    Number(row.revision) !== Number(existing.revision || 0) &&
-                    !preserveMetadata &&
-                    !resolveConflict
-                  ) {
-                    conflict = new Error(
-                      "Bản ghi đã thay đổi ở nơi khác; dữ liệu chưa được ghi đè.",
-                    );
-                    conflict.name = "RevisionConflictError";
-                    tx.abort();
-                    return;
-                  }
-                  rec = this.normalizeRecord(
-                    { ...row, id },
-                    existing,
-                    preserveMetadata,
-                    resolveConflict,
-                  );
-                  if (!shouldSync && preserveMetadata)
-                    rec.sync_status = row.sync_status || "synced";
-                  os.put(rec);
-                  const action = existing ? "update" : "create";
-                  if (audit && store !== "audit_logs")
-                    tx.objectStore("audit_logs").put(
-                      this.normalizeRecord(
-                        {
-                          id: uid(),
-                          action,
-                          entity: store,
-                          entity_id: rec.id,
-                          summary:
-                            rec.name ||
-                            rec.title ||
-                            rec.code ||
-                            rec.class_name ||
-                            "",
-                        },
-                        null,
-                        true,
-                      ),
-                    );
-                  if (journal && store !== "operation_journal")
-                    tx.objectStore("operation_journal").put(
-                      this.normalizeRecord(
-                        {
-                          id: uid(),
-                          operation_id: uid(),
-                          operation: action,
-                          entity: store,
-                          entity_id: rec.id,
-                          status: "committed",
-                          committed_at: now(),
-                        },
-                        null,
-                        true,
-                      ),
-                    );
-                  if (shouldSync)
-                    tx.objectStore("sync_outbox").put({
-                      id: uid(),
-                      operation_id: uid(),
-                      entity_type: store,
-                      entity_id: rec.id,
-                      action: rec.deleted_at ? "delete" : action,
-                      base_revision: Number(existing?.revision || 0),
-                      new_revision: Number(rec.revision || 1),
-                      payload: withoutBinary(rec),
-                      device_id: DEVICE_ID,
-                      school_profile_id: APP.schoolProfileId,
-                      academic_year_id:
-                        rec.academic_year_id || rec.school_year_id || null,
-                      status: "pending",
-                      attempts: 0,
-                      batch_id: null,
-                      checksum: null,
-                      created_at: now(),
-                      updated_at: now(),
-                    });
-                } catch (error) {
-                  conflict = error;
-                  try {
-                    tx.abort();
-                  } catch (_) {}
-                }
-              };
-              tx.oncomplete = () => {
-                if (!silent)
-                  setSave(
-                    `Đã lưu trên thiết bị lúc ${new Date().toLocaleTimeString("vi-VN")}`,
-                  );
-                tabCoordinator.announceChange(store, rec.id);
-                if (shouldSync) cloud.schedule();
-                res(rec);
-              };
-              tx.onabort = tx.onerror = () => {
-                const error = conflict || tx.error || new Error("Lưu thất bại");
-                setSave(
-                  error.name === "RevisionConflictError"
-                    ? "Xung đột dữ liệu – cần xem lại"
-                    : error.name === "QuotaExceededError"
-                      ? "Lưu thất bại – thiết bị thiếu dung lượng"
-                      : "Lưu thất bại – thử lại",
-                  "error",
-                );
-                rej(error);
-              };
-            });
-          }
-          async bulkPut(
-            store,
-            rows,
-            { preserveMetadata = false, sync = true, silent = false } = {},
-          ) {
-            tabCoordinator.assertWritable();
-            const preparedRows = rows.map((row) => ({
-                ...row,
-                id: row.id || uid(),
-              })),
-              ids = new Set();
-            for (const row of preparedRows) {
-              if (ids.has(row.id))
-                throw new Error(
-                  `Lô dữ liệu có ID trùng (${row.id}); chưa ghi thay đổi nào.`,
-                );
-              ids.add(row.id);
-              await this.assertRecordWritable(store, row);
-            }
-            if (!silent) setSave("Đang lưu trên thiết bị…", "saving");
-            const shouldSync = sync && !SYNC_EXCLUDED_STORES.has(store),
-              stores = [store, "operation_journal"];
-            if (shouldSync) stores.push("sync_outbox");
-            return new Promise((res, rej) => {
-              const tx = this.db.transaction(
-                  [...new Set(stores)],
-                  "readwrite",
-                ),
-                os = tx.objectStore(store);
-              let failure = null;
-              try {
-                preparedRows.forEach((row) => {
-                  const getReq = os.get(row.id);
-                  getReq.onsuccess = () => {
-                    try {
-                      const existing = getReq.result || null;
-                      if (
-                        existing &&
-                        Number.isFinite(Number(row.revision)) &&
-                        Number(row.revision) !==
-                          Number(existing.revision || 0) &&
-                        !preserveMetadata
-                      ) {
-                        const conflict = new Error(
-                          `Bản ghi ${row.id} đã thay đổi ở nơi khác; toàn bộ lô chưa được ghi.`,
-                        );
-                        conflict.name = "RevisionConflictError";
-                        throw conflict;
-                      }
-                      const rec = this.normalizeRecord(
-                        row,
-                        existing,
-                        preserveMetadata,
-                      );
-                      if (!shouldSync && preserveMetadata)
-                        rec.sync_status = row.sync_status || "synced";
-                      os.put(rec);
-                      if (shouldSync)
-                        tx.objectStore("sync_outbox").put({
-                          id: uid(),
-                          operation_id: uid(),
-                          entity_type: store,
-                          entity_id: rec.id,
-                          action: rec.deleted_at
-                            ? "delete"
-                            : existing
-                              ? "update"
-                              : "create",
-                          base_revision: Number(existing?.revision || 0),
-                          new_revision: Number(rec.revision || 1),
-                          payload: withoutBinary(rec),
-                          device_id: DEVICE_ID,
-                          school_profile_id: APP.schoolProfileId,
-                          academic_year_id:
-                            rec.academic_year_id || rec.school_year_id || null,
-                          status: "pending",
-                          attempts: 0,
-                          batch_id: null,
-                          checksum: null,
-                          created_at: now(),
-                          updated_at: now(),
-                        });
-                    } catch (error) {
-                      failure ||= error;
-                      try {
-                        tx.abort();
-                      } catch (_) {}
-                    }
-                  };
-                  getReq.onerror = () => {
-                    failure ||= getReq.error;
-                    try {
-                      tx.abort();
-                    } catch (_) {}
-                  };
-                });
-                tx.objectStore("operation_journal").put(
-                  this.normalizeRecord(
-                    {
-                      id: uid(),
-                      operation_id: uid(),
-                      operation: "bulk_put",
-                      entity: store,
-                      item_count: preparedRows.length,
-                      status: "committed",
-                      committed_at: now(),
-                    },
-                    null,
-                    true,
-                  ),
-                );
-              } catch (error) {
-                failure = error;
-                try {
-                  tx.abort();
-                } catch (_) {}
-              }
-              tx.oncomplete = () => {
-                if (!silent)
-                  setSave(
-                    `Đã lưu trên thiết bị lúc ${new Date().toLocaleTimeString("vi-VN")}`,
-                  );
-                tabCoordinator.announceChange(store, "bulk");
-                if (shouldSync) cloud.schedule();
-                res(preparedRows.length);
-              };
-              tx.onabort = tx.onerror = () => {
-                const error =
-                  failure || tx.error || new Error("Ghi hàng loạt thất bại.");
-                setSave(
-                  error.name === "RevisionConflictError"
-                    ? "Xung đột dữ liệu – toàn bộ lô chưa được ghi"
-                    : error.name === "QuotaExceededError"
-                      ? "Lưu thất bại – thiết bị thiếu dung lượng"
-                      : "Lưu thất bại – thử lại",
-                  "error",
-                );
-                rej(error);
-              };
-            });
-          }
-          remove(store, id) {
-            return this.get(store, id).then((r) =>
-              r ? this.put(store, { ...r, deleted_at: now() }) : null,
-            );
-          }
-          hardDelete(store, id, force = false) {
-            tabCoordinator.assertWritable();
-            if (!force && !SYNC_EXCLUDED_STORES.has(store))
-              return this.remove(store, id);
-            return new Promise((res, rej) => {
-              const tx = this.db.transaction(store, "readwrite"),
-                request = tx.objectStore(store).delete(id);
-              request.onerror = () => rej(request.error);
-              tx.oncomplete = () => res(true);
-              tx.onabort = tx.onerror = () =>
-                rej(tx.error || new Error("Xóa vật lý thất bại."));
-            });
-          }
-          hardClear(store) {
-            tabCoordinator.assertWritable();
-            return new Promise((res, rej) => {
-              const r = this.tx(store, "readwrite").clear();
-              r.onsuccess = () => res();
-              r.onerror = () => rej(r.error);
-            });
-          }
-          async exportAll() {
-            const data = {};
-            for (const s of STORES)
-              data[s] = await new Promise((res, rej) => {
-                const r = this.tx(s).getAll();
-                r.onsuccess = () => res(r.result);
-                r.onerror = () => rej(r.error);
-              });
-            return {
-              app: APP.name,
-              version: APP.version,
-              schema: APP.schema,
-              exported_at: now(),
-              data,
-            };
-          }
-          async replaceAll(payload, { sync = true } = {}) {
-            tabCoordinator.assertWritable();
-            if (
-              !payload?.data ||
-              !Number.isInteger(payload.schema) ||
-              payload.schema > APP.schema
-            )
-              throw new Error(
-                "Tệp sai định dạng hoặc dùng phiên bản dữ liệu mới hơn ứng dụng.",
-              );
-            for (const s of STORES)
-              if (
-                payload.data[s] !== undefined &&
-                !Array.isArray(payload.data[s])
-              )
-                throw new Error(`Dữ liệu phân hệ ${s} không hợp lệ.`);
-            const replaceable = STORES.filter(
-              (s) =>
-                !EXTERNAL_BACKUP_EXCLUDED_STORES.has(s) &&
-                !["sync_outbox", "sync_conflicts"].includes(s) &&
-                Array.isArray(payload.data[s]),
-              ),
-              previous = Object.fromEntries(
-                await Promise.all(
-                  replaceable.map(async (store) => [
-                    store,
-                    await this.allIncludingDeleted(store),
-                  ]),
-                ),
-              ),
-              transactionStores = [...replaceable];
-            if (sync) transactionStores.push("sync_outbox");
-            return new Promise((res, rej) => {
-              const tx = this.db.transaction(
-                [...new Set(transactionStores)],
-                "readwrite",
-              );
-              if (sync) tx.objectStore("sync_outbox").clear();
-              for (const s of replaceable) {
-                const os = tx.objectStore(s),
-                  incomingIds = new Set(
-                    (payload.data[s] || []).map((row) => row.id),
-                  );
-                os.clear();
-                for (const row of payload.data[s] || []) {
-                  const rec = this.normalizeRecord(
-                    row,
-                    null,
-                    !sync,
-                    sync,
-                  );
-                  rec.sync_status = sync ? "pending" : "synced";
-                  os.put(rec);
-                  if (sync && !SYNC_EXCLUDED_STORES.has(s))
-                    tx.objectStore("sync_outbox").put({
-                      id: uid(),
-                      operation_id: uid(),
-                      entity_type: s,
-                      entity_id: rec.id,
-                      action: rec.deleted_at ? "delete" : "upsert",
-                      base_revision: Math.max(
-                        0,
-                        Number(rec.revision || 1) - 1,
-                      ),
-                      new_revision: Number(rec.revision || 1),
-                      payload: withoutBinary(rec),
-                      device_id: DEVICE_ID,
-                      school_profile_id: APP.schoolProfileId,
-                      status: "pending",
-                      attempts: 0,
-                      created_at: now(),
-                      updated_at: now(),
-                    });
-                }
-                if (sync && !SYNC_EXCLUDED_STORES.has(s))
-                  for (const old of previous[s] || [])
-                    if (!incomingIds.has(old.id)) {
-                      const tombstone = this.normalizeRecord(
-                        { ...old, deleted_at: now() },
-                        old,
-                        false,
-                        true,
-                      );
-                      tombstone.sync_status = "pending";
-                      os.put(tombstone);
-                      tx.objectStore("sync_outbox").put({
-                        id: uid(),
-                        operation_id: uid(),
-                        entity_type: s,
-                        entity_id: tombstone.id,
-                        action: "delete",
-                        base_revision: Number(old.revision || 0),
-                        new_revision: Number(tombstone.revision || 1),
-                        payload: withoutBinary(tombstone),
-                        device_id: DEVICE_ID,
-                        school_profile_id: APP.schoolProfileId,
-                        status: "pending",
-                        attempts: 0,
-                        created_at: now(),
-                        updated_at: now(),
-                      });
-                    }
-              }
-              tx.oncomplete = () => {
-                if (sync) cloud.schedule(100);
-                res(true);
-              };
-              tx.onerror = () =>
-                rej(tx.error || new Error("Giao dịch phục hồi thất bại."));
-              tx.onabort = () =>
-                rej(
-                  tx.error ||
-                    new Error("Đã hủy phục hồi; dữ liệu cũ được giữ nguyên."),
-                );
-            });
-          }
-          async mergeAll(payload) {
-            tabCoordinator.assertWritable();
-            const stores = STORES.filter(
-              (s) =>
-                !EXTERNAL_BACKUP_EXCLUDED_STORES.has(s) &&
-                !SYNC_EXCLUDED_STORES.has(s) &&
-                Array.isArray(payload.data?.[s]),
-            );
-            const decisions = {},
-              stats = { inserted: 0, updated: 0, kept_current: 0, stores: {} };
-            for (const store of stores) {
-              const current = new Map(
-                (await this.allIncludingDeleted(store)).map((x) => [x.id, x]),
-              );
-              decisions[store] = [];
-              const localStats = { inserted: 0, updated: 0, kept_current: 0 };
-              for (const incoming of payload.data[store]) {
-                const existing = current.get(incoming.id);
-                if (!existing) {
-                  decisions[store].push(incoming);
-                  stats.inserted++;
-                  localStats.inserted++;
-                } else {
-                  const incomingRevision = Number(incoming.revision || 0),
-                    currentRevision = Number(existing.revision || 0),
-                    incomingTime = Date.parse(incoming.updated_at || 0) || 0,
-                    currentTime = Date.parse(existing.updated_at || 0) || 0;
-                  if (
-                    incomingRevision > currentRevision ||
-                    (incomingRevision === currentRevision &&
-                      incomingTime > currentTime)
-                  ) {
-                    decisions[store].push(incoming);
-                    stats.updated++;
-                    localStats.updated++;
-                  } else {
-                    stats.kept_current++;
-                    localStats.kept_current++;
-                  }
-                }
-              }
-              stats.stores[store] = localStats;
-            }
-            const writeStores = stores.filter((s) => decisions[s].length);
-            if (!writeStores.length) return stats;
-            for (const store of writeStores)
-              for (const row of decisions[store])
-                await this.put(store, row, {
-                  audit: false,
-                  journal: false,
-                  resolveConflict: true,
-                  sync: true,
-                  silent: true,
-                });
-            cloud.schedule(100);
-            return stats;
-          }
-        }
-        class GoogleDriveSyncProvider {
-          constructor() {
-            this.scope = "https://www.googleapis.com/auth/drive.appdata";
-            this.accessToken = null;
-            this.tokenExpiresAt = 0;
-            this.tokenClient = null;
-            this.libraryPromise = null;
-            this.authPromise = null;
-            this.authResolve = null;
-            this.authReject = null;
-            this.account = null;
-            this.identityBlockedMessage = "";
-            this.pairing = null;
-            this.syncPromise = null;
-            this.syncTimer = null;
-            this.retryTimer = null;
-            this.periodicTimer = null;
-            this.abortController = null;
-            this.started = false;
-            this.remoteContext = null;
-            this.pendingPairingAssessment = false;
-            this.pairingAssessmentPromise = null;
-          }
-          isConfigured() {
-            return (
-              /^[0-9A-Za-z._-]+\.apps\.googleusercontent\.com$/.test(
-                APP.googleClientId,
-              ) &&
-              (!!APP.expectedPermissionId ||
-                /^[a-f0-9]{64}$/.test(APP.expectedEmailHash))
-            );
-          }
-          configurationIssues() {
-            const issues = [];
-            if (
-              !/^[0-9A-Za-z._-]+\.apps\.googleusercontent\.com$/.test(
-                APP.googleClientId,
-              )
-            )
-              issues.push("Thiếu hoặc sai GOOGLE_CLIENT_ID");
-            if (
-              !APP.expectedPermissionId &&
-              !/^[a-f0-9]{64}$/.test(APP.expectedEmailHash)
-            )
-              issues.push("Chưa ghép Gmail bằng email hash hoặc permission ID");
-            return issues;
-          }
-          setStatus(code, message, extra = {}) {
-            state.sync = {
-              ...state.sync,
-              code,
-              message,
-              account: this.account,
-              ...extra,
-            };
-            setSyncStatus(code, message);
-          }
-          status() {
-            return {
-              configured: this.isConfigured(),
-              connected: this.hasToken() && !!this.account,
-              account: this.account,
-              pairing: this.pairing,
-              ...state.sync,
-              issues: this.configurationIssues(),
-            };
-          }
-          hasToken() {
-            return (
-              !!this.accessToken && Date.now() < this.tokenExpiresAt - 30000
-            );
-          }
-          start() {
-            if (this.started) return;
-            this.started = true;
-            if (this.isConfigured() && navigator.onLine)
-              this.preloadIdentityLibrary().catch(() => {});
-            this.periodicTimer = setInterval(() => {
-              if (
-                state.unlocked &&
-                !document.hidden &&
-                navigator.onLine &&
-                this.hasToken() &&
-                this.isPaired()
-              )
-                this.sync().catch(() => {});
-            }, 60000);
-          }
-          async onLocalReady() {
-            if (!db.db || !this.hasToken() || !this.account) return false;
-            if (this.pairingAssessmentPromise)
-              return this.pairingAssessmentPromise;
-            this.pendingPairingAssessment = false;
-            this.pairingAssessmentPromise = this.assessPairing()
-              .then((pairing) => {
-                if (this.isPaired()) this.sync().catch(() => {});
-                return pairing;
-              })
-              .catch((error) => {
-                this.setStatus("error", error.message);
-                throw error;
-              })
-              .finally(() => {
-                this.pairingAssessmentPromise = null;
-              });
-            return this.pairingAssessmentPromise;
-          }
-          preloadIdentityLibrary() {
-            if (!this.isConfigured() || !navigator.onLine)
-              return Promise.resolve(false);
-            if (window.google?.accounts?.oauth2) {
-              this.initializeTokenClient();
-              return Promise.resolve(true);
-            }
-            if (this.libraryPromise) return this.libraryPromise;
-            this.libraryPromise = new Promise((resolve, reject) => {
-              const existing = document.querySelector("#googleIdentityScript");
-              if (existing) {
-                existing.addEventListener("load", () => {
-                  this.initializeTokenClient();
-                  resolve(true);
-                });
-                existing.addEventListener("error", () =>
-                  reject(new Error("Không tải được Google Identity Services.")),
-                );
-                return;
-              }
-              const script = document.createElement("script");
-              script.id = "googleIdentityScript";
-              script.src = "https://accounts.google.com/gsi/client";
-              script.async = true;
-              script.defer = true;
-              script.onload = () => {
-                this.initializeTokenClient();
-                resolve(true);
-              };
-              script.onerror = () => {
-                this.libraryPromise = null;
-                reject(
-                  new Error(
-                    "Không tải được thư viện đăng nhập Google. Dữ liệu cục bộ vẫn dùng được.",
-                  ),
-                );
-              };
-              document.head.append(script);
-            });
-            return this.libraryPromise;
-          }
-          initializeTokenClient() {
-            if (this.tokenClient || !window.google?.accounts?.oauth2) return;
-            this.tokenClient = window.google.accounts.oauth2.initTokenClient({
-              client_id: APP.googleClientId,
-              scope: this.scope,
-              callback: (response) => this.handleTokenResponse(response),
-              error_callback: (error) => this.handlePopupError(error),
-            });
-          }
-          connectFromUserGesture({ selectAccount = false } = {}) {
-            if (!this.isConfigured()) {
-              const message =
-                "Chưa cấu hình Google Drive. Hãy tạo app-config.js bằng SETUP_CONFIG.html.";
-              this.setStatus("blocked", message);
-              return Promise.resolve(false);
-            }
-            if (!navigator.onLine) {
-              this.setStatus(
-                "offline",
-                "Ngoại tuyến – thay đổi đang chờ đồng bộ",
-              );
-              return Promise.resolve(false);
-            }
-            if (this.hasToken() && this.account) {
-              if (db.db) this.onLocalReady().catch(() => {});
-              return Promise.resolve(true);
-            }
-            this.identityBlockedMessage = "";
-            if (!this.tokenClient) {
-              this.setStatus("connecting", "Đang tải kết nối Google Drive");
-              return this.preloadIdentityLibrary()
-                .then(() => this.requestAccessToken(selectAccount))
-                .catch((error) => {
-                  this.setStatus("error", error.message);
-                  throw error;
-                });
-            }
-            return this.requestAccessToken(selectAccount);
-          }
-          requestAccessToken(selectAccount = false) {
-            if (this.authPromise) return this.authPromise;
-            this.setStatus("connecting", "Đang kết nối Google Drive");
-            this.authPromise = new Promise((resolve, reject) => {
-              this.authResolve = resolve;
-              this.authReject = reject;
-              try {
-                this.tokenClient.requestAccessToken({
-                  prompt: selectAccount ? "select_account" : "",
-                });
-              } catch (error) {
-                this.finishAuth(false, error);
-              }
-            });
-            return this.authPromise;
-          }
-          async handleTokenResponse(response) {
-            if (response?.error || !response?.access_token) {
-              this.finishAuth(
-                false,
-                new Error(
-                  response?.error_description ||
-                    "Google không cấp quyền truy cập Drive.",
-                ),
-              );
-              return;
-            }
-            this.accessToken = response.access_token;
-            this.tokenExpiresAt =
-              Date.now() + Math.max(60, Number(response.expires_in || 3600)) * 1000;
-            try {
-              await this.verifyIdentity();
-              if (db.db) await this.onLocalReady();
-              else {
-                this.pendingPairingAssessment = true;
-                this.setStatus(
-                  "connecting",
-                  "Đã xác minh Gmail; đang mở dữ liệu trên thiết bị",
-                );
-              }
-              this.finishAuth(true, true);
-            } catch (error) {
-              this.accessToken = null;
-              this.tokenExpiresAt = 0;
-              this.finishAuth(false, error);
-            }
-          }
-          handlePopupError(error) {
-            const code = error?.type || error?.error || "popup_error";
-            const message =
-              code === "popup_failed_to_open"
-                ? "Trình duyệt đã chặn cửa sổ Google. Hãy cho phép cửa sổ bật lên rồi bấm Kết nối lại."
-                : code === "popup_closed"
-                  ? "Cửa sổ Google đã đóng trước khi hoàn tất."
-                  : "Không thể mở luồng cấp quyền Google Drive.";
-            this.finishAuth(false, new Error(message));
-          }
-          finishAuth(ok, value) {
-            const resolve = this.authResolve,
-              reject = this.authReject;
-            this.authPromise = null;
-            this.authResolve = null;
-            this.authReject = null;
-            if (ok) resolve?.(value);
-            else {
-              this.setStatus("error", value?.message || "Kết nối thất bại");
-              reject?.(value);
-            }
-          }
-          async verifyIdentity() {
-            const about = await this.api(
-                "/about?fields=user(permissionId,displayName,emailAddress)",
-              ),
-              user = about?.user || {},
-              email = String(user.emailAddress || "").trim().toLowerCase(),
-              emailHash = email ? await sha256Text(email) : "";
-            this.account = {
-              permissionId: String(user.permissionId || ""),
-              displayName: String(user.displayName || "Tài khoản Google"),
-              email,
-              emailHash,
-            };
-            if (
-              APP.expectedPermissionId &&
-              this.account.permissionId !== APP.expectedPermissionId
-            ) {
-              this.identityBlockedMessage = `Đã chọn sai Gmail (${email || this.account.displayName}). Đồng bộ đã bị chặn; hãy chọn Đổi tài khoản.`;
-              throw new Error(this.identityBlockedMessage);
-            }
-            if (
-              !APP.expectedPermissionId &&
-              APP.expectedEmailHash &&
-              emailHash !== APP.expectedEmailHash
-            ) {
-              this.identityBlockedMessage = `Đã chọn sai Gmail (${email || this.account.displayName}). Đồng bộ đã bị chặn; hãy chọn Đổi tài khoản.`;
-              throw new Error(this.identityBlockedMessage);
-            }
-          }
-          pairKey() {
-            return `${APP.appId}:drive-paired:${this.account?.permissionId || "none"}`;
-          }
-          isPaired() {
-            try {
-              return !!this.account && localStorage.getItem(this.pairKey()) === "1";
-            } catch (_) {
-              return !!this.pairing?.confirmedForSession;
-            }
-          }
-          markPaired() {
-            try {
-              localStorage.setItem(this.pairKey(), "1");
-            } catch (_) {
-              if (this.pairing) this.pairing.confirmedForSession = true;
-            }
-          }
-          clearPaired() {
-            try {
-              localStorage.removeItem(this.pairKey());
-            } catch (_) {}
-            if (this.pairing) this.pairing.confirmedForSession = false;
-          }
-          disconnectMemory() {
-            this.abortController?.abort();
-            clearTimeout(this.syncTimer);
-            clearTimeout(this.retryTimer);
-            this.accessToken = null;
-            this.tokenExpiresAt = 0;
-            this.account = null;
-            this.identityBlockedMessage = "";
-            this.pairing = null;
-            this.pendingPairingAssessment = false;
-            this.pairingAssessmentPromise = null;
-            this.remoteContext = null;
-            if (navigator.onLine && this.isConfigured())
-              this.setStatus("reconnect", "Cần kết nối lại Google Drive");
-            else if (!navigator.onLine)
-              this.setStatus(
-                "offline",
-                "Ngoại tuyến – thay đổi đang chờ đồng bộ",
-              );
-            else this.setStatus("local", "Chỉ lưu trên thiết bị này");
-          }
-          async changeAccount() {
-            this.disconnectMemory();
-            this.identityBlockedMessage = "";
-            return this.connectFromUserGesture({ selectAccount: true });
-          }
-          async api(path, options = {}) {
-            if (!this.accessToken)
-              throw new Error("Cần kết nối lại Google Drive.");
-            const { raw = false, ...requestOptions } = options;
-            const url = /^https:\/\//.test(path)
-                ? path
-                : `https://www.googleapis.com/drive/v3${path}`,
-              headers = new Headers(requestOptions.headers || {});
-            headers.set("Authorization", `Bearer ${this.accessToken}`);
-            const response = await fetch(url, {
-              ...requestOptions,
-              headers,
-              signal: requestOptions.signal || this.abortController?.signal,
-            });
-            if (response.status === 204) return null;
-            if (!response.ok) {
-              let detail = null;
-              try {
-                detail = await response.json();
-              } catch (_) {}
-              const reason =
-                  detail?.error?.errors?.[0]?.reason ||
-                  detail?.error?.status ||
-                  "",
-                isRateLimited =
-                  response.status === 429 ||
-                  (response.status === 403 &&
-                    /rateLimitExceeded|userRateLimitExceeded/i.test(reason)),
-                error = new Error(
-                  response.status === 401
-                    ? "Cần kết nối lại Google Drive."
-                    : response.status === 403 &&
-                        /storageQuotaExceeded|quotaExceeded/.test(reason)
-                      ? "Google Drive hết dung lượng hoặc đã vượt hạn mức. Dữ liệu vẫn được giữ trên thiết bị."
-                      : isRateLimited
-                        ? "Google Drive đang giới hạn tần suất. Dữ liệu local/outbox vẫn được giữ và ứng dụng sẽ thử lại có giãn cách."
-                      : response.status === 403
-                        ? "Google Drive từ chối quyền truy cập. Dữ liệu vẫn được giữ trên thiết bị."
-                        : response.status === 404
-                          ? "Không tìm thấy tệp dữ liệu Google Drive. Dữ liệu local vẫn được giữ; hãy kiểm tra và ghép lại Drive."
-                          : `Yêu cầu Google Drive thất bại (${response.status}).`,
-                );
-              error.status = response.status;
-              error.reason = reason;
-              error.retryable =
-                isRateLimited || response.status >= 500;
-              if (response.status === 401) {
-                this.accessToken = null;
-                this.tokenExpiresAt = 0;
-                this.setStatus("reconnect", "Cần kết nối lại Google Drive");
-              }
-              throw error;
-            }
-            if (raw) return response;
-            const type = response.headers.get("content-type") || "";
-            if (type.includes("application/json")) return response.json();
-            return response;
-          }
-          async retry(task, limit = 3) {
-            let last;
-            for (let attempt = 0; attempt < limit; attempt++) {
-              try {
-                return await task();
-              } catch (error) {
-                last = error;
-                if (!error.retryable || attempt === limit - 1) throw error;
-                const delay = Math.min(
-                  2500,
-                  300 * 2 ** attempt + Math.random() * 250,
-                );
-                await new Promise((resolve) => setTimeout(resolve, delay));
-              }
-            }
-            throw last;
-          }
-          async listFiles() {
-            const files = [];
-            let pageToken = "";
-            const prefix = APP.namespace.replace(/'/g, "\\'");
-            do {
-              const query = new URLSearchParams({
-                  spaces: "appDataFolder",
-                  pageSize: "1000",
-                  fields:
-                    "nextPageToken,files(id,name,mimeType,createdTime,modifiedTime,size,version,appProperties)",
-                  q: `name contains '${prefix}__' and trashed = false`,
-                  ...(pageToken ? { pageToken } : {}),
-                }),
-                result = await this.retry(() =>
-                  this.api(`/files?${query.toString()}`),
-                );
-              files.push(...(result.files || []));
-              pageToken = result.nextPageToken || "";
-            } while (pageToken);
-            return files;
-          }
-          manifestName() {
-            return `${APP.namespace}__manifest.json`;
-          }
-          findNewest(files, kind) {
-            return files
-              .filter(
-                (file) =>
-                  file.appProperties?.kind === kind ||
-                  file.name.startsWith(`${APP.namespace}__${kind}__`),
-              )
-              .sort((a, b) =>
-                String(b.modifiedTime || b.createdTime).localeCompare(
-                  String(a.modifiedTime || a.createdTime),
-                ),
-              )[0];
-          }
-          async downloadText(fileId) {
-            const response = await this.retry(() =>
-              this.api(`/files/${encodeURIComponent(fileId)}?alt=media`, {
-                raw: true,
-              }),
-            );
-            return response.text();
-          }
-          async downloadJson(file) {
-            let value;
-            try {
-              value = JSON.parse(await this.downloadText(file.id));
-            } catch (_) {
-              throw new Error(`Tệp Drive ${file.name} không phải JSON hợp lệ.`);
-            }
-            return value;
-          }
-          validateIdentity(value, label = "dữ liệu Drive") {
-            if (value?.app_id !== APP.appId)
-              throw new Error(`${label} thuộc ứng dụng khác (APP_ID không khớp).`);
-            if (value?.school_profile_id !== APP.schoolProfileId)
-              throw new Error(
-                `${label} thuộc hồ sơ trường khác (SCHOOL_PROFILE_ID không khớp).`,
-              );
-            if (value?.app_namespace !== APP.namespace)
-              throw new Error(`${label} có namespace không khớp.`);
-            if (Number(value?.schema || 0) > APP.schema)
-              throw new Error(
-                `${label} cần phiên bản ứng dụng mới hơn (schema ${value.schema}).`,
-              );
-          }
-          async readManifest(files) {
-            const file = files
-              .filter((item) => item.name === this.manifestName())
-              .sort((a, b) =>
-                String(b.modifiedTime).localeCompare(String(a.modifiedTime)),
-              )[0];
-            if (!file) return { file: null, value: null };
-            const value = await this.downloadJson(file);
-            if (value.format !== APP.driveFormat)
-              throw new Error("Manifest Drive sai định dạng.");
-            this.validateIdentity(value, "Manifest Drive");
-            if (
-              value.drive_permission_id &&
-              value.drive_permission_id !== this.account.permissionId
-            )
-              throw new Error(
-                "Manifest Drive đã ghép với Gmail khác; đồng bộ bị chặn.",
-              );
-            return { file, value };
-          }
-          async localRecordCount() {
-            let count = 0,
-              nonSample = 0;
-            for (const store of STORES) {
-              if (SYNC_EXCLUDED_STORES.has(store)) continue;
-              const rows = await db.all(store);
-              count += rows.length;
-              nonSample += rows.filter((row) => !row.is_sample).length;
-            }
-            return { count, nonSample };
-          }
-          async assessPairing() {
-            this.setStatus("connecting", "Đang kiểm tra kho Google Drive");
-            const files = await this.listFiles(),
-              manifest = await this.readManifest(files),
-              local = await this.localRecordCount(),
-              remoteExists = !!(
-                manifest.file ||
-                this.findNewest(files, "snapshot") ||
-                this.findNewest(files, "ops")
-              );
-            this.remoteContext = { files, manifest };
-            const localOnboarded = !!(await setting("onboarded"));
-            if (this.isPaired() && !manifest.file) this.clearPaired();
-            this.pairing = {
-              required: !this.isPaired(),
-              remoteExists,
-              localCount: local.count,
-              localNonSampleCount: local.nonSample,
-              localOnboarded,
-              remoteFileCount: files.length,
-              manifest: manifest.value,
-            };
-            if (this.isPaired() && manifest.file) {
-              this.setStatus("pending", "Đã kết nối; đang kiểm tra thay đổi");
-              return this.pairing;
-            }
-            this.setStatus(
-              "pairing",
-              "Cần xác nhận ghép dữ liệu thiết bị với Google Drive",
-            );
-            setTimeout(() => {
-              if (
-                state.unlocked &&
-                !$("#modalLayer").classList.contains("open")
-              )
-                showDrivePairingWizard();
-            }, 500);
-            return this.pairing;
-          }
-          async multipartUpload(
-            name,
-            blob,
-            { fileId = "", kind = "data", properties = {}, mimeType = "application/json" } = {},
-          ) {
-            const boundary = `tpt_${uid().replace(/[^a-zA-Z0-9]/g, "")}`,
-              metadata = {
-                name,
-                mimeType,
-                appProperties: {
-                  appId: APP.appId,
-                  schoolProfileId: APP.schoolProfileId,
-                  namespace: APP.namespace,
-                  kind,
-                  ...Object.fromEntries(
-                    Object.entries(properties).map(([key, value]) => [
-                      key,
-                      String(value),
-                    ]),
-                  ),
-                },
-                ...(fileId ? {} : { parents: ["appDataFolder"] }),
-              },
-              body = new Blob([
-                `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n`,
-                `--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`,
-                blob,
-                `\r\n--${boundary}--`,
-              ]),
-              endpoint = fileId
-                ? `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(fileId)}?uploadType=multipart&fields=id,name,createdTime,modifiedTime,size,version,appProperties`
-                : "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,createdTime,modifiedTime,size,version,appProperties";
-            const upload = () =>
-              this.api(endpoint, {
-                method: fileId ? "PATCH" : "POST",
-                headers: {
-                  "Content-Type": `multipart/related; boundary=${boundary}`,
-                },
-                body,
-              });
-            return fileId ? this.retry(upload) : upload();
-          }
-          async uploadJson(name, value, options = {}) {
-            const text = JSON.stringify(value),
-              checksum = await sha256Text(stableJSON(value));
-            return {
-              file: await this.multipartUpload(
-                name,
-                new Blob([text], { type: "application/json" }),
-                {
-                  ...options,
-                  mimeType: "application/json",
-                  properties: {
-                    ...(options.properties || {}),
-                    checksum,
-                    schema: APP.schema,
-                  },
-                },
-              ),
-              checksum,
-            };
-          }
-          async resumableUpload(
-            name,
-            blob,
-            { fileId = "", kind = "attachment", properties = {} } = {},
-          ) {
-            const metadata = {
-                name,
-                mimeType: blob.type || "application/octet-stream",
-                appProperties: {
-                  appId: APP.appId,
-                  schoolProfileId: APP.schoolProfileId,
-                  namespace: APP.namespace,
-                  kind,
-                  ...Object.fromEntries(
-                    Object.entries(properties).map(([key, value]) => [
-                      key,
-                      String(value),
-                    ]),
-                  ),
-                },
-                ...(fileId ? {} : { parents: ["appDataFolder"] }),
-              },
-              endpoint = fileId
-                ? `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(fileId)}?uploadType=resumable`
-                : "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable",
-              headers = new Headers({
-                Authorization: `Bearer ${this.accessToken}`,
-                "Content-Type": "application/json; charset=UTF-8",
-                "X-Upload-Content-Type":
-                  blob.type || "application/octet-stream",
-                "X-Upload-Content-Length": String(blob.size),
-              }),
-              init = await fetch(endpoint, {
-                method: fileId ? "PATCH" : "POST",
-                headers,
-                body: JSON.stringify(metadata),
-                signal: this.abortController?.signal,
-              });
-            if (!init.ok)
-              throw new Error(
-                `Không khởi tạo được phiên tải tệp (${init.status}).`,
-              );
-            const sessionUrl = init.headers.get("location");
-            if (!sessionUrl)
-              throw new Error("Google Drive không trả về phiên tải tiếp tục.");
-            const chunkSize = 8 * 1024 * 1024;
-            let finalResult = null;
-            for (let start = 0; start < blob.size; start += chunkSize) {
-              const end = Math.min(blob.size, start + chunkSize),
-                response = await fetch(sessionUrl, {
-                  method: "PUT",
-                  headers: {
-                    "Content-Type": blob.type || "application/octet-stream",
-                    "Content-Range": `bytes ${start}-${end - 1}/${blob.size}`,
-                  },
-                  body: blob.slice(start, end),
-                  signal: this.abortController?.signal,
-                });
-              this.setStatus(
-                "syncing",
-                `Đang tải tệp ${Math.round((end / blob.size) * 100)}%`,
-                {
-                  uploadProgress: Math.round((end / blob.size) * 100),
-                  uploadFileName: name,
-                },
-              );
-              if (response.status === 308) continue;
-              if (!response.ok)
-                throw new Error(`Tải tệp lên Drive thất bại (${response.status}).`);
-              finalResult = await response.json();
-            }
-            return finalResult;
-          }
-          cancelSync() {
-            if (!this.abortController) return false;
-            this.abortController.abort();
-            this.setStatus(
-              "pending",
-              "Đồng bộ đã hủy; dữ liệu local/outbox vẫn được giữ",
-            );
-            return true;
-          }
-          async uploadAttachment(record) {
-            if (!(record?.blob instanceof Blob)) return record;
-            const checksum = record.sha256 || (await sha256Blob(record.blob));
-            if (
-              record.drive_file_id &&
-              record.drive_checksum === checksum &&
-              record.drive_size === record.blob.size
-            )
-              return record;
-            const name = `${APP.namespace}__attachment__${record.id}.bin`,
-              properties = {
-                entityId: record.id,
-                checksum,
-                size: record.blob.size,
-              },
-              file =
-                record.blob.size > 5 * 1024 * 1024
-                  ? await this.resumableUpload(name, record.blob, {
-                      fileId: record.drive_file_id || "",
-                      properties,
-                    })
-                  : await this.multipartUpload(name, record.blob, {
-                      fileId: record.drive_file_id || "",
-                      kind: "attachment",
-                      properties,
-                      mimeType:
-                        record.mime_type ||
-                        record.blob.type ||
-                        "application/octet-stream",
-                    });
-            if (
-              !file?.id ||
-              file.appProperties?.checksum !== checksum ||
-              Number(file.size || record.blob.size) !== record.blob.size
-            )
-              throw new Error(
-                `Google Drive chưa xác nhận đúng checksum/kích thước của tệp ${record.original_name || record.id}.`,
-              );
-            const updated = {
-              ...record,
-              sha256: checksum,
-              drive_file_id: file.id || record.drive_file_id,
-              drive_checksum: checksum,
-              drive_size: record.blob.size,
-              drive_synced_at: now(),
-              sync_status: "pending",
-            };
-            await db.put("attachments", updated, {
-              audit: false,
-              journal: false,
-              preserveMetadata: true,
-              sync: false,
-              silent: true,
-            });
-            return updated;
-          }
-          async exportSyncData() {
-            const data = {};
-            for (const store of STORES) {
-              if (SYNC_EXCLUDED_STORES.has(store)) continue;
-              const rows = await db.allIncludingDeleted(store);
-              data[store] = rows.map(withoutBinary);
-            }
-            return data;
-          }
-          async createRemoteSnapshot(files = []) {
-            const attachments = await db.allIncludingDeleted("attachments");
-            for (const row of attachments)
-              if (!row.deleted_at && row.blob instanceof Blob)
-                await this.uploadAttachment(row);
-            const data = await this.exportSyncData(),
-              checksum = await sha256Text(stableJSON(data)),
-              createdAt = now(),
-              sequence = createdAt.replace(/[^0-9]/g, ""),
-              value = {
-                format: APP.driveFormat,
-                kind: "snapshot",
-                app_id: APP.appId,
-                school_profile_id: APP.schoolProfileId,
-                app_namespace: APP.namespace,
-                schema: APP.schema,
-                app_version: APP.version,
-                device_id: DEVICE_ID,
-                created_at: createdAt,
-                checksum,
-                data,
-              },
-              name = `${APP.namespace}__snapshot__all__${sequence}.json`,
-              uploaded = await this.uploadJson(name, value, {
-                kind: "snapshot",
-                properties: { sequence, dataChecksum: checksum },
-              });
-            const verified = await this.downloadJson(uploaded.file);
-            if (
-              verified.checksum !== checksum ||
-              (await sha256Text(stableJSON(verified.data))) !== checksum
-            )
-              throw new Error("Snapshot Drive không vượt qua kiểm tra checksum.");
-            return {
-              file_id: uploaded.file.id,
-              name,
-              checksum,
-              created_at: createdAt,
-              created_time: uploaded.file.createdTime || createdAt,
-            };
-          }
-          async buildManifest(snapshot, current = null) {
-            const latestSnapshot =
-              [snapshot, current?.latest_snapshot]
-                .filter(Boolean)
-                .sort((a, b) =>
-                  String(b.created_at || b.created_time || "").localeCompare(
-                    String(a.created_at || a.created_time || ""),
-                  ),
-                )[0] || null;
-            return {
-              format: APP.driveFormat,
-              kind: "manifest",
-              app_id: APP.appId,
-              school_profile_id: APP.schoolProfileId,
-              app_namespace: APP.namespace,
-              schema: APP.schema,
-              app_version: APP.version,
-              minimum_compatible_version: "3.1.0",
-              drive_permission_id: this.account.permissionId,
-              identity_email_sha256: this.account.emailHash || null,
-              revision: Number(current?.revision || 0) + 1,
-              latest_snapshot: latestSnapshot,
-              known_devices: {
-                ...(current?.known_devices || {}),
-                [DEVICE_ID]: {
-                  last_seen_at: now(),
-                  app_version: APP.version,
-                },
-              },
-              last_operation_file:
-                this.remoteContext?.lastOperationFile ||
-                current?.last_operation_file ||
-                null,
-              updated_at: now(),
-            };
-          }
-          async writeManifest(snapshot = null) {
-            let lastError = null;
-            for (let attempt = 0; attempt < 3; attempt++) {
-              const files = await this.listFiles(),
-                current = await this.readManifest(files),
-                writeId = uid(),
-                value = {
-                  ...(await this.buildManifest(snapshot, current.value)),
-                  base_revision: Number(current.value?.revision || 0),
-                  manifest_write_id: writeId,
-                };
-              try {
-                const uploaded = await this.uploadJson(
-                    this.manifestName(),
-                    value,
-                    {
-                      fileId: current.file?.id || "",
-                      kind: "manifest",
-                      properties: {
-                        revision: value.revision,
-                        writeId,
-                      },
-                    },
-                  ),
-                  verified = await this.downloadJson(uploaded.file);
-                this.validateIdentity(verified, "Manifest vừa ghi");
-                if (
-                  verified.manifest_write_id !== writeId ||
-                  Number(verified.revision) !== Number(value.revision) ||
-                  verified.drive_permission_id !== this.account.permissionId
-                )
-                  throw new Error(
-                    "Manifest vừa bị thiết bị khác cập nhật; đang hợp nhất và thử lại.",
-                  );
-                await new Promise((resolve) =>
-                  setTimeout(resolve, 60 + Math.random() * 90),
-                );
-                const confirmedFiles = await this.listFiles(),
-                  confirmed = await this.readManifest(confirmedFiles);
-                if (confirmed.value?.manifest_write_id !== writeId)
-                  throw new Error(
-                    "Manifest thay đổi trong lúc xác nhận; đang đọc bản mới và thử lại.",
-                  );
-                this.remoteContext = {
-                  ...(this.remoteContext || {}),
-                  files: confirmedFiles,
-                  manifest: confirmed,
-                };
-                return confirmed.value;
-              } catch (error) {
-                lastError = error;
-                if (attempt < 2)
-                  await new Promise((resolve) =>
-                    setTimeout(
-                      resolve,
-                      100 * (attempt + 1) + Math.random() * 100,
-                    ),
-                  );
-              }
-            }
-            throw lastError || new Error("Không ghi được manifest Drive.");
-          }
-          async markAllOutboxSynced() {
-            const rows = await db.allIncludingDeleted("sync_outbox");
-            for (const row of rows) {
-              if (!["synced", "cancelled"].includes(row.status))
-                await db.put(
-                  "sync_outbox",
-                  { ...row, status: "synced", completed_at: now() },
-                  {
-                    audit: false,
-                    journal: false,
-                    preserveMetadata: true,
-                    sync: false,
-                    silent: true,
-                  },
-                );
-              if (
-                STORES.includes(row.entity_type) &&
-                !SYNC_EXCLUDED_STORES.has(row.entity_type)
-              ) {
-                const record = await db.get(row.entity_type, row.entity_id);
-                if (record)
-                  await db.put(
-                    row.entity_type,
-                    { ...record, sync_status: "synced", drive_synced_at: now() },
-                    {
-                      audit: false,
-                      journal: false,
-                      preserveMetadata: true,
-                      sync: false,
-                      silent: true,
-                    },
-                  );
-              }
-            }
-          }
-          async createQuickSafetyBackup(label) {
-            const payload = await exportBusinessData(false),
-              text = JSON.stringify(payload),
-              name = `sao-luu-truoc-${label}-${today()}.json`;
-            platform.download(
-              new Blob([text], { type: "application/json" }),
-              name,
-            );
-            await db.put(
-              "backup_records",
-              {
-                name,
-                scope: "quick",
-                destination: "download",
-                encrypted: false,
-                size: new Blob([text]).size,
-                checksum: await sha256Text(text),
-                status: "completed",
-                completed_at: now(),
-              },
-              { audit: false, sync: false },
-            );
-          }
-          async performPairing(mode) {
-            if (!this.account || !this.hasToken())
-              throw new Error("Cần kết nối lại Google Drive.");
-            const context = this.remoteContext || {
-                files: await this.listFiles(),
-              },
-              remoteExists = !!this.pairing?.remoteExists;
-            if (["initialize", "upload"].includes(mode) && remoteExists)
-              throw new Error(
-                "Kho Drive đã có dữ liệu; không được khởi tạo đè. Hãy chọn tải về hoặc hợp nhất.",
-              );
-            await this.createQuickSafetyBackup("ghep-drive");
-            await createInternalSnapshot("Trước ghép Google Drive", {
-              tier: "protected",
-              protectedSnapshot: true,
-              reason: "before-drive-pairing",
-            });
-            this.setStatus("syncing", "Đang ghép dữ liệu với Google Drive");
-            if (["initialize", "upload"].includes(mode)) {
-              this.remoteContext = context;
-              const snapshot = await this.createRemoteSnapshot(context.files);
-              await this.writeManifest(snapshot);
-              await this.markAllOutboxSynced();
-            } else {
-              const manifest = context.manifest ||
-                (await this.readManifest(context.files));
-              const snapshotFile = manifest.value?.latest_snapshot?.file_id
-                ? {
-                    id: manifest.value.latest_snapshot.file_id,
-                    name: manifest.value.latest_snapshot.name,
-                  }
-                : this.findNewest(context.files, "snapshot");
-              if (!snapshotFile)
-                throw new Error("Kho Drive chưa có snapshot hợp lệ để tải.");
-              const snapshot = await this.downloadJson(snapshotFile);
-              this.validateIdentity(snapshot, "Snapshot Drive");
-              const checksum = await sha256Text(stableJSON(snapshot.data));
-              if (checksum !== snapshot.checksum)
-                throw new Error("Snapshot Drive sai checksum; chưa thay đổi dữ liệu local.");
-              if (mode === "download") {
-                await db.replaceAll({
-                  schema: snapshot.schema,
-                  data: snapshot.data,
-                }, { sync: false });
-                await this.markAllOutboxSynced();
-              } else if (mode === "merge") {
-                await this.mergeRemoteData(snapshot.data, "snapshot");
-              } else throw new Error("Phương thức ghép không hợp lệ.");
-              await this.pullRemoteOperations(context.files);
-              if (!manifest.file) {
-                this.remoteContext = { files: context.files, manifest };
-                await this.writeManifest({
-                  file_id: snapshotFile.id,
-                  name: snapshotFile.name,
-                  checksum: snapshot.checksum,
-                  created_at: snapshot.created_at,
-                  created_time:
-                    snapshotFile.createdTime || snapshot.created_at,
-                });
-              }
-            }
-            this.markPaired();
-            if (this.pairing) this.pairing.required = false;
-            await this.updatePendingCount();
-            this.setStatus(
-              state.sync.pending ? "pending" : "synced",
-              state.sync.pending
-                ? `Chờ đồng bộ: ${state.sync.pending} thay đổi`
-                : `Đã đồng bộ lúc ${new Date().toLocaleTimeString("vi-VN")}`,
-              { lastSyncedAt: now() },
-            );
-            return true;
-          }
-          async mergeRemoteData(data, sourceFileId) {
-            for (const [store, rows] of Object.entries(data || {})) {
-              if (!STORES.includes(store) || SYNC_EXCLUDED_STORES.has(store))
-                continue;
-              for (const row of rows || [])
-                await this.applyIncomingRecord(
-                  store,
-                  row,
-                  sourceFileId,
-                  `snapshot:${store}:${row.id}`,
-                );
-            }
-          }
-          comparable(record) {
-            const copy = withoutBinary(record || {});
-            delete copy.sync_status;
-            delete copy.drive_synced_at;
-            return copy;
-          }
-          differingFields(local, remote) {
-            const keys = new Set([
-              ...Object.keys(local || {}),
-              ...Object.keys(remote || {}),
-            ]);
-            return [...keys]
-              .filter(
-                (key) =>
-                  !["sync_status", "drive_synced_at"].includes(key) &&
-                  stableJSON(local?.[key]) !== stableJSON(remote?.[key]),
-              )
-              .sort();
-          }
-          async hasPendingEntity(store, id) {
-            return (await db.allIncludingDeleted("sync_outbox")).some(
-              (row) =>
-                row.entity_type === store &&
-                row.entity_id === id &&
-                !["synced", "cancelled"].includes(row.status),
-            );
-          }
-          async createConflict(store, local, remote, sourceFileId, operationId) {
-            const existing = (await db.all("sync_conflicts")).find(
-              (row) =>
-                row.entity_type === store &&
-                row.entity_id === remote.id &&
-                row.status === "unresolved",
-            );
-            if (existing) return existing;
-            const conflict = await db.put(
-              "sync_conflicts",
-              {
-                entity_type: store,
-                entity_id: remote.id,
-                local_payload: withoutBinary(local),
-                remote_payload: withoutBinary(remote),
-                local_revision: Number(local?.revision || 0),
-                remote_revision: Number(remote?.revision || 0),
-                local_device_id: local?.device_id || "",
-                remote_device_id: remote?.device_id || "",
-                differing_fields: this.differingFields(local, remote),
-                source_file_id: sourceFileId,
-                source_operation_id: operationId,
-                status: "unresolved",
-                detected_at: now(),
-              },
-              {
-                audit: false,
-                journal: false,
-                sync: false,
-                silent: true,
-              },
-            );
-            this.setStatus("conflict", "Có xung đột cần xử lý");
-            return conflict;
-          }
-          async downloadAttachmentPayload(remote) {
-            if (!remote.drive_file_id) return remote;
-            const current = await db.get("attachments", remote.id);
-            if (
-              current?.blob instanceof Blob &&
-              current.sha256 &&
-              current.sha256 === remote.sha256
-            )
-              return { ...remote, blob: current.blob };
-            const response = await this.retry(() =>
-                this.api(
-                  `/files/${encodeURIComponent(remote.drive_file_id)}?alt=media`,
-                  { raw: true },
-                ),
-              ),
-              blob = await response.blob(),
-              checksum = await sha256Blob(blob);
-            if (remote.sha256 && checksum !== remote.sha256)
-              throw new Error(
-                `Tệp ${remote.original_name || remote.id} tải từ Drive sai checksum.`,
-              );
-            return { ...remote, blob, sha256: checksum, size: blob.size };
-          }
-          async applyIncomingRecord(
-            store,
-            incoming,
-            sourceFileId,
-            operationId,
-          ) {
-            if (!incoming?.id) throw new Error("Bản ghi Drive thiếu ID.");
-            let remote = incoming;
-            if (store === "attachments" && !remote.deleted_at)
-              remote = await this.downloadAttachmentPayload(remote);
-            const local = await db.get(store, remote.id);
-            if (!local) {
-              await db.put(
-                store,
-                { ...remote, sync_status: "synced" },
-                {
-                  audit: false,
-                  journal: false,
-                  preserveMetadata: true,
-                  sync: false,
-                  silent: true,
-                },
-              );
-              return "inserted";
-            }
-            if (
-              stableJSON(this.comparable(local)) ===
-              stableJSON(this.comparable(remote))
-            )
-              return "same";
-            const pending = await this.hasPendingEntity(store, remote.id),
-              localRevision = Number(local.revision || 0),
-              remoteRevision = Number(remote.revision || 0);
-            if (!pending && remoteRevision > localRevision) {
-              await db.put(
-                store,
-                { ...remote, sync_status: "synced" },
-                {
-                  audit: false,
-                  journal: false,
-                  preserveMetadata: true,
-                  sync: false,
-                  silent: true,
-                },
-              );
-              return "updated";
-            }
-            if (!pending && localRevision > remoteRevision) return "kept-local";
-            await this.createConflict(
-              store,
-              local,
-              remote,
-              sourceFileId,
-              operationId,
-            );
-            return "conflict";
-          }
-          async pullRemoteOperations(files) {
-            const ownOperationIds = new Set(
-              (await db.allIncludingDeleted("sync_outbox"))
-                .filter((row) => row.device_id === DEVICE_ID)
-                .map((row) => row.operation_id),
-            );
-            const opsFiles = files
-              .filter(
-                (file) =>
-                  file.appProperties?.kind === "ops" ||
-                  file.name.startsWith(`${APP.namespace}__ops__`),
-              )
-              .sort((a, b) =>
-                String(a.createdTime).localeCompare(String(b.createdTime)),
-              );
-            for (const file of opsFiles) {
-              const markerId = `remote-op:${file.id}`;
-              if (await db.get("operation_journal", markerId)) continue;
-              const batch = await this.downloadJson(file);
-              this.validateIdentity(batch, `Nhật ký ${file.name}`);
-              const checksum = await sha256Text(stableJSON(batch.operations));
-              if (checksum !== batch.operations_checksum)
-                throw new Error(`Nhật ký ${file.name} sai checksum.`);
-              for (const operation of batch.operations || []) {
-                if (
-                  operation.device_id === DEVICE_ID &&
-                  ownOperationIds.has(operation.operation_id)
-                )
-                  continue;
-                if (
-                  !STORES.includes(operation.entity_type) ||
-                  SYNC_EXCLUDED_STORES.has(operation.entity_type)
-                )
-                  continue;
-                await this.applyIncomingRecord(
-                  operation.entity_type,
-                  operation.payload,
-                  file.id,
-                  operation.operation_id,
-                );
-              }
-              await db.put(
-                "operation_journal",
-                {
-                  id: markerId,
-                  operation: "remote_batch_applied",
-                  source_file_id: file.id,
-                  source_file_name: file.name,
-                  item_count: (batch.operations || []).length,
-                  status: "completed",
-                  completed_at: now(),
-                },
-                {
-                  audit: false,
-                  journal: false,
-                  preserveMetadata: true,
-                  sync: false,
-                  silent: true,
-                },
-              );
-            }
-          }
-          async pendingOutbox() {
-            const conflicts = new Set(
-              (await db.all("sync_conflicts"))
-                .filter((row) => row.status === "unresolved")
-                .map((row) => `${row.entity_type}:${row.entity_id}`),
-            );
-            return (await db.allIncludingDeleted("sync_outbox"))
-              .filter(
-                (row) =>
-                  !["synced", "cancelled"].includes(row.status) &&
-                  !conflicts.has(`${row.entity_type}:${row.entity_id}`),
-              )
-              .sort((a, b) =>
-                String(a.created_at).localeCompare(String(b.created_at)),
-              );
-          }
-          async prepareOutboxOperation(row) {
-            if (row.entity_type !== "attachments" || row.action === "delete")
-              return row;
-            const attachment = await db.get("attachments", row.entity_id);
-            if (!attachment) return row;
-            const uploaded = await this.uploadAttachment(attachment),
-              updated = {
-                ...row,
-                payload: withoutBinary(uploaded),
-                updated_at: now(),
-              };
-            await db.put("sync_outbox", updated, {
-              audit: false,
-              journal: false,
-              preserveMetadata: true,
-              sync: false,
-              silent: true,
-            });
-            return updated;
-          }
-          async pushOutbox(files) {
-            let rows = await this.pendingOutbox();
-            if (!rows.length) return null;
-            const sending = rows.find(
-                (row) => row.status === "sending" && row.batch_id,
-              ),
-              batchId = sending?.batch_id || uid();
-            rows = sending
-              ? rows.filter((row) => row.batch_id === batchId).slice(0, 100)
-              : rows.filter((row) => !row.batch_id).slice(0, 100);
-            const prepared = [];
-            for (const row of rows) {
-              const next = await this.prepareOutboxOperation(row),
-                sendingRow = {
-                  ...next,
-                  status: "sending",
-                  batch_id: batchId,
-                  attempts: Number(next.attempts || 0) + 1,
-                  last_attempt_at: now(),
-                };
-              await db.put("sync_outbox", sendingRow, {
-                audit: false,
-                journal: false,
-                preserveMetadata: true,
-                sync: false,
-                silent: true,
-              });
-              prepared.push(sendingRow);
-            }
-            const operations = prepared.map((row) => ({
-                operation_id: row.operation_id,
-                entity_type: row.entity_type,
-                entity_id: row.entity_id,
-                action: row.action,
-                base_revision: row.base_revision,
-                new_revision: row.new_revision,
-                payload: row.payload,
-                device_id: row.device_id,
-                created_at: row.created_at,
-              })),
-              checksum = await sha256Text(stableJSON(operations)),
-              sequence = String(prepared[0]?.created_at || now()).replace(
-                /[^0-9]/g,
-                "",
-              ),
-              name = `${APP.namespace}__ops__${DEVICE_ID.replace(/[^a-zA-Z0-9_-]/g, "-")}__${sequence}__${batchId}.json`,
-              value = {
-                format: APP.driveFormat,
-                kind: "ops",
-                app_id: APP.appId,
-                school_profile_id: APP.schoolProfileId,
-                app_namespace: APP.namespace,
-                schema: APP.schema,
-                app_version: APP.version,
-                device_id: DEVICE_ID,
-                batch_id: batchId,
-                created_at: now(),
-                operations_checksum: checksum,
-                operations,
-              };
-            let file = files.find((item) => item.name === name);
-            if (!file)
-              file = (
-                await this.uploadJson(name, value, {
-                  kind: "ops",
-                  properties: {
-                    batchId,
-                    deviceId: DEVICE_ID,
-                    operationsChecksum: checksum,
-                  },
-                })
-              ).file;
-            const verified = await this.downloadJson(file),
-              verifiedChecksum = await sha256Text(
-                stableJSON(verified.operations),
-              );
-            if (
-              verified.batch_id !== batchId ||
-              verified.operations_checksum !== checksum ||
-              verifiedChecksum !== checksum
-            )
-              throw new Error("Nhật ký vừa tải lên Drive sai checksum.");
-            await db.put(
-              "operation_journal",
-              {
-                id: `remote-op:${file.id}`,
-                operation: "remote_batch_uploaded",
-                source_file_id: file.id,
-                source_file_name: file.name,
-                item_count: operations.length,
-                status: "completed",
-                completed_at: now(),
-              },
-              {
-                audit: false,
-                journal: false,
-                preserveMetadata: true,
-                sync: false,
-                silent: true,
-              },
-            );
-            for (const row of prepared) {
-              await db.put(
-                "sync_outbox",
-                {
-                  ...row,
-                  status: "synced",
-                  drive_file_id: file.id,
-                  completed_at: now(),
-                  updated_at: now(),
-                },
-                {
-                  audit: false,
-                  journal: false,
-                  preserveMetadata: true,
-                  sync: false,
-                  silent: true,
-                },
-              );
-              const record = await db.get(row.entity_type, row.entity_id);
-              if (
-                record &&
-                Number(record.revision) === Number(row.new_revision)
-              )
-                await db.put(
-                  row.entity_type,
-                  { ...record, sync_status: "synced", drive_synced_at: now() },
-                  {
-                    audit: false,
-                    journal: false,
-                    preserveMetadata: true,
-                    sync: false,
-                    silent: true,
-                  },
-                );
-            }
-            this.remoteContext = {
-              ...(this.remoteContext || {}),
-              lastOperationFile: {
-                file_id: file.id,
-                name,
-                checksum,
-                operation_count: operations.length,
-                created_at: now(),
-              },
-            };
-            return file;
-          }
-          async updatePendingCount() {
-            const rows = await db.allIncludingDeleted("sync_outbox"),
-              pending = rows.filter(
-                (row) => !["synced", "cancelled"].includes(row.status),
-              ).length;
-            state.sync.pending = pending;
-            return pending;
-          }
-          schedule(delay = 1500) {
-            clearTimeout(this.syncTimer);
-            this.updatePendingCount()
-              .then((pending) => {
-                if (!pending) return;
-                if (!this.isConfigured())
-                  this.setStatus(
-                    "local",
-                    `Đã lưu trên thiết bị • ${pending} thay đổi chưa có đích Drive`,
-                    { pending },
-                  );
-                else if (!navigator.onLine)
-                  this.setStatus(
-                    "offline",
-                    "Ngoại tuyến – thay đổi đang chờ đồng bộ",
-                    { pending },
-                  );
-                else if (!this.hasToken())
-                  this.setStatus(
-                    this.identityBlockedMessage ? "blocked" : "reconnect",
-                    this.identityBlockedMessage ||
-                      `Cần kết nối lại Google Drive • chờ ${pending} thay đổi`,
-                    { pending },
-                  );
-              })
-              .catch(() => {});
-            if (
-              !state.unlocked ||
-              !this.isConfigured() ||
-              !navigator.onLine ||
-              !this.hasToken() ||
-              !this.isPaired()
-            )
-              return;
-            this.syncTimer = setTimeout(
-              () => this.sync().catch(() => {}),
-              delay,
-            );
-          }
-          async sync({ manual = false } = {}) {
-            if (this.syncPromise) return this.syncPromise;
-            if (!this.isConfigured()) {
-              this.setStatus("blocked", "Chưa cấu hình Google Drive");
-              return false;
-            }
-            if (!navigator.onLine) {
-              const pending = await this.updatePendingCount();
-              this.setStatus(
-                "offline",
-                "Ngoại tuyến – thay đổi đang chờ đồng bộ",
-                { pending },
-              );
-              return false;
-            }
-            if (!this.hasToken()) {
-              const pending = await this.updatePendingCount();
-              this.setStatus(
-                this.identityBlockedMessage ? "blocked" : "reconnect",
-                this.identityBlockedMessage ||
-                  (pending
-                    ? `Cần kết nối lại Google Drive • chờ ${pending} thay đổi`
-                    : "Cần kết nối lại Google Drive"),
-                { pending },
-              );
-              return false;
-            }
-            if (!this.isPaired()) {
-              this.setStatus(
-                "pairing",
-                "Cần xác nhận ghép dữ liệu thiết bị với Google Drive",
-              );
-              if (manual) showDrivePairingWizard();
-              return false;
-            }
-            if (tabCoordinator.readOnly) return false;
-            this.syncPromise = (async () => {
-              this.abortController?.abort();
-              this.abortController = new AbortController();
-              this.setStatus("syncing", "Đang đồng bộ Google Drive");
-              try {
-                let files = await this.listFiles();
-                const manifest = await this.readManifest(files);
-                if (!manifest.file) {
-                  this.clearPaired();
-                  this.pairing = {
-                    required: true,
-                    remoteExists: files.some(
-                      (file) =>
-                        file.appProperties?.kind === "snapshot" ||
-                        file.appProperties?.kind === "ops",
-                    ),
-                    remoteFileCount: files.length,
-                  };
-                  const missing = new Error(
-                    "Kho Drive thiếu manifest hoặc đã bị xóa; cần ghép lại có chủ đích. Dữ liệu local chưa bị thay đổi.",
-                  );
-                  missing.code = "DRIVE_CONTRACT_MISSING";
-                  throw missing;
-                }
-                this.remoteContext = { files, manifest };
-                await this.pullRemoteOperations(files);
-                for (let batch = 0; batch < 20; batch++) {
-                  const pushed = await this.pushOutbox(files);
-                  if (!pushed) break;
-                  files.push(pushed);
-                }
-                const outboxRows =
-                    await db.allIncludingDeleted("sync_outbox"),
-                  syncedCount = outboxRows.filter(
-                    (row) => row.status === "synced",
-                  ).length,
-                  snapshotAt = Date.parse(
-                    manifest.value?.latest_snapshot?.created_at || 0,
-                  ),
-                  snapshotSyncedCount = Number(
-                    (await setting("drive_snapshot_synced_ops")) || 0,
-                  ),
-                  shouldCompact =
-                    !snapshotAt ||
-                    Date.now() - snapshotAt > 7 * 86400000 ||
-                    syncedCount - snapshotSyncedCount >= 200;
-                if (shouldCompact) {
-                  const snapshot = await this.createRemoteSnapshot(files);
-                  await this.writeManifest(snapshot);
-                  await setting("drive_snapshot_synced_ops", syncedCount);
-                  await setting("drive_snapshot_at", now());
-                } else await this.writeManifest();
-                files = await this.listFiles();
-                this.remoteContext.files = files;
-                const pending = await this.updatePendingCount(),
-                  conflicts = (await db.all("sync_conflicts")).filter(
-                    (row) => row.status === "unresolved",
-                  ).length,
-                  stamp = now();
-                if (conflicts)
-                  this.setStatus(
-                    "conflict",
-                    `Có ${conflicts} xung đột cần xử lý`,
-                    { pending, lastSyncedAt: stamp },
-                  );
-                else if (pending)
-                  this.setStatus(
-                    "pending",
-                    `Chờ đồng bộ: ${pending} thay đổi`,
-                    { pending, lastSyncedAt: stamp },
-                  );
-                else
-                  this.setStatus(
-                    "synced",
-                    `Đã đồng bộ lúc ${new Date(stamp).toLocaleTimeString("vi-VN")}`,
-                    { pending: 0, lastSyncedAt: stamp },
-                  );
-                return true;
-              } catch (error) {
-                const pending = await this.updatePendingCount().catch(() => 0);
-                if (error.name === "AbortError")
-                  this.setStatus("pending", "Đồng bộ đã hủy", { pending });
-                else if (!navigator.onLine)
-                  this.setStatus(
-                    "offline",
-                    "Ngoại tuyến – thay đổi đang chờ đồng bộ",
-                    { pending },
-                  );
-                else if (error.status === 401)
-                  this.setStatus("reconnect", "Cần kết nối lại Google Drive", {
-                    pending,
-                  });
-                else if (error.code === "DRIVE_CONTRACT_MISSING")
-                  this.setStatus("pairing", error.message, { pending });
-                else
-                  this.setStatus(
-                    "error",
-                    `Đồng bộ thất bại – thử lại: ${error.message}`,
-                    { pending },
-                  );
-                if (error.retryable && state.unlocked) {
-                  clearTimeout(this.retryTimer);
-                  this.retryTimer = setTimeout(
-                    () => this.sync().catch(() => {}),
-                    30000 + Math.random() * 15000,
-                  );
-                }
-                throw error;
-              } finally {
-                this.syncPromise = null;
-              }
-            })();
-            return this.syncPromise;
-          }
-          async resolveConflict(conflictId, choice, merged = null) {
-            const conflict = await db.get("sync_conflicts", conflictId);
-            if (!conflict || conflict.status !== "unresolved") return false;
-            const local = await db.get(
-                conflict.entity_type,
-                conflict.entity_id,
-              ),
-              remote = conflict.remote_payload;
-            for (const operation of await db.allIncludingDeleted("sync_outbox"))
-              if (
-                operation.entity_type === conflict.entity_type &&
-                operation.entity_id === conflict.entity_id &&
-                !["synced", "cancelled"].includes(operation.status)
-              )
-                await db.put(
-                  "sync_outbox",
-                  {
-                    ...operation,
-                    status: "cancelled",
-                    cancelled_at: now(),
-                    cancel_reason: `conflict:${choice}`,
-                  },
-                  {
-                    audit: false,
-                    journal: false,
-                    preserveMetadata: true,
-                    sync: false,
-                    silent: true,
-                  },
-                );
-            if (choice === "remote")
-              await db.put(
-                conflict.entity_type,
-                { ...remote, sync_status: "synced" },
-                {
-                  audit: true,
-                  journal: true,
-                  preserveMetadata: true,
-                  sync: false,
-                },
-              );
-            else {
-              const payload =
-                choice === "merge" && merged
-                  ? { ...local, ...merged }
-                  : { ...local };
-              payload.revision = Math.max(
-                Number(local?.revision || 0),
-                Number(remote?.revision || 0),
-              );
-              await db.put(conflict.entity_type, payload, {
-                audit: true,
-                journal: true,
-                resolveConflict: true,
-                sync: true,
-              });
-            }
-            await db.put(
-              "sync_conflicts",
-              {
-                ...conflict,
-                status: "resolved",
-                resolution: choice,
-                resolved_at: now(),
-                resolved_by_device_id: DEVICE_ID,
-              },
-              {
-                audit: false,
-                journal: false,
-                preserveMetadata: true,
-                sync: false,
-                silent: true,
-              },
-            );
-            this.schedule(100);
-            return true;
-          }
-        }
         class AssistantProvider {
           async answer(q) {
             return buildAssistantAnswer(q);
@@ -2826,7 +489,7 @@
           capabilities() {
             return {
               runtime: "browser-pwa",
-              filesystem_directory: false,
+              filesystem_directory: "showDirectoryPicker" in window,
               secure_keystore: false,
               native_scheduler: false,
               atomic_file_replace: false,
@@ -2884,9 +547,7 @@
             },
             onSave: setSave,
             onChange: (store, id) => tabCoordinator.announceChange(store, id),
-            onSyncNeeded: (delay) => cloud.schedule(delay),
           }),
-          cloud = new GoogleDriveSyncProvider(),
           assistant = new AssistantProvider();
 
         async function startOperation(operation, details = {}) {
@@ -2939,12 +600,12 @@
           ["equipment", "◫", "Thiết bị Đội"],
           ["reports", "▥", "Báo cáo"],
           ["assistant", "◎", "Trợ lý tổng hợp"],
-          ["backup", "⇄", "Sao lưu – đồng bộ"],
+          ["backup", "⇄", "Sao lưu – khôi phục"],
           ["users", "♜", "Quản lý người dùng"],
           ["settings", "⚙", "Thiết lập"],
         ];
         function canAccessPage(page) {
-          if (state.user?.role === "superadmin") return true;
+          if (["superadmin", "admin"].includes(state.user?.role)) return true;
           const permissions = state.user?.permissions || [];
           return permissions.includes("*") || permissions.includes(page) || permissions.includes(`page:${page}`);
         }
@@ -3133,6 +794,7 @@
             sessionLock.start();
             const authStatus = await db.authStatus();
             state.setupRequired = !!authStatus.setupRequired;
+            state.loginSchools = authStatus.schools || [];
             updateActivationMode();
             showActivation(
               state.setupRequired
@@ -3140,8 +802,6 @@
                 : "Nhập tài khoản để mở phiên làm việc. Ứng dụng không ghi nhớ mật khẩu.",
             );
             registerPWA();
-            if (cloud.isConfigured() && navigator.onLine)
-              cloud.preloadIdentityLibrary().catch(() => {});
           } catch (e) {
             document.body.innerHTML =
               '<main style="padding:30px;font-family:system-ui"><h1>Không thể khởi động ứng dụng</h1><p>Hãy tải lại trang bằng Chrome, Edge hoặc Safari phiên bản hiện hành.</p></main>';
@@ -3163,6 +823,8 @@
                 password: passwordInput.value,
                 displayName: $("#displayName").value,
                 confirmPassword: confirmInput.value,
+                schoolId: $("#activationSchool").value,
+                schoolName: $("#activationSchoolName").value,
               });
             passwordInput.value = "";
             confirmInput.value = "";
@@ -3186,11 +848,6 @@
             button.disabled = true;
             status.style.color = "var(--muted)";
             status.textContent = "Đang mở dữ liệu trên máy chủ…";
-            const driveAttempt =
-              state.user?.role === "superadmin"
-                ? cloud.connectFromUserGesture({ selectAccount: false })
-                : Promise.resolve(false);
-            driveAttempt.catch(() => {});
             try {
               await launchApp();
             } catch (err) {
@@ -3204,8 +861,25 @@
         }
         function updateActivationMode() {
           const setupRequired = state.setupRequired,
+            hasSchools = state.loginSchools.length > 0,
             displayName = $("#displayName"),
-            confirmation = $("#confirmActivationCode");
+            confirmation = $("#confirmActivationCode"),
+            schoolSelect = $("#activationSchool"),
+            schoolName = $("#activationSchoolName");
+          fillSelect(
+            schoolSelect,
+            state.loginSchools.map((school) => [school.id, school.name]),
+            schoolSelect.value || state.loginSchools[0]?.id,
+          );
+          $("#schoolSelectField").classList.toggle("hidden", !hasSchools);
+          $("#schoolNameField").classList.toggle(
+            "hidden",
+            !setupRequired || hasSchools,
+          );
+          schoolSelect.disabled = !hasSchools;
+          schoolSelect.required = hasSchools;
+          schoolName.disabled = !setupRequired || hasSchools;
+          schoolName.required = setupRequired && !hasSchools;
           $("#displayNameField").classList.toggle("hidden", !setupRequired);
           $("#confirmPasswordField").classList.toggle("hidden", !setupRequired);
           displayName.disabled = !setupRequired;
@@ -3234,6 +908,7 @@
           $("#activationStatus").style.color = "var(--muted)";
           $("#activationUsername").value = "";
           $("#displayName").value = "";
+          $("#activationSchoolName").value = "";
           $("#activationCode").value = "";
           $("#confirmActivationCode").value = "";
           setTimeout(() => $("#activationUsername").focus(), 30);
@@ -3243,32 +918,30 @@
             await tabCoordinator.start();
             await db.open();
             bindShell();
-            if (!tabCoordinator.readOnly && state.user?.role === "superadmin") {
-              await recoverInterruptedOperations();
-              await ensureSeed();
-              await migrateEnhancedData();
-              await generateRecurringTasks();
-              await ensureStorageProtection();
-              await ensureScheduledSnapshots();
-              await ensureScheduledDirectoryBackup();
-            }
-            await loadContext();
-            renderNav();
             updateNetwork();
             window.addEventListener("online", updateNetwork);
             window.addEventListener("offline", updateNetwork);
-            if (state.user?.role === "superadmin") {
-              cloud.start();
-              if (cloud.hasToken() && cloud.account)
-                cloud.onLocalReady().catch(() => {});
-            }
           }
+          if (
+            !tabCoordinator.readOnly &&
+            ["superadmin", "admin"].includes(state.user?.role)
+          ) {
+            await recoverInterruptedOperations();
+            await ensureSeed();
+            await migrateEnhancedData();
+            await generateRecurringTasks();
+            await ensureStorageProtection();
+            await ensureScheduledSnapshots();
+            await ensureScheduledDirectoryBackup();
+          }
+          await loadContext();
+          updateSchoolBranding();
+          renderNav();
           sessionLock.setTimeoutMinutes(
             Number(await setting("auto_lock_minutes")) || 10,
           );
-          const superadmin = state.user?.role === "superadmin";
-          $("#quickAdd").classList.toggle("hidden", !superadmin);
-          $("#syncState").classList.toggle("hidden", !superadmin);
+          const manager = ["superadmin", "admin"].includes(state.user?.role);
+          $("#quickAdd").classList.toggle("hidden", !manager);
           document.body.dataset.paper =
             (await setting("paper_orientation")) || "landscape";
           const route = location.hash.replace(/^#/, ""),
@@ -3288,6 +961,24 @@
             !(await setting("onboarded"))
           )
             showOnboarding();
+        }
+        function updateSchoolBranding() {
+          const schoolName =
+            state.user?.selectedSchoolName || APP.schoolName || "TRƯỜNG";
+          const brand = $("#selectedSchoolName");
+          if (brand) brand.textContent = schoolName.toUpperCase();
+          const selector = $("#schoolSelect"),
+            canSwitch = state.user?.role === "superadmin";
+          if (selector) {
+            selector.classList.toggle("hidden", !canSwitch);
+            if (canSwitch)
+              fillSelect(
+                selector,
+                state.loginSchools.map((school) => [school.id, school.name]),
+                state.schoolId,
+              );
+          }
+          document.title = `${schoolName} - Trợ lý Tổng phụ trách Đội`;
         }
         function registerPWA() {
           if (
@@ -3329,11 +1020,6 @@
             )
               return toast(
                 "Hãy lưu hoặc đóng bản nháp đang mở trước khi cập nhật.",
-                "bad",
-              );
-            if (await cloud.updatePendingCount())
-              return toast(
-                "Còn thay đổi chưa đồng bộ. Hãy đồng bộ hoặc xuất sao lưu trước khi cập nhật.",
                 "bad",
               );
             let reloaded = false;
@@ -3378,8 +1064,28 @@
           );
           $("#quickAdd").onclick = showQuickAdd;
           $("#mobileContext").onclick = showMobileContext;
+          $("#schoolSelect").onchange = async (event) => {
+            const selector = event.target,
+              previousSchoolId = state.schoolId;
+            if (
+              state.user?.role !== "superadmin" ||
+              selector.value === previousSchoolId
+            )
+              return;
+            selector.disabled = true;
+            try {
+              const user = await db.switchSchool(selector.value);
+              applyAuthenticatedUser(user);
+              await launchApp();
+              toast(`Đã chuyển sang ${user.selectedSchoolName}`);
+            } catch (error) {
+              selector.value = previousSchoolId;
+              toast(error.message, "bad");
+            } finally {
+              selector.disabled = false;
+            }
+          };
           $("#lockNow").onclick = () => sessionLock.lock("Đã đăng xuất. Hãy đăng nhập để tiếp tục.");
-          $("#syncState").onclick = () => go("backup");
           const followRoute = () => {
             const page = location.hash.replace(/^#/, "");
             if (NAV.some(([id]) => id === page) && page !== state.page)
@@ -3471,21 +1177,25 @@
           });
         }
         async function ensureSeed() {
-          const schools = await db.all("schools");
-          if (schools.length) return;
+          const [schools, existingYears] = await Promise.all([
+            db.all("schools"),
+            db.all("school_years"),
+          ]);
+          if (existingYears.length) return;
           const yid = uid(),
             c1 = uid(),
             c2 = uid();
-          await db.put("schools", {
-            id: "school-main",
-            name:
-              APP.schoolName === "TRƯỜNG TH-THCS"
-                ? "TRƯỜNG TH-THCS (CHƯA CẤU HÌNH)"
-                : APP.schoolName,
-            code: "",
-            address: "",
-            is_sample: APP.schoolName === "TRƯỜNG TH-THCS",
-          });
+          if (!schools.length)
+            await db.put("schools", {
+              id: "school-main",
+              name:
+                APP.schoolName === "TRƯỜNG TH-THCS"
+                  ? "TRƯỜNG TH-THCS (CHƯA CẤU HÌNH)"
+                  : APP.schoolName,
+              code: "",
+              address: "",
+              is_sample: APP.schoolName === "TRƯỜNG TH-THCS",
+            });
           await db.bulkPut("campuses", [
             { id: c1, name: "Cơ sở 1", code: "CS1" },
             { id: c2, name: "Cơ sở 2", code: "CS2" },
@@ -3837,13 +1547,6 @@
             el.dataset.state = status;
           }
         }
-        function setSyncStatus(code, text) {
-          const el = $("#syncState");
-          if (!el) return;
-          el.dataset.state = code;
-          el.textContent = text;
-          el.title = `${text}. Chọn để mở Sao lưu – đồng bộ.`;
-        }
         function updateNetwork() {
           const online = navigator.onLine;
           $("#networkDot").classList.toggle("off", !online);
@@ -3851,21 +1554,6 @@
           $("#networkText").title = online
             ? "Kết nối máy chủ đang khả dụng."
             : "Cần kết nối lại để đọc hoặc ghi dữ liệu trên máy chủ.";
-          if (!online) {
-            cloud.abortController?.abort();
-            cloud.updatePendingCount()
-              .then((pending) =>
-                cloud.setStatus(
-                  "offline",
-                  "Ngoại tuyến – thay đổi đang chờ đồng bộ",
-                  { pending },
-                ),
-              )
-              .catch(() => {});
-          } else if (cloud.isConfigured()) {
-            cloud.preloadIdentityLibrary().catch(() => {});
-            cloud.schedule(2000);
-          } else cloud.setStatus("local", "Đã lưu trên máy chủ");
         }
         function debounce(fn, ms) {
           let t;
@@ -4053,7 +1741,7 @@
               ? Math.round((done / tasks.length) * 100)
               : 0,
             lastBackup = await setting("last_backup_at"),
-            canManage = state.user?.role === "superadmin";
+            canManage = ["superadmin", "admin"].includes(state.user?.role);
           setContent(
             pageHead(
               "Tổng quan",
@@ -6461,7 +4149,7 @@
           }
           openModal(
             "Xóa cơ sở chưa sử dụng",
-            `<p>Xóa <strong>${esc(campus.name)}</strong> (${esc(campus.code || "không có mã")})?</p><div class="notice warn">Thao tác được lưu vào nhật ký và hàng đợi đồng bộ. Cơ sở đã có dữ liệu liên quan sẽ không được phép xóa.</div>`,
+            `<p>Xóa <strong>${esc(campus.name)}</strong> (${esc(campus.code || "không có mã")})?</p><div class="notice warn">Thao tác được lưu vào nhật ký. Cơ sở đã có dữ liệu liên quan sẽ không được phép xóa.</div>`,
             `<button class="btn" id="cancelDeleteCampus">Hủy</button><button class="btn danger" id="confirmDeleteCampus">Xóa cơ sở</button>`,
           );
           $("#cancelDeleteCampus").onclick = closeModal;
@@ -6689,6 +4377,7 @@
             });
             let n = 0;
             for (const s of STORES) {
+              if (s === "schools") continue;
               for (const r of await db.all(s))
                 if (r.is_sample) {
                   await db.remove(s, r.id);
@@ -6724,11 +4413,8 @@
               `sao-luu-day-du-truoc-khi-xoa-${today()}.tptbackup`,
               "application/json",
             );
-            try {
-              if (cloud.account) localStorage.removeItem(cloud.pairKey());
-            } catch (_) {}
-            cloud.disconnectMemory();
-            for (const s of STORES) await db.hardClear(s);
+            for (const s of STORES)
+              if (s !== "schools") await db.hardClear(s);
             closeModal();
             location.reload();
           };
@@ -6880,7 +4566,7 @@
             ];
             let body = "";
             if (step === 0)
-              body = `<div class="form-grid"><div class="field full"><label class="required">Tên trường</label><input id="wSchool" value="${esc(data.school)}" placeholder="TRƯỜNG TH-THCS TẠ UYÊN"></div><div class="field"><label>Mã trường</label><input id="wCode" value="${esc(data.code)}"></div><div class="field"><label>Địa chỉ khái quát</label><input id="wAddress" value="${esc(data.address)}"></div></div>`;
+              body = `<div class="form-grid"><div class="field full"><label class="required">Tên trường</label><input id="wSchool" value="${esc(data.school)}" placeholder="TRƯỜNG TH-THCS"></div><div class="field"><label>Mã trường</label><input id="wCode" value="${esc(data.code)}"></div><div class="field"><label>Địa chỉ khái quát</label><input id="wAddress" value="${esc(data.address)}"></div></div>`;
             if (step === 1)
               body = `<div class="field"><label>Tên cơ sở, mỗi dòng một cơ sở</label><textarea id="wCampuses">${esc(data.campuses.join("\n"))}</textarea></div>`;
             if (step === 2)
@@ -6894,7 +4580,7 @@
             if (step === 6)
               body = `<p>Thư viện đã có mẫu công việc tuần, tháng và năm học. Sau khi hoàn tất, vào <strong>Công việc và checklist → Thư viện mẫu</strong> để chọn.</p>`;
             if (step === 7)
-              body = `<div class="notice"><strong>Lưu trữ máy chủ:</strong> mọi thao tác nghiệp vụ được gửi tới API của ứng dụng.</div><label class="check-row"><input type="radio" checked> Đồng bộ cá nhân qua Google Drive appDataFolder khi trực tuyến</label><p class="muted">${cloud.isConfigured() ? "Cấu hình Drive đã hợp lệ. Mỗi trình duyệt cần chọn đúng cùng Gmail và xác nhận ghép lần đầu." : "Chưa có cấu hình OAuth/Gmail; dữ liệu vẫn được giữ trên máy chủ ứng dụng."}</p>`;
+              body = `<div class="notice"><strong>Lưu trữ máy chủ:</strong> mọi thao tác nghiệp vụ được gửi tới API của ứng dụng.</div><p class="muted">Có thể tạo tệp sao lưu, điểm khôi phục nội bộ và chọn thư mục sao lưu sau khi hoàn tất.</p>`;
             if (step === 8)
               body = `<div class="notice"><strong>Checklist sẵn sàng</strong><ul><li>${data.school ? "✓" : "○"} Tên trường</li><li>✓ ${data.campuses.length} cơ sở</li><li>✓ Năm học và 40 tuần</li><li>○ Danh sách lớp thật — có thể nhập sau</li><li>○ Bản sao lưu đầu tiên — tạo sau khi hoàn tất cấu hình</li></ul></div>`;
             openModal(
@@ -6974,129 +4660,14 @@
               await loadContext();
               toast("Đã hoàn tất thiết lập ban đầu");
               await go("dashboard");
-              if (cloud.pairing?.required)
-                setTimeout(showDrivePairingWizard, 100);
             }
           };
           render();
         }
 
-        function showDrivePairingWizard() {
-          const pairing = cloud.pairing;
-          if (!pairing)
-            return toast(
-              "Hãy kết nối đúng Gmail trước khi ghép dữ liệu.",
-              "bad",
-            );
-          const remote = pairing.remoteExists,
-            localReady = pairing.localOnboarded,
-            situation = !remote
-              ? localReady
-                ? "Drive trống, thiết bị đang có dữ liệu"
-                : "Drive trống, thiết bị mới"
-              : localReady
-                ? "Drive và thiết bị đều có dữ liệu"
-                : "Drive có dữ liệu, thiết bị mới",
-            account = cloud.account;
-          openModal(
-            "Ghép thiết bị với Google Drive",
-            `<div class="notice"><strong>${esc(situation)}</strong></div><div class="sync-summary"><div><span>Gmail đang chọn</span><strong>${esc(account?.email || account?.displayName || "—")}</strong></div><div><span>Bản ghi trên thiết bị</span><strong>${Number(pairing.localCount || 0).toLocaleString("vi-VN")}</strong></div><div><span>Tệp ứng dụng trên Drive</span><strong>${Number(pairing.remoteFileCount || 0).toLocaleString("vi-VN")}</strong></div><div><span>Hồ sơ trường</span><strong>${esc(APP.schoolProfileId)}</strong></div></div><div class="notice warn mt">Trước khi ghi, ứng dụng sẽ tự tải một bản sao lưu nhanh và tạo điểm khôi phục bảo vệ trên thiết bị. Không đóng trang khi đang ghép.</div>${remote ? `<div class="field mt"><label>Phương thức ghép</label><select id="pairingMode"><option value="${localReady ? "merge" : "download"}">${localReady ? "Hợp nhất theo ID/revision; đưa xung đột ra màn hình xử lý" : "Tải dữ liệu Drive về thiết bị mới"}</option>${localReady ? '<option value="download">Dùng dữ liệu Drive thay cho dữ liệu nghiệp vụ hiện tại</option>' : '<option value="merge">Hợp nhất với dữ liệu local hiện có</option>'}</select></div>` : `<p>${localReady ? "Dữ liệu thiết bị sẽ được tải lên thành snapshot đầu tiên." : "Kho Drive mới sẽ được khởi tạo từ cấu hình hiện tại sau khi thầy hoàn tất thiết lập trường."}</p><input type="hidden" id="pairingMode" value="${localReady ? "upload" : "initialize"}">`}<div id="pairingProgress" class="muted mt" role="status"></div>`,
-            `<button class="btn" id="cancelPairing">Để sau</button><button class="btn primary" id="confirmPairing">Xác nhận ghép</button>`,
-            true,
-          );
-          $("#cancelPairing").onclick = closeModal;
-          $("#confirmPairing").onclick = async () => {
-            const button = $("#confirmPairing"),
-              progress = $("#pairingProgress"),
-              mode = $("#pairingMode").value;
-            button.disabled = true;
-            $("#cancelPairing").disabled = true;
-            progress.textContent = "Đang sao lưu an toàn và đối chiếu dữ liệu…";
-            try {
-              await cloud.performPairing(mode);
-              closeModal();
-              toast("Đã ghép thiết bị với đúng Google Drive.");
-              if (state.page === "backup") renderBackup();
-              else go("dashboard", false);
-            } catch (error) {
-              button.disabled = false;
-              $("#cancelPairing").disabled = false;
-              progress.textContent = "";
-              toast("Ghép Drive chưa hoàn tất: " + error.message, "bad");
-            }
-          };
-        }
-
-        async function showSyncConflicts() {
-          const rows = (await db.all("sync_conflicts")).filter(
-            (row) => row.status === "unresolved",
-          );
-          openModal(
-            "Xung đột đồng bộ",
-            rows.length
-              ? `<div class="notice warn">Không có bản nào bị ghi đè âm thầm. Hãy đối chiếu từng bản ghi.</div><div class="table-wrap" style="max-height:55vh"><table><thead><tr><th>Phân hệ</th><th>Bản ghi</th><th>Revision</th><th>Trường khác</th><th>Thao tác</th></tr></thead><tbody>${rows.map((row) => `<tr><td>${esc(row.entity_type)}</td><td><code>${esc(row.entity_id)}</code></td><td>${Number(row.local_revision || 0)} local / ${Number(row.remote_revision || 0)} Drive</td><td class="wrap">${esc((row.differing_fields || []).join(", "))}</td><td><button class="link-btn" data-conflict-view="${row.id}">Đối chiếu</button></td></tr>`).join("")}</tbody></table></div>`
-              : '<div class="empty">Không có xung đột chưa xử lý.</div>',
-            `<button class="btn primary" id="closeConflicts">Đóng</button>`,
-            true,
-          );
-          $("#closeConflicts").onclick = closeModal;
-          $$('[data-conflict-view]').forEach(
-            (button) =>
-              (button.onclick = () =>
-                showConflictDetail(
-                  rows.find((row) => row.id === button.dataset.conflictView),
-                )),
-          );
-        }
-
-        function displayConflictValue(value) {
-          const text =
-            typeof value === "string" ? value : JSON.stringify(value ?? null);
-          return esc(text.length > 500 ? text.slice(0, 500) + "…" : text);
-        }
-
-        function showConflictDetail(conflict) {
-          if (!conflict) return showSyncConflicts();
-          const fields = conflict.differing_fields || [];
-          openModal(
-            `Đối chiếu ${conflict.entity_type}`,
-            `<div class="sync-summary"><div><span>ID</span><strong>${esc(conflict.entity_id)}</strong></div><div><span>Thiết bị local</span><strong>${esc(conflict.local_device_id || "—")}</strong></div><div><span>Thiết bị Drive</span><strong>${esc(conflict.remote_device_id || "—")}</strong></div><div><span>Phát hiện</span><strong>${fmtDateTime(conflict.detected_at)}</strong></div></div><div class="conflict-diff mt"><div class="head">Trường</div><div class="head">Bản trên thiết bị</div><div class="head">Bản trên Drive</div>${fields.map((field) => `<div><strong>${esc(field)}</strong><select data-merge-field="${esc(field)}" aria-label="Chọn nguồn cho ${esc(field)}"><option value="local">Giữ local</option><option value="remote">Dùng Drive</option></select></div><div>${displayConflictValue(conflict.local_payload?.[field])}</div><div>${displayConflictValue(conflict.remote_payload?.[field])}</div>`).join("")}</div><div class="notice warn mt">“Giữ local” hoặc “Hợp nhất từng trường” tạo revision mới và đưa lại vào outbox. “Dùng Drive” chấp nhận nguyên bản Drive.</div>`,
-            `<button class="btn" id="backConflicts">Quay lại</button><button class="btn" id="useDriveConflict">Dùng Drive</button><button class="btn" id="keepLocalConflict">Giữ local</button><button class="btn primary" id="mergeConflict">Hợp nhất từng trường</button>`,
-            true,
-          );
-          $("#backConflicts").onclick = showSyncConflicts;
-          const resolve = async (choice, merged = null) => {
-            $$(`#modalFoot button`).forEach((button) => (button.disabled = true));
-            try {
-              await cloud.resolveConflict(conflict.id, choice, merged);
-              toast("Đã xử lý xung đột và ghi dấu vết.");
-              showSyncConflicts();
-            } catch (error) {
-              toast("Không thể xử lý xung đột: " + error.message, "bad");
-              showConflictDetail(conflict);
-            }
-          };
-          $("#useDriveConflict").onclick = () => resolve("remote");
-          $("#keepLocalConflict").onclick = () => resolve("local");
-          $("#mergeConflict").onclick = () => {
-            const merged = {};
-            $$('[data-merge-field]').forEach((select) => {
-              const field = select.dataset.mergeField;
-              merged[field] =
-                select.value === "remote"
-                  ? conflict.remote_payload?.[field]
-                  : conflict.local_payload?.[field];
-            });
-            resolve("merge", merged);
-          };
-        }
-
         async function renderBackup() {
           const quick = await exportBusinessData(false),
             last = await setting("last_backup_at"),
-            estimate = navigator.storage?.estimate
-              ? await navigator.storage.estimate()
-              : {},
             attachmentCount = (
               await db.allIncludingDeleted("attachments")
             ).filter((x) => !x.deleted_at).length,
@@ -7111,22 +4682,13 @@
             [directoryRecord] = await db.all("backup_handles"),
             directoryAuto = !!(await setting("backup_directory_auto")),
             directorySupported = platform.capabilities().filesystem_directory;
-          const pendingCount = await cloud.updatePendingCount(),
-            syncInfo = cloud.status(),
-            unresolvedConflicts = (await db.all("sync_conflicts")).filter(
-              (row) => row.status === "unresolved",
-            ).length,
-            syncPanel = !syncInfo.configured
-              ? `<div class="card mb"><div class="card-head"><h2>Đồng bộ Google Drive</h2><span class="badge yellow">Chưa cấu hình</span></div><div class="card-body"><div class="notice warn"><strong>Ứng dụng vẫn lưu dữ liệu trên máy chủ.</strong> Cấu hình Drive chỉ cần khi muốn có thêm bản đồng bộ trong Google Drive cá nhân.</div><p>${esc(syncInfo.issues.join("; "))}.</p><small class="muted">Không đưa client secret, token, mật khẩu Gmail hoặc dữ liệu thật lên GitHub.</small></div></div>`
-              : `<div class="card mb"><div class="card-head"><h2>Đồng bộ Google Drive appDataFolder</h2><span class="badge ${syncInfo.code === "synced" ? "green" : syncInfo.code === "conflict" || syncInfo.code === "error" ? "red" : "yellow"}">${esc(syncInfo.message)}</span></div><div class="card-body"><div class="sync-summary"><div><span>Tài khoản đang chọn</span><strong>${esc(syncInfo.account?.email || syncInfo.account?.displayName || "Chưa kết nối")}</strong></div><div><span>Thay đổi đang chờ</span><strong>${pendingCount.toLocaleString("vi-VN")}</strong></div><div><span>Xung đột chưa xử lý</span><strong>${unresolvedConflicts.toLocaleString("vi-VN")}</strong></div><div><span>Đồng bộ xác nhận gần nhất</span><strong>${syncInfo.lastSyncedAt ? fmtDateTime(syncInfo.lastSyncedAt) : "Chưa có"}</strong></div></div>${Number.isFinite(syncInfo.uploadProgress) ? `<progress class="task-progress mt" max="100" value="${clamp(syncInfo.uploadProgress, 0, 100)}"></progress>` : ""}<div class="toolbar mt">${syncInfo.code === "syncing" ? '<button class="btn danger" id="cancelDriveSync">Hủy đồng bộ</button>' : syncInfo.connected ? '<button class="btn primary" id="syncNow">Đồng bộ ngay</button><button class="btn" id="changeDriveAccount">Đổi tài khoản</button>' : '<button class="btn primary" id="connectDrive">Kết nối lại Google Drive</button>'}${syncInfo.pairing?.required ? '<button class="btn" id="pairDrive">Xác nhận ghép dữ liệu</button>' : ""}<button class="btn" id="viewConflicts" ${unresolvedConflicts ? "" : "disabled"}>Xử lý xung đột (${unresolvedConflicts})</button></div><div class="notice warn">Đồng bộ chỉ chạy khi ứng dụng đang mở và trình duyệt cho phép. Google Drive không thay thế bản sao lưu ngoài; appDataFolder có thể mất khi gỡ quyền hoặc xóa dữ liệu ứng dụng.</div></div></div>`;
           setContent(
             pageHead(
-              "Sao lưu – đồng bộ",
-              "Lưu trên máy chủ; đồng bộ thêm qua đúng Gmail khi trực tuyến.",
+              "Sao lưu – khôi phục",
+              "Xuất, kiểm tra và khôi phục dữ liệu lưu trên máy chủ.",
               `<button class="btn primary" id="backupNow">Tạo bản sao lưu</button>`,
             ) +
-              syncPanel +
-              `<div class="grid-3"><div class="card"><div class="card-head"><h2>Sao lưu gần nhất</h2></div><div class="card-body"><strong>${last ? fmtDateTime(last) : "Chưa có"}</strong><p>${quick.manifest.record_count.toLocaleString("vi-VN")} bản ghi • ${attachmentCount} tệp</p><button class="btn small" id="verifyLastBackup" ${backupRecords.length ? "" : "disabled"}>Kiểm tra bản đã ghi nhận</button></div></div><div class="card"><div class="card-head"><h2>Phục hồi an toàn</h2></div><div class="card-body"><p>Kiểm tra định dạng, định danh, phiên bản và checksum trước khi ghi.</p><button class="btn" id="restoreFile">Chọn tệp phục hồi</button></div></div><div class="card"><div class="card-head"><h2>Trạng thái lưu trữ cục bộ</h2></div><div class="card-body"><span class="badge blue">IndexedDB trên thiết bị này</span><p>${formatBytes(estimate.usage || 0)} đã dùng${estimate.quota ? ` / ${formatBytes(estimate.quota)}` : ""}.</p><small class="muted">Trình duyệt có thể xóa dữ liệu khi thiếu dung lượng nếu chưa cấp lưu bền vững.</small></div></div></div><div class="notice warn mt"><strong>Phân biệt:</strong> tự lưu ghi vào IndexedDB; đồng bộ truyền/hợp nhất với Drive; điểm khôi phục nằm cùng thiết bị; bản sao lưu ngoài là tệp tải xuống; báo cáo chốt là hồ sơ nghiệp vụ bất biến.</div><div class="card mt"><div class="card-head"><h2>Ba phạm vi sao lưu ngoài</h2></div><div class="card-body">${simpleTable(
+              `<div class="grid-3"><div class="card"><div class="card-head"><h2>Sao lưu gần nhất</h2></div><div class="card-body"><strong>${last ? fmtDateTime(last) : "Chưa có"}</strong><p>${quick.manifest.record_count.toLocaleString("vi-VN")} bản ghi • ${attachmentCount} tệp</p><button class="btn small" id="verifyLastBackup" ${backupRecords.length ? "" : "disabled"}>Kiểm tra bản đã ghi nhận</button></div></div><div class="card"><div class="card-head"><h2>Phục hồi an toàn</h2></div><div class="card-body"><p>Kiểm tra định dạng, định danh, phiên bản và checksum trước khi ghi.</p><button class="btn" id="restoreFile">Chọn tệp phục hồi</button></div></div><div class="card"><div class="card-head"><h2>Lưu trữ chính</h2></div><div class="card-body"><span class="badge blue">SQLite qua API máy chủ</span><p>Dữ liệu nghiệp vụ được lưu tập trung trên máy chủ.</p><small class="muted">Tệp xuất và thư mục sao lưu là các bản sao độc lập để phục hồi khi cần.</small></div></div></div><div class="notice warn mt"><strong>Phân biệt:</strong> tự lưu ghi lên máy chủ; điểm khôi phục bảo vệ trạng thái dữ liệu; bản sao lưu ngoài là tệp hoặc thư mục cục bộ; báo cáo chốt là hồ sơ nghiệp vụ bất biến.</div><div class="card mt"><div class="card-head"><h2>Ba phạm vi sao lưu ngoài</h2></div><div class="card-body">${simpleTable(
                 ["Chế độ", "Nội dung", "Phù hợp"],
                 [
                   [
@@ -7147,56 +4709,6 @@
                 ],
               )}</div></div><div class="card mt"><div class="card-head"><h2>Thư mục sao lưu ngoài</h2><span class="meta">${directorySupported ? "Trình duyệt hỗ trợ" : "Không hỗ trợ"}</span></div><div class="card-body"><p>${directoryRecord ? `Đã chọn: <strong>${esc(directoryRecord.name || directoryRecord.handle?.name || "Thư mục cục bộ")}</strong>` : "Chưa chọn thư mục. Mặc định ứng dụng chỉ yêu cầu trình duyệt tải tệp xuống."}</p><div class="toolbar"><button class="btn" id="chooseBackupDirectory" ${directorySupported ? "" : "disabled"}>Chọn/cấp lại thư mục</button><label class="check-row"><input id="directoryAutoBackup" type="checkbox" ${directoryAuto ? "checked" : ""} ${directoryRecord ? "" : "disabled"}> Tạo sao lưu nhanh mỗi ngày khi ứng dụng đang mở và quyền thư mục còn hiệu lực</label></div><div class="notice warn">Web/PWA không chạy lịch nền tin cậy khi đã đóng và không bảo đảm thao tác đổi tên tệp nguyên tử trên mọi trình duyệt. Tự động ở đây chỉ chạy lúc mở ứng dụng.</div></div></div><div class="card mt"><div class="card-head"><h2>Điểm khôi phục nội bộ</h2><span class="meta">${snapshots.length} điểm</span></div><div class="card-body"><div class="toolbar"><button class="btn small primary" id="createSnapshot">Tạo điểm ngay</button><span class="muted">Mặc định giữ 7 ngày • 4 tuần • 12 tháng; điểm bảo vệ không tự xóa.</span></div><div class="table-wrap" style="max-height:320px"><table><thead><tr><th>Thời gian</th><th>Tên</th><th>Loại</th><th>Bản ghi</th><th>Checksum</th><th>Thao tác</th></tr></thead><tbody>${snapshots.map((s) => `<tr><td>${fmtDateTime(s.created_at)}</td><td>${esc(s.name)}</td><td>${esc(s.tier)}${s.protected ? " • bảo vệ" : ""}</td><td>${Number(s.record_count || 0).toLocaleString("vi-VN")}</td><td><code>${esc(String(s.checksum || "").slice(0, 12))}…</code></td><td><button class="link-btn" data-view-snapshot="${s.id}">Xem</button><button class="link-btn" data-restore-snapshot="${s.id}">Khôi phục</button></td></tr>`).join("") || '<tr><td colspan="6" class="empty">Chưa có điểm khôi phục.</td></tr>'}</tbody></table></div></div></div>`,
           );
-          if ($("#openConfigSetup"))
-            $("#openConfigSetup").onclick = () =>
-              window.open("./SETUP_CONFIG.html", "_blank", "noopener");
-          if ($("#connectDrive"))
-            $("#connectDrive").onclick = async () => {
-              const button = $("#connectDrive");
-              button.disabled = true;
-              try {
-                await cloud.connectFromUserGesture({ selectAccount: false });
-              } catch (error) {
-                toast(error.message, "bad");
-              } finally {
-                renderBackup();
-              }
-            };
-          if ($("#changeDriveAccount"))
-            $("#changeDriveAccount").onclick = async () => {
-              try {
-                await cloud.changeAccount();
-              } catch (error) {
-                toast(error.message, "bad");
-              } finally {
-                renderBackup();
-              }
-            };
-          if ($("#syncNow"))
-            $("#syncNow").onclick = async () => {
-              const button = $("#syncNow");
-              button.disabled = true;
-              try {
-                const syncPromise = cloud.sync({ manual: true });
-                await new Promise((resolve) => setTimeout(resolve, 0));
-                if (state.page === "backup") renderBackup();
-                await syncPromise;
-                toast("Đã hoàn tất lượt kiểm tra đồng bộ.");
-              } catch (error) {
-                toast(error.message, "bad");
-              } finally {
-                renderBackup();
-              }
-            };
-          if ($("#cancelDriveSync"))
-            $("#cancelDriveSync").onclick = () => {
-              cloud.cancelSync();
-              renderBackup();
-            };
-          if ($("#pairDrive"))
-            $("#pairDrive").onclick = showDrivePairingWizard;
-          if ($("#viewConflicts"))
-            $("#viewConflicts").onclick = showSyncConflicts;
           $("#backupNow").onclick = chooseBackup;
           $("#restoreFile").onclick = () => {
             $("#backupFileInput").accept =
@@ -7468,10 +4980,6 @@
               identityWarnings.push(
                 "hồ sơ trường trong tệp khác hồ sơ hiện tại",
               );
-            if (obj.app_namespace && obj.app_namespace !== APP.namespace)
-              identityWarnings.push(
-                "namespace đồng bộ trong tệp khác cấu hình hiện tại",
-              );
             const dataChecksum = await sha256Text(stableJSON(obj.data));
             if (
               obj.manifest?.source_checksum &&
@@ -7612,21 +5120,49 @@
           [...new Set(String(value || "").split(/[\s,]+/).map((item) => item.trim().toLowerCase()).filter(Boolean))];
 
         async function renderUserManagement() {
-          const users = await db.listUsers();
+          const users = await db.listUsers(),
+            isSuperadmin = state.user?.role === "superadmin";
           setContent(
             pageHead(
               "Quản lý người dùng",
-              "Tạo tài khoản, cấp vai trò và chuẩn bị quyền truy cập theo từng phân hệ.",
-              '<button class="btn primary" id="addUser">＋ Thêm người dùng</button>',
+              `Tài khoản thuộc ${state.user?.selectedSchoolName || "trường đang chọn"}.`,
+              `${isSuperadmin ? '<button class="btn" id="addSchool">＋ Thêm trường</button>' : ""}<button class="btn primary" id="addUser">＋ Thêm người dùng</button>`,
             ) +
-              `<div class="notice"><strong>Root/superadmin có toàn quyền.</strong> Người dùng thường mặc định chỉ có quyền <code>dashboard</code>. Có thể lưu thêm khóa quyền ngay bây giờ; giao diện và API sẽ áp dụng các khóa <code>page:...</code> và <code>store:...:read/write</code> khi được cấp.</div><div class="table-wrap"><table><thead><tr><th>Tài khoản</th><th>Tên hiển thị</th><th>Vai trò</th><th>Quyền</th><th>Trạng thái</th><th>Lần đăng nhập cuối</th><th>Thao tác</th></tr></thead><tbody>${users
+              `<div class="notice"><strong>Admin có toàn quyền trong trường này</strong> và có thể quản lý User/Admin, nhưng không thể tạo hoặc quản lý Superadmin. Superadmin dùng bộ chọn trường trên thanh điều hướng để đổi phạm vi.</div><div class="table-wrap"><table><thead><tr><th>Tài khoản</th><th>Tên hiển thị</th><th>Vai trò</th><th>Quyền</th><th>Trạng thái</th><th>Lần đăng nhập cuối</th><th>Thao tác</th></tr></thead><tbody>${users
                 .map(
-                  (user) =>
-                    `<tr><td><strong>${esc(user.username)}</strong>${user.root ? ' <span class="badge blue">root</span>' : ""}</td><td>${esc(user.displayName)}</td><td>${user.role === "superadmin" ? '<span class="badge red">Superadmin</span>' : '<span class="badge">User</span>'}</td><td class="wrap">${user.role === "superadmin" ? "Toàn quyền" : esc((user.permissions || []).join(", ") || "Chưa cấp")}</td><td>${user.disabled ? '<span class="badge red">Đã khóa</span>' : '<span class="badge green">Hoạt động</span>'}</td><td>${user.lastLoginAt ? fmtDateTime(user.lastLoginAt) : "Chưa đăng nhập"}</td><td><div class="row-actions"><button class="link-btn" data-edit-user="${user.id}">${user.root ? "Đổi tên/mật khẩu" : "Sửa"}</button>${user.root ? '<span class="muted">Được bảo vệ</span>' : `<button class="link-btn red" data-delete-user="${user.id}">Xóa</button>`}</div></td></tr>`,
+                  (user) => {
+                    const manageable =
+                        isSuperadmin || user.role !== "superadmin",
+                      roleBadge =
+                        user.role === "superadmin"
+                          ? '<span class="badge red">Superadmin</span>'
+                          : user.role === "admin"
+                          ? '<span class="badge blue">Admin</span>'
+                          : '<span class="badge">User</span>',
+                      actions = user.root
+                        ? `<button class="link-btn" data-edit-user="${user.id}">Đổi tên/mật khẩu</button> <span class="muted">root</span>`
+                        : manageable
+                          ? `<div class="row-actions"><button class="link-btn" data-edit-user="${user.id}">Sửa</button><button class="link-btn red" data-delete-user="${user.id}">Xóa</button></div>`
+                          : '<span class="muted">Được bảo vệ</span>';
+                    return `<tr><td><strong>${esc(user.username)}</strong></td><td>${esc(user.displayName)}</td><td>${roleBadge}</td><td class="wrap">${["superadmin", "admin"].includes(user.role) ? "Toàn quyền" : esc((user.permissions || []).join(", ") || "Chưa cấp")}</td><td>${user.disabled ? '<span class="badge red">Đã khóa</span>' : '<span class="badge green">Hoạt động</span>'}</td><td>${user.lastLoginAt ? fmtDateTime(user.lastLoginAt) : "Chưa đăng nhập"}</td><td>${actions}</td></tr>`;
+                  },
                 )
                 .join("")}</tbody></table></div>`,
           );
           $("#addUser").onclick = () => openUserForm();
+          if ($("#addSchool"))
+            $("#addSchool").onclick = async () => {
+              const name = prompt("Tên trường mới:")?.trim();
+              if (!name) return;
+              try {
+                const school = await db.createSchool(name);
+                state.loginSchools.push(school);
+                updateSchoolBranding();
+                toast("Đã thêm trường. Chọn trường mới trên thanh điều hướng.");
+              } catch (error) {
+                toast(error.message, "bad");
+              }
+            };
           $$('[data-edit-user]').forEach(
             (button) =>
               (button.onclick = () =>
@@ -7645,10 +5181,14 @@
         }
 
         function openUserForm(user = null) {
-          const editing = !!user;
+          const editing = !!user,
+            isSuperadmin = state.user?.role === "superadmin",
+            roleOptions = isSuperadmin
+              ? `<option value="user" ${user?.role === "user" || !user ? "selected" : ""}>User</option><option value="admin" ${user?.role === "admin" ? "selected" : ""}>Admin trường</option><option value="superadmin" ${user?.role === "superadmin" ? "selected" : ""}>Superadmin</option>`
+              : `<option value="user" ${user?.role === "user" || !user ? "selected" : ""}>User</option><option value="admin" ${user?.role === "admin" ? "selected" : ""}>Admin trường</option>`;
           openModal(
             editing ? "Sửa tài khoản" : "Thêm người dùng",
-            `<form id="userForm"><div class="form-grid"><div class="field"><label class="required">Tên đăng nhập</label><input name="username" value="${esc(user?.username || "")}" minlength="3" maxlength="32" pattern="[a-z0-9._\\-]+" autocapitalize="none" required></div><div class="field"><label class="required">Tên hiển thị</label><input name="displayName" value="${esc(user?.displayName || "")}" required></div><div class="field"><label>Vai trò</label><select name="role" ${user?.root ? "disabled" : ""}><option value="user" ${user?.role !== "superadmin" ? "selected" : ""}>User</option><option value="superadmin" ${user?.role === "superadmin" ? "selected" : ""}>Superadmin/root</option></select></div><div class="field"><label>${editing ? "Mật khẩu mới (để trống nếu giữ nguyên)" : "Mật khẩu, tối thiểu 10 ký tự"}</label><input name="password" type="password" minlength="10" autocomplete="new-password" ${editing ? "" : "required"}></div><div class="field full"><label>Khóa quyền, cách nhau bằng dấu phẩy</label><textarea name="permissions" placeholder="dashboard, page:tasks, store:tasks:read">${esc((user?.permissions || ["dashboard"]).filter((value) => value !== "*").join(", "))}</textarea><small class="hint">Superadmin luôn có toàn quyền. User mặc định dùng <code>dashboard</code>.</small></div>${editing && !user.root ? `<label class="check-row field full"><input type="checkbox" name="disabled" ${user.disabled ? "checked" : ""}> Khóa tài khoản này</label>` : ""}</div></form>`,
+            `<form id="userForm"><div class="form-grid"><div class="field"><label class="required">Tên đăng nhập</label><input name="username" value="${esc(user?.username || "")}" minlength="3" maxlength="32" pattern="[a-z0-9._\\-]+" autocapitalize="none" required></div><div class="field"><label class="required">Tên hiển thị</label><input name="displayName" value="${esc(user?.displayName || "")}" required></div><div class="field"><label>Vai trò</label><select name="role" ${user?.root ? "disabled" : ""}>${roleOptions}</select></div><div class="field"><label>${editing ? "Mật khẩu mới (để trống nếu giữ nguyên)" : "Mật khẩu, tối thiểu 10 ký tự"}</label><input name="password" type="password" minlength="10" autocomplete="new-password" ${editing ? "" : "required"}></div><div class="field full"><label>Khóa quyền, cách nhau bằng dấu phẩy</label><textarea name="permissions" placeholder="dashboard, page:tasks, store:tasks:read">${esc((user?.permissions || ["dashboard"]).filter((value) => value !== "*").join(", "))}</textarea><small class="hint">Admin và Superadmin có toàn quyền theo vai trò; các khóa này áp dụng cho User.</small></div>${editing && !user?.root ? `<label class="check-row field full"><input type="checkbox" name="disabled" ${user.disabled ? "checked" : ""}> Khóa tài khoản này</label>` : ""}</div></form>`,
             '<button class="btn" id="cancelUser">Hủy</button><button class="btn primary" id="saveUser">Lưu tài khoản</button>',
           );
           $("#cancelUser").onclick = closeModal;
@@ -7694,7 +5234,7 @@
           ["reports", "Báo cáo và mẫu in"],
           ["appearance", "Giao diện"],
           ["data", "Dữ liệu – sao lưu"],
-          ["security", "Khóa phiên và Google Drive"],
+          ["security", "Khóa phiên và bảo mật"],
         ];
         const SETTINGS_CONFIG_KEYS = {
           activities: ["activity_type", "calendar_type"],
@@ -7870,7 +5410,7 @@
             });
           }
           if (tab === "data") {
-            panel.innerHTML = `<div class="grid-2"><div class="card"><div class="card-head"><h2>Dữ liệu và sao lưu</h2></div><div class="card-body"><p>Sao lưu nhanh cho dữ liệu cấu trúc; sao lưu đầy đủ gồm cả tệp Blob và checksum.</p><button class="btn primary" id="openBackup">Mở Sao lưu – đồng bộ</button></div></div><div class="card"><div class="card-head"><h2>Giới hạn tệp và cảnh báo dung lượng</h2></div><div class="card-body"><div class="field"><label>Dung lượng tối đa mỗi tệp (MB)</label><input id="maxFileMb" type="number" min="1" max="250" value="${Number(await setting("max_file_mb")) || 25}"></div><div class="form-grid mt"><div class="field"><label>Cảnh báo sớm (%)</label><input id="storageLow" type="number" min="50" max="90" value="${Number(await setting("storage_warning_low")) || 70}"></div><div class="field"><label>Cảnh báo cao (%)</label><input id="storageHigh" type="number" min="60" max="95" value="${Number(await setting("storage_warning_high")) || 85}"></div><div class="field"><label>Cảnh báo nguy cấp (%)</label><input id="storageCritical" type="number" min="70" max="99" value="${Number(await setting("storage_warning_critical")) || 95}"></div></div><button class="btn mt" id="saveFileLimit">Lưu giới hạn</button></div></div></div>`;
+            panel.innerHTML = `<div class="grid-2"><div class="card"><div class="card-head"><h2>Dữ liệu và sao lưu</h2></div><div class="card-body"><p>Sao lưu nhanh cho dữ liệu cấu trúc; sao lưu đầy đủ gồm cả tệp Blob và checksum.</p><button class="btn primary" id="openBackup">Mở Sao lưu – khôi phục</button></div></div><div class="card"><div class="card-head"><h2>Giới hạn tệp và cảnh báo dung lượng</h2></div><div class="card-body"><div class="field"><label>Dung lượng tối đa mỗi tệp (MB)</label><input id="maxFileMb" type="number" min="1" max="250" value="${Number(await setting("max_file_mb")) || 25}"></div><div class="form-grid mt"><div class="field"><label>Cảnh báo sớm (%)</label><input id="storageLow" type="number" min="50" max="90" value="${Number(await setting("storage_warning_low")) || 70}"></div><div class="field"><label>Cảnh báo cao (%)</label><input id="storageHigh" type="number" min="60" max="95" value="${Number(await setting("storage_warning_high")) || 85}"></div><div class="field"><label>Cảnh báo nguy cấp (%)</label><input id="storageCritical" type="number" min="70" max="99" value="${Number(await setting("storage_warning_critical")) || 95}"></div></div><button class="btn mt" id="saveFileLimit">Lưu giới hạn</button></div></div></div>`;
             $("#openBackup").onclick = () => go("backup");
             return ($("#saveFileLimit").onclick = async () => {
               const low = clamp($("#storageLow").value, 50, 90),
@@ -8160,12 +5700,10 @@
         async function closeAcademicYear(yearId) {
           const year = await db.get("school_years", yearId);
           if (!year || year.status === "archived") return;
-          const [sheets, tasks, reports, outbox, syncConflicts] = await Promise.all([
+          const [sheets, tasks, reports] = await Promise.all([
               db.all("weekly_score_sheets"),
               db.all("tasks"),
               db.all("generated_reports"),
-              db.allIncludingDeleted("sync_outbox"),
-              db.all("sync_conflicts"),
             ]),
             unlocked = sheets.filter(
               (row) => row.school_year_id === yearId && row.status !== "locked",
@@ -8177,24 +5715,12 @@
               (row) =>
                 row.school_year_id === yearId && row.status !== "finalized",
             ),
-            pendingSync = outbox.filter(
-              (row) => !["synced", "cancelled"].includes(row.status),
-            ).length,
-            unresolvedSync = syncConflicts.filter(
-              (row) => row.status === "unresolved",
-            ).length,
             blockers = [
               unlocked.length && `${unlocked.length} bảng thi đua chưa khóa`,
               openTasks.length &&
                 `${openTasks.length} công việc chưa hoàn thành`,
               draftReports.length &&
                 `${draftReports.length} báo cáo còn là bản nháp`,
-              cloud.isConfigured() &&
-                pendingSync &&
-                `${pendingSync} thay đổi chưa đồng bộ Drive`,
-              cloud.isConfigured() &&
-                unresolvedSync &&
-                `${unresolvedSync} xung đột đồng bộ chưa xử lý`,
             ].filter(Boolean);
           openModal(
             `Đóng năm học ${year.name}`,
@@ -8211,18 +5737,6 @@
             let operation = null;
             button.disabled = true;
             try {
-              if (cloud.isConfigured()) {
-                if (!cloud.hasToken() || !cloud.isPaired())
-                  throw new Error(
-                    "Cần kết nối và ghép đúng Google Drive trước khi đóng năm.",
-                  );
-                progress.textContent = "Đang xác nhận hết hàng đợi Drive…";
-                await cloud.sync({ manual: true });
-                if (await cloud.updatePendingCount())
-                  throw new Error(
-                    "Vẫn còn thay đổi chưa được Drive xác nhận; chưa thể đóng năm.",
-                  );
-              }
               operation = await startOperation("close_academic_year", {
                 academic_year_id: yearId,
                 academic_year_name: year.name,
@@ -8262,15 +5776,6 @@
                 reason: "after-close-year",
                 yearId,
               });
-              if (cloud.isConfigured()) {
-                progress.textContent =
-                  "Đang đồng bộ báo cáo và trạng thái đóng năm…";
-                await cloud.sync({ manual: true });
-                if (await cloud.updatePendingCount())
-                  throw new Error(
-                    "Drive chưa xác nhận hết dữ liệu đóng năm; hãy giữ ứng dụng mở và thử Đồng bộ ngay.",
-                  );
-              }
               await finishOperation(operation, "completed", {
                 package_name: fileName,
                 package_checksum: await sha256Text(packageText),
@@ -8332,9 +5837,8 @@
           );
         }
         async function renderSecurityPanel(panel) {
-          const timeout = Number(await setting("auto_lock_minutes")) || 10,
-            syncInfo = cloud.status();
-          panel.innerHTML = `<div class="grid-2"><div class="card"><div class="card-head"><h2>Khóa phiên làm việc</h2></div><div class="card-body"><div class="field"><label>Tự khóa khi không hoạt động</label><select id="autoLockMinutes">${[5, 10, 15, 30].map((minutes) => `<option value="${minutes}" ${timeout === minutes ? "selected" : ""}>${minutes} phút</option>`).join("")}</select></div><div class="toolbar mt"><button class="btn primary" id="saveAutoLock">Lưu thời gian</button><button class="btn" id="lockApplication">Khóa ngay</button></div><div class="notice warn">Mật khẩu được máy chủ băm bằng <code>scrypt</code> và không được ghi nhớ trong trình duyệt. Quản lý tài khoản tại phân hệ Người dùng.</div></div></div><div class="card"><div class="card-head"><h2>Định danh phát hành</h2></div><div class="card-body"><div class="split"><span>APP_ID</span><code>${esc(APP.appId)}</code></div><div class="split mt"><span>Hồ sơ trường</span><code>${esc(APP.schoolProfileId)}</code></div><div class="split mt"><span>Namespace Drive</span><code>${esc(APP.namespace)}</code></div><div class="split mt"><span>Thiết bị</span><code>${esc(DEVICE_ID)}</code></div><p class="muted">${syncInfo.configured ? `Drive đã cấu hình; ${syncInfo.connected ? "đang kết nối đúng Gmail" : "cần kết nối trong phiên này"}.` : "Drive chưa cấu hình; dữ liệu hiện lưu trên máy chủ ứng dụng."}</p><button class="btn" id="openSyncSettings">Mở Sao lưu – đồng bộ</button></div></div></div>`;
+          const timeout = Number(await setting("auto_lock_minutes")) || 10;
+          panel.innerHTML = `<div class="grid-2"><div class="card"><div class="card-head"><h2>Khóa phiên làm việc</h2></div><div class="card-body"><div class="field"><label>Tự khóa khi không hoạt động</label><select id="autoLockMinutes">${[5, 10, 15, 30].map((minutes) => `<option value="${minutes}" ${timeout === minutes ? "selected" : ""}>${minutes} phút</option>`).join("")}</select></div><div class="toolbar mt"><button class="btn primary" id="saveAutoLock">Lưu thời gian</button><button class="btn" id="lockApplication">Khóa ngay</button></div><div class="notice warn">Mật khẩu được máy chủ băm bằng <code>scrypt</code> và không được ghi nhớ trong trình duyệt. Quản lý tài khoản tại phân hệ Người dùng.</div></div></div><div class="card"><div class="card-head"><h2>Định danh phát hành</h2></div><div class="card-body"><div class="split"><span>APP_ID</span><code>${esc(APP.appId)}</code></div><div class="split mt"><span>Hồ sơ trường</span><code>${esc(APP.schoolProfileId)}</code></div><div class="split mt"><span>Thiết bị</span><code>${esc(DEVICE_ID)}</code></div><p class="muted">Dữ liệu được lưu bằng SQLite qua API máy chủ. Dùng trang Sao lưu – khôi phục để tạo bản sao ngoài.</p><button class="btn" id="openBackupSettings">Mở Sao lưu – khôi phục</button></div></div></div>`;
           $("#saveAutoLock").onclick = async () => {
             const minutes = Number($("#autoLockMinutes").value);
             await setting("auto_lock_minutes", minutes);
@@ -8343,7 +5847,7 @@
           };
           $("#lockApplication").onclick = () =>
             sessionLock.lock("Đã đăng xuất. Hãy đăng nhập để tiếp tục.");
-          $("#openSyncSettings").onclick = () => go("backup");
+          $("#openBackupSettings").onclick = () => go("backup");
         }
         async function renderConfigCategory(key) {
           const categories = await db.all("config_categories"),
@@ -8629,16 +6133,16 @@
           if (!docs.length)
             return '<div class="empty">Chưa có tài liệu phù hợp.</div>';
           if (state.documentView === "list")
-            return `<table><thead><tr><th>Tên tài liệu</th><th>Loại</th><th>Dung lượng</th><th>Đồng bộ tệp</th><th>Cập nhật</th><th>Thao tác</th></tr></thead><tbody>${docs
+            return `<table><thead><tr><th>Tên tài liệu</th><th>Loại</th><th>Dung lượng</th><th>Cập nhật</th><th>Thao tác</th></tr></thead><tbody>${docs
               .map((d) => {
                 const a = attachMap.get(d.id);
-                return `<tr><td class="wrap"><strong>${esc(d.name)}</strong><br><small>${esc(d.tags || "")}</small></td><td>${esc(a?.extension || d.type || "—")}</td><td>${formatBytes(a?.size || 0)}</td><td>${a ? `<span class="badge ${a.sync_status === "synced" ? "green" : "yellow"}">${a.sync_status === "synced" ? "Đã đồng bộ" : "Đang chờ"}</span>` : "—"}</td><td>${fmtDateTime(d.updated_at)}</td><td>${documentActions(d, trash)}</td></tr>`;
+                return `<tr><td class="wrap"><strong>${esc(d.name)}</strong><br><small>${esc(d.tags || "")}</small></td><td>${esc(a?.extension || d.type || "—")}</td><td>${formatBytes(a?.size || 0)}</td><td>${fmtDateTime(d.updated_at)}</td><td>${documentActions(d, trash)}</td></tr>`;
               })
               .join("")}</tbody></table>`;
           return docs
             .map((d) => {
               const a = attachMap.get(d.id);
-              return `<article class="file-card"><span class="file-icon">${fileIcon(a?.extension)}</span><strong class="file-name" title="${esc(d.name)}">${d.pinned ? "★ " : ""}${esc(d.name)}</strong><small>${esc((a?.extension || d.type || "Tệp").toUpperCase())} • ${formatBytes(a?.size || 0)}</small>${a ? `<span class="badge ${a.sync_status === "synced" ? "green" : "yellow"} mt">${a.sync_status === "synced" ? "Đã đồng bộ" : "Đang chờ Drive"}</span>` : ""}<div class="row-actions mt">${documentActions(d, trash)}</div></article>`;
+              return `<article class="file-card"><span class="file-icon">${fileIcon(a?.extension)}</span><strong class="file-name" title="${esc(d.name)}">${d.pinned ? "★ " : ""}${esc(d.name)}</strong><small>${esc((a?.extension || d.type || "Tệp").toUpperCase())} • ${formatBytes(a?.size || 0)}</small><div class="row-actions mt">${documentActions(d, trash)}</div></article>`;
             })
             .join("");
         }
@@ -8685,7 +6189,7 @@
               (b.onclick = async () => {
                 if (
                   !confirm(
-                    "Đánh dấu xóa tài liệu và tệp trên mọi thiết bị? Tombstone sẽ được giữ để đồng bộ an toàn.",
+                    "Xóa vĩnh viễn tài liệu và các tệp liên quan khỏi máy chủ?",
                   )
                 )
                   return;
@@ -8705,7 +6209,7 @@
                   await hardDelete("document_links", link.id);
                 for (const version of versions)
                   await hardDelete("file_versions", version.id);
-                toast("Đã đánh dấu xóa và đưa thay đổi vào hàng đợi đồng bộ.");
+                toast("Đã xóa tài liệu và các tệp liên quan.");
                 renderDocuments();
               }),
           );
@@ -9278,8 +6782,7 @@
                     !row.created_at ||
                     !row.updated_at ||
                     !Number(row.revision) ||
-                    !row.device_id ||
-                    !row.sync_status,
+                    !row.device_id,
                 );
               if (changed.length) {
                 await db.bulkPut(
@@ -9321,7 +6824,7 @@
             await createInternalSnapshot("Sau nâng cấp lược đồ 9", {
               tier: "protected",
               protectedSnapshot: true,
-              reason: "migration-to-9-drive-sync",
+              reason: "migration-to-9",
             });
             await finishOperation(operation, "completed", {
               normalized_records: normalizedCount,
@@ -9622,7 +7125,6 @@
             app: APP.name,
             app_id: APP.appId,
             school_profile_id: APP.schoolProfileId,
-            app_namespace: APP.namespace,
             format: APP.backupFormat,
             scope: yearId ? "academic-year" : includeFiles ? "full" : "quick",
             version: APP.version,
@@ -9633,7 +7135,6 @@
             manifest: {
               app_id: APP.appId,
               school_profile_id: APP.schoolProfileId,
-              app_namespace: APP.namespace,
               device_id: DEVICE_ID,
               academic_year_id: yearId,
               exported_at: exportedAt,

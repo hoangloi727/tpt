@@ -2,17 +2,18 @@ AGENTS.md
 Repository-Specific Architecture
 
 - Run the application with `npm start`; opening `frontend/index.html` directly bypasses the required authenticated API.
-- `frontend/scripts/app.js` still contains the legacy `LocalDataProvider`, but runtime persistence uses `frontend/scripts/api-data-provider.js` through `window.ApiDataProvider`.
+- Runtime persistence uses `frontend/scripts/api-data-provider.js` through `window.ApiDataProvider`; do not add a browser-side persistence provider.
 - Keep `frontend/index.html` as the static shell; application styles belong in `frontend/styles/app.css` and browser logic belongs in `frontend/scripts/`.
 - `backend/server.js` serves both `/api/*` and the static `frontend/` tree. It binds to `127.0.0.1:3000` unless `HOST` or `PORT` is set.
-- Records are stored in `data/database.json` by default. `data/` is intentionally gitignored; override it with `DATA_FILE`.
-- Authentication is first-run: when `data/users.json` is empty, the browser creates the protected root account. Passwords are `scrypt` hashes; there is no shared or source-defined password.
-- `AUTH_FILE` overrides the account file independently of `DATA_FILE`. Keep account data outside Git and never add a password-reset bypass.
+- Records and accounts are stored in `data/database.sqlite` by default. `data/` is intentionally gitignored; override it with `SQLITE_FILE`.
+- On an empty SQLite database, `DATA_FILE` and `AUTH_FILE` are legacy JSON import sources. Migration is transactional and verified; never delete those rollback files automatically.
+- Authentication is first-run: when SQLite has no imported or existing account, the browser creates the protected root account. Passwords are `scrypt` hashes; there is no shared or source-defined password.
+- `AUTH_FILE` overrides the legacy account import source independently of `DATA_FILE`. Keep account data outside Git and never add a password-reset bypass.
 - `backend/stores.js` and the `STORES` list in `frontend/scripts/app.js` must stay aligned when changing the schema.
 - Authorization is enforced in `backend/api.js`. UI route hiding is only presentation and must not replace server checks.
-- API writes own revision checks, metadata, audit entries, operation-journal entries, and Drive sync-outbox entries; do not duplicate those in frontend features.
+- API writes own revision checks, metadata, audit entries, and operation-journal entries; do not duplicate those in frontend features.
 - Binary attachments cross the API as explicit base64 `Blob` envelopes. Preserve this conversion when changing request serialization.
-- Google Identity and Drive `appDataFolder` synchronization remain browser-side because authorization requires a user gesture. Primary CRUD persistence is server-side.
+- The frontend has no remote synchronization provider. Preserve local file/directory backups, restore points, reports, and server-backed CRUD persistence.
 - `npm run check` performs syntax checks only; no automated behavior suite exists yet.
 
 Project Overview
