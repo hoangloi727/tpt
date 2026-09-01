@@ -320,6 +320,13 @@ export class SessionManager {
       if (session.user.id === userId) this.sessions.delete(token);
     }
   }
+
+  refreshUser(userId, user) {
+    for (const session of this.sessions.values()) {
+      if (session.user.id === userId)
+        session.user = { ...session.user, ...user };
+    }
+  }
 }
 
 export const hasPermission = (user, permission) =>

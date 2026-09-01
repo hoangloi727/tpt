@@ -95,6 +95,33 @@
         background: #fff;
         color: var(--blue);
         font-weight: 900;
+        overflow: hidden;
+        flex: 0 0 34px;
+      }
+      .brand-mark img,
+      .brand-logo-preview img {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+      }
+      .brand-logo-editor {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+      .brand-logo-preview {
+        display: grid;
+        place-items: center;
+        width: 72px;
+        height: 72px;
+        flex: 0 0 72px;
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        background: #fff;
+        color: var(--blue);
+        font-size: 28px;
+        font-weight: 900;
       }
       .brand-text {
         min-width: 0;
@@ -238,8 +265,10 @@
         max-width: 145px;
       }
       #schoolSelect {
-        width: clamp(260px, 32vw, 420px);
-        max-width: none;
+        flex-basis: 420px;
+        width: 420px;
+        min-width: 320px;
+        max-width: min(420px, 40vw);
       }
       .mobile-context-btn {
         display: none;
@@ -928,13 +957,12 @@
         width: 58px;
         height: 58px;
         margin: 0 auto 14px;
-        display: grid;
-        place-items: center;
-        border-radius: 16px;
-        background: linear-gradient(145deg, var(--blue), #0a3764);
-        color: #fff;
-        font-size: 28px;
-        font-weight: 900;
+        display: block;
+        object-fit: contain;
+        border: 0;
+        border-radius: 0;
+        background: #fff;
+        box-shadow: none;
       }
       .activation-card h1 {
         font-size: 21px;

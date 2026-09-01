@@ -184,12 +184,20 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           return forbidden(response);
         if (request.method === "PATCH") {
           const changes = await readJson(request);
+          const passwordChanged = !!changes.password;
           changes.schoolId = user.selectedSchoolId;
           if (user.role === "admin") {
             if (changes.role === "superadmin") changes.role = "admin";
           }
           const updated = await users.update(id, changes);
-          sessions.revokeUser(id);
+          if (passwordChanged || updated.disabled) sessions.revokeUser(id);
+          else {
+            const refreshed =
+              updated.role === "superadmin"
+                ? updated
+                : sessionUser(updated, repository.school(updated.schoolId));
+            sessions.refreshUser(id, refreshed);
+          }
           return sendJson(response, 200, updated);
         }
         if (request.method === "DELETE") {

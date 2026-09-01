@@ -215,6 +215,8 @@
           setupRequired: false,
           loginSchools: [],
           schoolId: "",
+          schoolLogo: null,
+          brandLogoUrl: "",
           user: null,
           unlockTimeoutMinutes: 10,
         };
@@ -228,6 +230,7 @@
             state.campusId = "all";
             state.criteriaSetId = "";
             state.lastScoreUndo = null;
+            state.schoolLogo = null;
           }
           state.user = user;
           state.schoolId = user.selectedSchoolId;
@@ -935,6 +938,8 @@
             await ensureScheduledDirectoryBackup();
           }
           await loadContext();
+          const [activeSchool] = await db.all("schools");
+          state.schoolLogo = activeSchool?.brand_logo || null;
           updateSchoolBranding();
           renderNav();
           sessionLock.setTimeoutMinutes(
@@ -967,6 +972,19 @@
             state.user?.selectedSchoolName || APP.schoolName || "TRƯỜNG";
           const brand = $("#selectedSchoolName");
           if (brand) brand.textContent = schoolName.toUpperCase();
+          const mark = $(".brand-mark");
+          if (mark) {
+            if (state.brandLogoUrl) URL.revokeObjectURL(state.brandLogoUrl);
+            state.brandLogoUrl = "";
+            mark.replaceChildren();
+            if (state.schoolLogo instanceof Blob) {
+              state.brandLogoUrl = URL.createObjectURL(state.schoolLogo);
+              const image = document.createElement("img");
+              image.src = state.brandLogoUrl;
+              image.alt = "";
+              mark.append(image);
+            } else mark.textContent = "Đ";
+          }
           const selector = $("#schoolSelect"),
             canSwitch = state.user?.role === "superadmin";
           if (selector) {
@@ -5203,13 +5221,27 @@
                 permissions: permissionList(values.permissions),
                 ...(values.password ? { password: values.password } : {}),
                 ...(editing ? { disabled: !!values.disabled } : {}),
-              };
+            };
             try {
-              if (editing) await db.updateUser(user.id, details);
-              else await db.createUser(details);
+              const updatedUser = editing
+                ? await db.updateUser(user.id, details)
+                : await db.createUser(details);
               closeModal();
-              if (editing && user.id === state.user?.id) {
+              if (
+                editing &&
+                user.id === state.user?.id &&
+                (values.password || updatedUser.disabled)
+              ) {
                 sessionLock.lock("Tài khoản đã cập nhật. Hãy đăng nhập lại.");
+                return;
+              }
+              if (editing && user.id === state.user?.id) {
+                const refreshedUser = { ...state.user, ...updatedUser };
+                db.currentUser = refreshedUser;
+                applyAuthenticatedUser(refreshedUser);
+                sessionLock.updateLabel();
+                await launchApp();
+                toast("Đã cập nhật tài khoản");
                 return;
               }
               toast(editing ? "Đã cập nhật tài khoản" : "Đã tạo tài khoản");
@@ -5448,14 +5480,52 @@
         }
         async function renderSchoolPanel(panel) {
           const [school] = await db.all("schools");
-          panel.innerHTML = `<div class="card"><div class="card-head"><h2>Thông tin trường</h2></div><div class="card-body"><form id="schoolCenterForm"><div class="form-grid"><div class="field full"><label class="required">Tên trường</label><input name="name" value="${esc(school?.name || "")}" required></div><div class="field"><label>Mã trường</label><input name="code" value="${esc(school?.code || "")}"></div><div class="field"><label>Địa chỉ</label><input name="address" value="${esc(school?.address || "")}"></div><div class="field"><label>Người lập báo cáo</label><input name="reporter" value="${esc(school?.reporter || "")}"></div><div class="field"><label>Chức danh</label><input name="reporter_title" value="${esc(school?.reporter_title || "Tổng phụ trách Đội")}"></div></div></form><button class="btn primary mt" id="saveSchoolCenter">Lưu thông tin</button></div></div>`;
+          let selectedLogo = school?.brand_logo || null;
+          panel.innerHTML = `<div class="card"><div class="card-head"><h2>Thông tin trường</h2></div><div class="card-body"><form id="schoolCenterForm"><div class="form-grid"><div class="field full"><label class="required">Tên trường</label><input name="name" value="${esc(school?.name || "")}" required></div><div class="field"><label>Mã trường</label><input name="code" value="${esc(school?.code || "")}"></div><div class="field"><label>Địa chỉ</label><input name="address" value="${esc(school?.address || "")}"></div><div class="field"><label>Người lập báo cáo</label><input name="reporter" value="${esc(school?.reporter || "")}"></div><div class="field"><label>Chức danh</label><input name="reporter_title" value="${esc(school?.reporter_title || "Tổng phụ trách Đội")}"></div><div class="field full"><label>Logo trường</label><div class="brand-logo-editor"><div class="brand-logo-preview" id="schoolLogoPreview" aria-label="Xem trước logo"></div><div><input id="schoolLogoInput" type="file" accept="image/png,image/jpeg,image/webp"><div class="toolbar mt"><button class="btn small" id="removeSchoolLogo" type="button">Dùng biểu tượng mặc định</button></div><small class="hint">Chọn ảnh PNG, JPEG hoặc WebP, tối đa 2 MB. Logo được lưu riêng cho trường này.</small></div></div></div></div></form><button class="btn primary mt" id="saveSchoolCenter">Lưu thông tin</button></div></div>`;
+          const renderLogoPreview = () => {
+            const preview = $("#schoolLogoPreview");
+            preview.replaceChildren();
+            if (!(selectedLogo instanceof Blob)) {
+              preview.textContent = "Đ";
+              return;
+            }
+            const image = document.createElement("img"),
+              url = URL.createObjectURL(selectedLogo);
+            image.src = url;
+            image.alt = "Logo trường đã chọn";
+            image.onload = () => URL.revokeObjectURL(url);
+            preview.append(image);
+          };
+          renderLogoPreview();
+          $("#schoolLogoInput").onchange = (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+            if (!["image/png", "image/jpeg", "image/webp"].includes(file.type)) {
+              event.target.value = "";
+              return toast("Logo phải là ảnh PNG, JPEG hoặc WebP.", "bad");
+            }
+            if (file.size > 2 * 1048576) {
+              event.target.value = "";
+              return toast("Logo không được vượt quá 2 MB.", "bad");
+            }
+            selectedLogo = file;
+            renderLogoPreview();
+          };
+          $("#removeSchoolLogo").onclick = () => {
+            selectedLogo = null;
+            $("#schoolLogoInput").value = "";
+            renderLogoPreview();
+          };
           $("#saveSchoolCenter").onclick = async () => {
             const f = $("#schoolCenterForm");
             if (!f.reportValidity()) return;
             await db.put("schools", {
               ...(school || {}),
               ...Object.fromEntries(new FormData(f)),
+              brand_logo: selectedLogo,
             });
+            state.schoolLogo = selectedLogo;
+            updateSchoolBranding();
             toast("Đã lưu thông tin trường");
           };
         }
