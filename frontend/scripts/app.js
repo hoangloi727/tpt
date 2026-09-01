@@ -801,16 +801,38 @@
           try {
             bindActivation();
             sessionLock.start();
+            $("#activationStatus").textContent =
+              "Đang kiểm tra phiên đăng nhập…";
             const authStatus = await db.authStatus();
             state.setupRequired = !!authStatus.setupRequired;
             state.loginSchools = authStatus.schools || [];
             updateActivationMode();
+            registerPWA();
+            if (!state.setupRequired) {
+              const user = await db.restoreSession();
+              if (user) {
+                state.unlocked = true;
+                sessionLock.lastActivityAt = Date.now();
+                applyAuthenticatedUser(user);
+                try {
+                  await launchApp();
+                  return;
+                } catch (error) {
+                  state.unlocked = false;
+                  state.user = null;
+                  db.currentUser = null;
+                  showActivation(
+                    "Không thể khôi phục phiên: " + error.message,
+                  );
+                  return;
+                }
+              }
+            }
             showActivation(
               state.setupRequired
                 ? "Khởi tạo tài khoản root đầu tiên để quản trị hệ thống."
                 : "Nhập tài khoản để mở phiên làm việc. Ứng dụng không ghi nhớ mật khẩu.",
             );
-            registerPWA();
           } catch (e) {
             document.body.innerHTML =
               '<main style="padding:30px;font-family:system-ui"><h1>Không thể khởi động ứng dụng</h1><p>Hãy tải lại trang bằng Chrome, Edge hoặc Safari phiên bản hiện hành.</p></main>';

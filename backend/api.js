@@ -1,6 +1,7 @@
 import { hasPermission } from "./auth.js";
 
 const MAX_BODY_BYTES = 100 * 1024 * 1024;
+const SESSION_COOKIE = "tpt_session";
 const DASHBOARD_STORES = new Set([
   "app_settings",
   "calendar_events",
@@ -17,13 +18,60 @@ const DASHBOARD_STORES = new Set([
   "weekly_score_sheets",
 ]);
 
-const sendJson = (response, status, value) => {
+const sendJson = (response, status, value, headers = {}) => {
   response.writeHead(status, {
     "Content-Type": "application/json; charset=utf-8",
     "Cache-Control": "no-store",
+    ...headers,
   });
   response.end(JSON.stringify(value));
 };
+
+const requestSessionToken = (request) => {
+  const authorization = String(request.headers.authorization || ""),
+    bearer = authorization.replace(/^Bearer\s+/i, "");
+  if (bearer && bearer !== authorization) return bearer;
+  const cookies = String(request.headers.cookie || "")
+    .split(";")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  for (const cookie of cookies) {
+    const separator = cookie.indexOf("=");
+    if (separator < 0 || cookie.slice(0, separator) !== SESSION_COOKIE) continue;
+    try {
+      return decodeURIComponent(cookie.slice(separator + 1));
+    } catch (_) {
+      return "";
+    }
+  }
+  return "";
+};
+
+const sessionCookie = (request, token = "", clear = false) => {
+  const forwardedProtocol = String(request.headers["x-forwarded-proto"] || "")
+      .split(",")[0]
+      .trim()
+      .toLowerCase(),
+    secure = forwardedProtocol === "https" || !!request.socket.encrypted;
+  return [
+    `${SESSION_COOKIE}=${encodeURIComponent(token)}`,
+    "Path=/api",
+    "HttpOnly",
+    "SameSite=Strict",
+    ...(secure ? ["Secure"] : []),
+    ...(clear
+      ? ["Max-Age=0", "Expires=Thu, 01 Jan 1970 00:00:00 GMT"]
+      : []),
+  ].join("; ");
+};
+
+const sendSession = (request, response, status, session) =>
+  sendJson(
+    response,
+    status,
+    { user: session.user },
+    { "Set-Cookie": sessionCookie(request, session.token) },
+  );
 
 const readJson = (request) =>
   new Promise((resolve, reject) => {
@@ -117,7 +165,12 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           : await repository.ensureSchool(body.schoolName);
         if (!school) return sendJson(response, 400, { error: "Hãy chọn trường hợp lệ." });
         const user = await users.setupRoot({ ...body, schoolId: school.id });
-        return sendJson(response, 201, sessions.create(sessionUser(user, school)));
+        return sendSession(
+          request,
+          response,
+          201,
+          sessions.create(sessionUser(user, school)),
+        );
       }
       if (request.method === "POST" && url.pathname === "/api/session") {
         if (users.setupRequired()) {
@@ -128,19 +181,39 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         if (!school) return sendJson(response, 400, { error: "Hãy chọn trường hợp lệ." });
         const user = await users.authenticate(body.username, body.password, school.id);
         if (!user) return sendJson(response, 401, { error: "Tên đăng nhập hoặc mật khẩu không đúng." });
-        return sendJson(response, 200, sessions.create(sessionUser(user, school)));
+        return sendSession(
+          request,
+          response,
+          200,
+          sessions.create(sessionUser(user, school)),
+        );
       }
 
-      const session = sessions.verify(request.headers.authorization);
-      if (!session) return sendJson(response, 401, { error: "Phiên làm việc đã hết hạn." });
+      const sessionToken = requestSessionToken(request),
+        session = sessions.verify(sessionToken);
+      if (!session) {
+        if (request.method === "DELETE" && url.pathname === "/api/session")
+          return sendJson(
+            response,
+            200,
+            { ok: true },
+            { "Set-Cookie": sessionCookie(request, "", true) },
+          );
+        return sendJson(response, 401, { error: "Phiên làm việc đã hết hạn." });
+      }
       const user = session.user;
 
       if (request.method === "GET" && url.pathname === "/api/session") {
         return sendJson(response, 200, { user });
       }
       if (request.method === "DELETE" && url.pathname === "/api/session") {
-        sessions.remove(request.headers.authorization);
-        return sendJson(response, 200, { ok: true });
+        sessions.remove(sessionToken);
+        return sendJson(
+          response,
+          200,
+          { ok: true },
+          { "Set-Cookie": sessionCookie(request, "", true) },
+        );
       }
       if (request.method === "POST" && url.pathname === "/api/session/school") {
         if (user.role !== "superadmin") return forbidden(response);
@@ -149,7 +222,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         if (!school)
           return sendJson(response, 400, { error: "Hãy chọn trường hợp lệ." });
         const updated = sessionUser(user, school);
-        sessions.update(request.headers.authorization, updated);
+        sessions.update(sessionToken, updated);
         return sendJson(response, 200, { user: updated });
       }
       if (request.method === "PATCH" && url.pathname === "/api/account") {
@@ -186,7 +259,14 @@ export const createApiHandler = ({ repository, sessions, users }) =>
               : sessionUser(updated, repository.school(updated.schoolId));
           sessions.refreshUser(user.id, refreshed);
         }
-        return sendJson(response, 200, updated);
+        return sendJson(
+          response,
+          200,
+          updated,
+          body.password
+            ? { "Set-Cookie": sessionCookie(request, "", true) }
+            : {},
+        );
       }
       if (request.method === "GET" && url.pathname === "/api/health") {
         return sendJson(response, 200, {
@@ -268,7 +348,14 @@ export const createApiHandler = ({ repository, sessions, users }) =>
                 : sessionUser(updated, repository.school(updated.schoolId));
             sessions.refreshUser(id, refreshed);
           }
-          return sendJson(response, 200, updated);
+          return sendJson(
+            response,
+            200,
+            updated,
+            id === user.id && (passwordChanged || updated.disabled)
+              ? { "Set-Cookie": sessionCookie(request, "", true) }
+              : {},
+          );
         }
         if (request.method === "DELETE") {
           if (id === user.id) return sendJson(response, 400, { error: "Không thể xóa phiên đang đăng nhập." });

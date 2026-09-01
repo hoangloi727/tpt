@@ -55,7 +55,6 @@
       this.onSave = options.onSave;
       this.onChange = options.onChange;
       this.baseUrl = "/api";
-      this.token = "";
       this.currentUser = null;
       this.db = null;
     }
@@ -63,6 +62,7 @@
     async authStatus() {
       const response = await fetch(`${this.baseUrl}/auth/status`, {
         headers: { Accept: "application/json" },
+        credentials: "same-origin",
       });
       if (!response.ok) throw new Error("Không thể kiểm tra trạng thái đăng nhập.");
       return response.json();
@@ -73,10 +73,10 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(details),
+        credentials: "same-origin",
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Không thể tạo tài khoản root.");
-      this.token = result.token;
       this.currentUser = result.user;
       return result.user;
     }
@@ -86,10 +86,23 @@
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ username, password, schoolId }),
+        credentials: "same-origin",
       });
       if (!response.ok) return null;
       const result = await response.json();
-      this.token = result.token;
+      this.currentUser = result.user;
+      return result.user;
+    }
+
+    async restoreSession() {
+      const response = await fetch(`${this.baseUrl}/session`, {
+        headers: { Accept: "application/json" },
+        credentials: "same-origin",
+      });
+      if (response.status === 401) return null;
+      const result = await response.json();
+      if (!response.ok)
+        throw new Error(result.error || "Không thể khôi phục phiên đăng nhập.");
       this.currentUser = result.user;
       return result.user;
     }
@@ -104,23 +117,23 @@
     }
 
     disconnectMemory() {
-      if (this.token) {
-        fetch(`${this.baseUrl}/session`, {
-          method: "DELETE",
-          headers: { Authorization: `Bearer ${this.token}` },
-        }).catch(() => {});
-      }
-      this.token = "";
+      fetch(`${this.baseUrl}/session`, {
+        method: "DELETE",
+        credentials: "same-origin",
+      }).catch(() => {});
       this.currentUser = null;
     }
 
     async request(path, options = {}) {
       const headers = new Headers(options.headers || {});
-      if (this.token) headers.set("Authorization", `Bearer ${this.token}`);
       if (options.body !== undefined && !headers.has("Content-Type")) {
         headers.set("Content-Type", "application/json");
       }
-      const response = await fetch(`${this.baseUrl}${path}`, { ...options, headers });
+      const response = await fetch(`${this.baseUrl}${path}`, {
+        ...options,
+        headers,
+        credentials: "same-origin",
+      });
       if (response.status === 404 && options.allowMissing) return null;
       let payload = null;
       try {
