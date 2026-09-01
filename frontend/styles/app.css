@@ -1239,8 +1239,7 @@
         flex-shrink: 1;
       }
       .status-line .dot,
-      .status-line #networkText,
-      .status-line #lockNow {
+      .status-line #networkText {
         flex-shrink: 0;
       }
       .page-head > div:first-child {
