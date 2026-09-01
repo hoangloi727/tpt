@@ -6,8 +6,10 @@ const DASHBOARD_STORES = new Set([
   "app_settings",
   "calendar_events",
   "campuses",
+  "class_groups",
   "classes",
   "criteria",
+  "criteria_groups",
   "criteria_sets",
   "school_weeks",
   "school_years",
@@ -16,6 +18,12 @@ const DASHBOARD_STORES = new Set([
   "schools",
   "tasks",
   "weekly_score_sheets",
+]);
+const MANAGER_WRITE_STORES = new Set([
+  "class_groups",
+  "criteria_sets",
+  "criteria_groups",
+  "criteria",
 ]);
 
 const sendJson = (response, status, value, headers = {}) => {
@@ -80,7 +88,7 @@ const readJson = (request) =>
     request.on("data", (chunk) => {
       size += chunk.length;
       if (size > MAX_BODY_BYTES) {
-        const error = new Error("Request body is too large.");
+        const error = new Error("Nội dung yêu cầu quá lớn.");
         error.status = 413;
         reject(error);
         request.destroy();
@@ -92,7 +100,7 @@ const readJson = (request) =>
       try {
         resolve(chunks.length ? JSON.parse(Buffer.concat(chunks).toString("utf8")) : {});
       } catch (_) {
-        const error = new Error("Invalid JSON body.");
+        const error = new Error("Nội dung JSON không hợp lệ.");
         error.status = 400;
         reject(error);
       }
@@ -389,7 +397,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
       }
 
       const match = url.pathname.match(/^\/api\/stores\/([^/]+)(?:\/([^/]+))?$/);
-      if (!match) return sendJson(response, 404, { error: "API route not found." });
+      if (!match) return sendJson(response, 404, { error: "Không tìm thấy đường dẫn API." });
       const store = decodeURIComponent(match[1]);
       const id = match[2] ? decodeURIComponent(match[2]) : "";
 
@@ -428,12 +436,21 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           ? sendJson(response, 200, record)
           : url.searchParams.get("optional") === "1"
             ? sendJson(response, 200, null)
-          : sendJson(response, 404, { error: "Record not found." });
+          : sendJson(response, 404, { error: "Không tìm thấy bản ghi." });
       }
 
       const assignedGrader =
-        !isManager(user) && graderAssignments(repository, user).length > 0;
+          !isManager(user) && graderAssignments(repository, user).length > 0,
+        canWriteScoreRow = (row) => {
+          if (!canGrade(repository, user, row)) return false;
+          const existing = row.id
+            ? repository.get("score_entries", row.id, user.selectedSchoolId)
+            : null;
+          return !existing || canGrade(repository, user, existing);
+        };
       if (
+        (MANAGER_WRITE_STORES.has(store) && !isManager(user)) ||
+        (store === "classes" && request.method === "DELETE" && !isManager(user)) ||
         (store === "score_grader_assignments" && !isManager(user)) ||
         (store === "score_entries" && !isManager(user) && !assignedGrader) ||
         (store === "audit_logs" && !isManager(user) && !assignedGrader) ||
@@ -462,7 +479,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           return forbidden(response);
         if (
           store === "score_entries" &&
-          (body.rows || []).some((row) => !canGrade(repository, user, row))
+          (body.rows || []).some((row) => !canWriteScoreRow(row))
         )
           return forbidden(response);
         if (
@@ -493,7 +510,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         }
         if (
           (store === "score_entries" &&
-            !canGrade(repository, user, body.row || {})) ||
+            !canWriteScoreRow(body.row || {})) ||
           (store === "audit_logs" &&
             !isManager(user) &&
             body.row?.entity !== "score_entries")
@@ -538,11 +555,11 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           await repository.clear(store, user.selectedSchoolId),
         );
       }
-      return sendJson(response, 405, { error: "Method not allowed." });
+      return sendJson(response, 405, { error: "Phương thức không được phép." });
     } catch (error) {
       console.error(error);
       return sendJson(response, error.status || 500, {
-        error: error.status ? error.message : "Internal server error.",
+        error: error.status ? error.message : "Lỗi máy chủ nội bộ.",
         name: error.name,
       });
     }

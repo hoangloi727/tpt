@@ -1,4 +1,4 @@
-const CACHE = "tpt-shell-v18";
+const CACHE = "tpt-shell-v21";
 const SHELL = [
   "./",
   "./index.html",
@@ -6,6 +6,10 @@ const SHELL = [
   "./styles/app.css",
   "./logo/logo.png",
   "./scripts/api-data-provider.js",
+  "./scripts/app-utils.js",
+  "./scripts/app-catalog.js",
+  "./scripts/score-engine.js",
+  "./scripts/backup-codec.js",
   "./scripts/app.js",
   "./manifest.webmanifest",
 ];

@@ -23,7 +23,7 @@ export const createStaticHandler = (root) =>
     const filePath = resolve(root, `.${decodeURIComponent(pathname)}`);
     if (filePath !== root && !filePath.startsWith(`${root}${sep}`)) {
       response.writeHead(403);
-      response.end("Forbidden");
+      response.end("Không được phép truy cập");
       return;
     }
     try {
@@ -38,6 +38,6 @@ export const createStaticHandler = (root) =>
       else createReadStream(filePath).pipe(response);
     } catch (_) {
       response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
-      response.end("Not found");
+      response.end("Không tìm thấy");
     }
   };

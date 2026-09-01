@@ -4,7 +4,7 @@
         const APP = {
           name: "Trợ lý Tổng phụ trách Đội",
           version: PUBLIC_CONFIG.APP_VERSION || "3.1.0-rc.1",
-          schema: Number(PUBLIC_CONFIG.SCHEMA_VERSION || 13),
+          schema: Number(PUBLIC_CONFIG.SCHEMA_VERSION || 15),
           dbName: PUBLIC_CONFIG.DB_NAME || "TPT_DOI_DB",
           appId:
             PUBLIC_CONFIG.APP_ID || "vn.giaoducso40.tpt.thcs.standard",
@@ -28,6 +28,7 @@
           "school_weeks",
           "grades",
           "classes",
+          "class_groups",
           "homeroom_teachers",
           "plans",
           "plan_targets",
@@ -106,69 +107,61 @@
         ]);
         const $ = (s) => document.querySelector(s),
           $$ = (s) => [...document.querySelectorAll(s)];
-        const uid = () =>
-          crypto.randomUUID
-            ? crypto.randomUUID()
-            : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-        const now = () => new Date().toISOString();
-        const localISO = (d) =>
-          `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-        const today = () => localISO(new Date());
-        const esc = (v) =>
-          String(v ?? "").replace(
-            /[&<>'"]/g,
-            (c) =>
-              ({
-                "&": "&amp;",
-                "<": "&lt;",
-                ">": "&gt;",
-                "'": "&#39;",
-                '"': "&quot;",
-              })[c],
+        const MODULES = window.TPTAppModules;
+        if (
+          !MODULES?.utils ||
+          !MODULES?.catalog ||
+          !MODULES?.score ||
+          !MODULES?.backupCodec
+        )
+          throw new Error(
+            "Thiếu mô-đun giao diện bắt buộc. Hãy tải lại ứng dụng.",
           );
-        const fmtDate = (v) =>
-          v
-            ? new Intl.DateTimeFormat("vi-VN").format(new Date(v + "T00:00:00"))
-            : "—";
-        const fmtDateTime = (v) =>
-          v
-            ? new Intl.DateTimeFormat("vi-VN", {
-                dateStyle: "short",
-                timeStyle: "short",
-              }).format(new Date(v))
-            : "—";
-        const clamp = (n, a, b) => Math.min(b, Math.max(a, Number(n) || 0));
-        const csvSafe = (v) => {
-          let s = String(v ?? "").replace(/"/g, '""');
-          if (/^[=+\-@]/.test(s)) s = "'" + s;
-          return '"' + s + '"';
-        };
-        const statusLabel = (s) =>
-          ({
-            todo: "Chưa làm",
-            doing: "Đang làm",
-            waiting: "Chờ phối hợp",
-            review: "Chờ duyệt",
-            done: "Hoàn thành",
-            paused: "Tạm dừng",
-            draft: "Bản nháp",
-            complete: "Đã nhập đủ",
-            approved: "Đã duyệt",
-            locked: "Đã khóa",
-            unlocked: "Đã mở khóa",
-            planned: "Dự kiến",
-            active: "Đang thực hiện",
-            finished: "Đã kết thúc",
-            finalized: "Đã chốt",
-            archived: "Đã lưu trữ",
-            not_submitted: "Chưa gửi",
-            submitted: "Đã gửi",
-            accepted: "Đã tiếp nhận",
-          })[s] ||
-          s ||
-          "—";
-        const statusBadge = (s) =>
-          `<span class="badge ${["done", "approved", "locked", "finished"].includes(s) ? "green" : ["overdue", "urgent"].includes(s) ? "red" : ["doing", "review", "active"].includes(s) ? "blue" : "yellow"}">${esc(statusLabel(s))}</span>`;
+        const {
+            uid,
+            now,
+            localISO,
+            today,
+            esc,
+            fmtDate,
+            fmtDateTime,
+            clamp,
+            csvSafe,
+            statusLabel,
+            statusBadge,
+            addDays,
+            sortWeeksAscending,
+            pageHead,
+            debounce,
+            nextRepeatDate,
+            simpleTable,
+            nextVersion,
+            parseDelimited,
+            permissionList,
+            formatBytes,
+            fileIcon,
+            normalizeText,
+            defaultConfigColor,
+          } = MODULES.utils,
+          { NAV, ENTITY, SETTINGS_TABS, SETTINGS_CONFIG_KEYS, CONFIG_DEFINITIONS } =
+            MODULES.catalog,
+          {
+            criterionScore,
+            scoreWeekdays,
+            scoreAdjustment,
+            classScoreSummary,
+            scoreEntryCriterionId,
+            entryMap,
+          } = MODULES.score,
+          {
+            encryptText,
+            decryptText,
+            stableJSON,
+            sha256Text,
+            sha256Blob,
+            blobToBase64,
+            base64ToBlob,
+          } = MODULES.backupCodec;
         const getDeviceId = () => {
           const key = `${APP.appId}:device-id`;
           try {
@@ -358,7 +351,7 @@
             const el = $("#sessionChip");
             if (el)
               el.textContent = state.user
-                ? `${state.user.displayName} • ${state.user.role === "superadmin" ? "root" : state.user.role}`
+                ? `${state.user.displayName} • ${state.user.role === "superadmin" ? "Superadmin" : state.user.role === "admin" ? "Admin" : "User"}`
                 : `Khóa sau ${state.unlockTimeoutMinutes} phút`;
           }
           lock(message = "Ứng dụng đã khóa.") {
@@ -591,26 +584,6 @@
               });
         }
 
-        const NAV = [
-          ["dashboard", "⌂", "Tổng quan"],
-          ["today", "◷", "Hôm nay"],
-          ["plans", "▤", "Kế hoạch"],
-          ["tasks", "✓", "Công việc và checklist"],
-          ["calendar", "▦", "Lịch hoạt động"],
-          ["scores", "★", "Thi đua lớp"],
-          ["activities", "⚑", "Hoạt động Đội"],
-          ["organization", "♟", "Tổ chức Liên đội"],
-          ["programs", "◇", "Rèn luyện – phong trào"],
-          ["commendations", "✦", "Khen thưởng"],
-          ["documents", "▧", "Hồ sơ – minh chứng"],
-          ["equipment", "◫", "Thiết bị Đội"],
-          ["reports", "▥", "Báo cáo"],
-          ["assistant", "◎", "Trợ lý tổng hợp"],
-          ["backup", "⇄", "Sao lưu – khôi phục"],
-          ["account", "♙", "Tài khoản của tôi"],
-          ["users", "♜", "Quản lý người dùng"],
-          ["settings", "⚙", "Thiết lập"],
-        ];
         function canAccessPage(page) {
           if (page === "account") return true;
           if (["superadmin", "admin"].includes(state.user?.role)) return true;
@@ -618,185 +591,6 @@
           const permissions = state.user?.permissions || [];
           return permissions.includes("*") || permissions.includes(page) || permissions.includes(`page:${page}`);
         }
-        const ENTITY = {
-          plans: {
-            title: "Kế hoạch",
-            store: "plans",
-            desc: "Kế hoạch năm học, học kỳ, tháng và tuần.",
-            fields: [
-              ["code", "Mã kế hoạch", "text", 1],
-              ["name", "Tên kế hoạch", "text", 1],
-              [
-                "level",
-                "Cấp kế hoạch",
-                "select",
-                1,
-                "year: Năm học|semester: Học kỳ|month: Tháng|week: Tuần",
-              ],
-              ["start_date", "Bắt đầu", "date", 1],
-              ["end_date", "Kết thúc", "date", 1],
-              ["objectives", "Mục tiêu", "textarea", 1],
-              ["targets", "Chỉ tiêu đo được", "textarea"],
-              ["basis", "Căn cứ/văn bản liên quan", "textarea"],
-              ["coordination", "Đơn vị phối hợp", "text"],
-              ["resources", "Nguồn lực", "text"],
-              ["risks", "Rủi ro và phương án", "textarea"],
-              [
-                "status",
-                "Trạng thái",
-                "select",
-                1,
-                "draft: Dự thảo|active: Đang thực hiện|finished: Đã kết thúc",
-              ],
-              ["progress", "Tiến độ (%)", "number"],
-            ],
-          },
-          activities: {
-            title: "Hoạt động Đội",
-            store: "activities",
-            desc: "Tổ chức, theo dõi hoạt động và phương án an toàn.",
-            fields: [
-              ["name", "Tên hoạt động", "text", 1],
-              [
-                "category",
-                "Nhóm hoạt động",
-                "select",
-                1,
-                "Truyền thống – đạo đức|Học tập – sáng tạo|Kỹ năng sống – an toàn|Văn nghệ – thể thao|Môi trường|Tình nguyện – nhân đạo|Rèn luyện đội viên|Xây dựng tổ chức Đội",
-              ],
-              ["theme", "Chủ điểm", "text"],
-              ["date", "Ngày tổ chức", "date", 1],
-              ["location", "Địa điểm", "text", 1],
-              ["leader", "Người phụ trách", "text", 1],
-              ["participants", "Đối tượng/quy mô", "text"],
-              ["objectives", "Mục tiêu", "textarea"],
-              ["safety", "Phương án an toàn", "textarea", 1],
-              ["backup_plan", "Phương án dự phòng", "textarea"],
-              ["result", "Kết quả sau hoạt động", "textarea"],
-              [
-                "status",
-                "Trạng thái",
-                "select",
-                1,
-                "planned: Dự kiến|active: Đang thực hiện|finished: Đã kết thúc",
-              ],
-            ],
-          },
-          organization: {
-            title: "Tổ chức Liên đội",
-            store: "team_members",
-            desc: "Ban Chỉ huy, đội nghi lễ, phát thanh măng non và đội nhóm.",
-            fields: [
-              ["name", "Họ và tên", "text", 1],
-              ["internal_code", "Mã nội bộ", "text"],
-              ["class_name", "Lớp", "text", 1],
-              [
-                "unit",
-                "Đội/ban",
-                "select",
-                1,
-                "Ban Chỉ huy Liên đội|Ban Chỉ huy Chi đội|Đội nghi lễ|Phát thanh măng non|Đội tự quản|Câu lạc bộ",
-              ],
-              ["position", "Chức vụ", "text", 1],
-              ["term", "Nhiệm kỳ", "text", 1],
-              ["training", "Kết quả bồi dưỡng", "textarea"],
-            ],
-          },
-          programs: {
-            title: "Rèn luyện – phong trào",
-            store: "program_results",
-            desc: "Theo dõi chương trình, chuyên hiệu, công trình và việc tốt.",
-            fields: [
-              ["name", "Tên chương trình/chuyên hiệu", "text", 1],
-              ["scope", "Đối tượng/lớp", "text", 1],
-              ["result", "Kết quả công nhận", "text"],
-              ["recognized_date", "Ngày công nhận", "date"],
-              ["activity", "Hoạt động tham gia", "text"],
-              ["evidence", "Minh chứng/ghi chú", "textarea"],
-              [
-                "status",
-                "Trạng thái",
-                "select",
-                1,
-                "draft: Đang theo dõi|approved: Đã công nhận",
-              ],
-            ],
-          },
-          commendations: {
-            title: "Khen thưởng",
-            store: "commendations",
-            desc: "Hồ sơ khen thưởng tập thể và cá nhân.",
-            fields: [
-              ["award_type", "Loại khen thưởng", "text", 1],
-              ["level", "Cấp khen thưởng", "text", 1],
-              ["recipient", "Đối tượng", "text", 1],
-              ["achievement", "Thành tích", "textarea", 1],
-              ["date", "Thời gian", "date"],
-              ["related", "Hoạt động/kỳ thi đua liên quan", "text"],
-              [
-                "approval_status",
-                "Trạng thái xét duyệt",
-                "select",
-                1,
-                "draft: Dự thảo|review: Chờ duyệt|approved: Đã duyệt",
-              ],
-              ["decision", "Quyết định", "text"],
-              ["notes", "Ghi chú", "textarea"],
-            ],
-          },
-          documents: {
-            title: "Hồ sơ – minh chứng",
-            store: "documents",
-            desc: "Thư viện hồ sơ theo năm học và bản ghi liên quan.",
-            fields: [
-              ["name", "Tên hồ sơ", "text", 1],
-              [
-                "type",
-                "Loại",
-                "select",
-                1,
-                "Kế hoạch|Hoạt động|Thi đua|Tổ chức Đội|Khen thưởng|Báo cáo",
-              ],
-              ["document_no", "Số hiệu", "text"],
-              ["issuer", "Đơn vị ban hành", "text"],
-              ["date", "Ngày văn bản", "date"],
-              ["related", "Bản ghi liên quan", "text"],
-              ["tags", "Thẻ", "text"],
-              ["description", "Mô tả/đường dẫn tệp cục bộ", "textarea"],
-              [
-                "status",
-                "Trạng thái",
-                "select",
-                1,
-                "draft: Bản nháp|approved: Đã xác nhận",
-              ],
-            ],
-          },
-          equipment: {
-            title: "Thiết bị Đội",
-            store: "equipment",
-            desc: "Kiểm kê, mượn–trả và chuẩn bị thiết bị cho sự kiện.",
-            fields: [
-              ["name", "Tên thiết bị/vật tư", "text", 1],
-              ["code", "Mã", "text", 1],
-              ["group", "Nhóm", "text"],
-              ["quantity", "Số lượng", "number", 1],
-              ["unit", "Đơn vị tính", "text", 1],
-              [
-                "condition",
-                "Tình trạng",
-                "select",
-                1,
-                "Tốt|Cần sửa|Hỏng|Đang mượn",
-              ],
-              ["location", "Nơi lưu", "text"],
-              ["inventory_date", "Ngày kiểm kê", "date"],
-              ["activity", "Hoạt động đang sử dụng", "text"],
-              ["notes", "Ghi chú hư hỏng/bổ sung", "textarea"],
-            ],
-          },
-        };
-
         async function boot() {
           try {
             bindActivation();
@@ -1393,11 +1187,6 @@
             last_backup_at: null,
           });
         }
-        const addDays = (iso, n) => {
-          const d = new Date(iso + "T00:00:00");
-          d.setDate(d.getDate() + n);
-          return localISO(d);
-        };
         async function setting(key, value) {
           let r = (await db.get("app_settings", "seed_state")) || {
             id: "seed_state",
@@ -1408,28 +1197,6 @@
             return value;
           }
           return r[key];
-        }
-        function sortWeeksAscending(rows) {
-          const getNumber = (row) => {
-            const stored = Number(row?.number),
-              fromName = Number(
-                String(row?.name || "").match(/\d+/)?.[0],
-              );
-            if (Number.isFinite(stored) && stored > 0) return stored;
-            if (Number.isFinite(fromName) && fromName > 0) return fromName;
-            return Number.MAX_SAFE_INTEGER;
-          };
-          return [...rows].sort(
-            (a, b) =>
-              getNumber(a) - getNumber(b) ||
-              String(a.start_date || "").localeCompare(
-                String(b.start_date || ""),
-              ) ||
-              String(a.name || "").localeCompare(String(b.name || ""), "vi", {
-                numeric: true,
-                sensitivity: "base",
-              }),
-          );
         }
         async function loadContext() {
           const [years, sems, rawWeeks, campuses] = await Promise.all(
@@ -1575,8 +1342,6 @@
           }
           if (focus) content.focus();
         }
-        const pageHead = (title, desc, actions = "") =>
-          `<div class="page-head"><div><h1>${esc(title)}</h1><p>${esc(desc)}</p></div><div class="page-actions">${actions}</div></div>`;
         function setContent(html) {
           $("#content").innerHTML =
             `<section class="page active">${tabCoordinator.readOnly ? '<div class="readonly-banner" role="status"><strong>Chế độ chỉ đọc:</strong> một thẻ khác đang có quyền ghi dữ liệu. Có thể xem và xuất sao lưu; hãy đóng thẻ ghi rồi tải lại để chỉnh sửa.</div>' : ""}${html}</section><footer class="app-footer">Phát triển bởi: Thầy Trường - Zalo: 0329203951</footer>`;
@@ -1602,13 +1367,6 @@
           $("#networkText").title = online
             ? "Kết nối máy chủ đang khả dụng."
             : "Cần kết nối lại để đọc hoặc ghi dữ liệu trên máy chủ.";
-        }
-        function debounce(fn, ms) {
-          let t;
-          return (...a) => {
-            clearTimeout(t);
-            t = setTimeout(() => fn(...a), ms);
-          };
         }
         function openModal(title, body, foot = "", wide = false) {
           state.modalReturnFocus = document.activeElement;
@@ -1794,7 +1552,9 @@
                 .filter((x) => x.week_id === state.weekId)
                 .map((x) => x.class_id),
             ),
-            rankings = await calculateRanking(false),
+            rankings = await calculateRanking(
+              ["approved", "locked"].includes(sheet?.status),
+            ),
             completeClasses = new Set(
               rankings.filter((row) => row.complete).map((row) => row.id),
             ),
@@ -1843,12 +1603,12 @@
       </div>
       <div class="grid-2 mt">
         <div class="card"><div class="card-head"><h2>Hoạt động sắp tới</h2><span class="meta">Theo lịch</span></div><div class="card-body"><ul class="compact-list">${upcoming.map((e) => `<li><span class="badge blue">${fmtDate(e.date)}</span><div class="main"><strong>${esc(e.title)}</strong><small>${esc(e.location || "Chưa có địa điểm")} • ${esc(campusName(e.campus_id))}</small></div></li>`).join("") || '<li class="muted">Chưa có hoạt động sắp tới.</li>'}</ul></div></div>
-        <div class="card"><div class="card-head"><h2>5 lớp dẫn đầu tạm thời</h2><span class="meta">Chỉ để theo dõi nội bộ</span></div><div class="card-body"><ul class="compact-list">${
+        <div class="card"><div class="card-head"><h2>Xếp hạng tạm thời theo nhóm</h2><span class="meta">Chỉ để theo dõi nội bộ</span></div><div class="card-body"><ul class="compact-list">${
           rankings
-            .slice(0, 5)
+            .filter((row) => row.rank <= 3)
             .map(
               (r, i) =>
-                `<li><span class="badge ${r.rank <= 3 ? "yellow" : ""}">#${r.rank}</span><div class="main"><strong>${esc(r.class_name)}</strong><small>${esc(campusName(r.campus_id))}</small></div><strong>${r.total.toFixed(1)} điểm</strong></li>`,
+                `<li><span class="badge ${r.rank <= 3 ? "yellow" : ""}">#${r.rank}</span><div class="main"><strong>${esc(r.class_name)}</strong><small>${esc(r.class_group_name)} • ${esc(campusName(r.campus_id))}</small></div><strong>${r.total.toFixed(1)} điểm</strong></li>`,
             )
             .join("") || '<li class="muted">Chưa đủ dữ liệu để xếp hạng.</li>'
         }</ul></div></div>
@@ -2252,7 +2012,7 @@
               `<button class="btn" id="taskTemplates">Thư viện mẫu</button><button class="btn primary" id="newTask">＋ Công việc</button>`,
             ) +
               `
-      <div class="toolbar"><input class="grow" id="taskSearch" placeholder="Tìm công việc…"><select id="taskStatus"><option value="all">Mọi trạng thái</option>${statusOptions.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("")}</select><select id="taskPriority"><option value="all">Mọi mức ưu tiên</option>${priorityOptions.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("")}</select><div class="tabs" style="margin:0 0 0 auto;border:0"><button data-task-view="list" class="${state.taskView === "list" ? "active" : ""}">Danh sách</button><button data-task-view="kanban" class="${state.taskView === "kanban" ? "active" : ""}">Kanban</button></div></div><div id="taskArea"></div>`,
+      <div class="toolbar"><input class="grow" id="taskSearch" placeholder="Tìm công việc…"><select id="taskStatus"><option value="all">Mọi trạng thái</option>${statusOptions.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("")}</select><select id="taskPriority"><option value="all">Mọi mức ưu tiên</option>${priorityOptions.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("")}</select><div class="tabs" style="margin:0 0 0 auto;border:0"><button data-task-view="list" class="${state.taskView === "list" ? "active" : ""}">Danh sách</button><button data-task-view="kanban" class="${state.taskView === "kanban" ? "active" : ""}">Bảng thẻ</button></div></div><div id="taskArea"></div>`,
           );
           renderTaskArea(rows);
           $("#newTask").onclick = () => taskForm();
@@ -2403,7 +2163,7 @@
               )
               .join(
                 "",
-              )}</select></div><div class="field"><label>Kết thúc lặp (tùy chọn)</label><input type="date" name="repeat_until" value="${esc(t.repeat_until || "")}"></div><div class="field full"><label>Checklist con (mỗi dòng một mục; thêm ! ở đầu nếu bắt buộc)</label><textarea name="checklist">${esc(mine.map((x) => (x.required ? "! " : "") + x.label).join("\n"))}</textarea></div><div class="field"><label>Trở ngại</label><textarea name="obstacle">${esc(t.obstacle || "")}</textarea></div><div class="field"><label>Ghi chú/kết quả</label><textarea name="notes">${esc(t.notes || "")}</textarea></div>${renderCustomInputs(customDefs, t.custom_values)}</div></form>`,
+              )}</select></div><div class="field"><label>Kết thúc lặp (tùy chọn)</label><input type="date" name="repeat_until" value="${esc(t.repeat_until || "")}"></div><div class="field full"><label>Checklist mục con (mỗi dòng một mục; thêm ! ở đầu nếu bắt buộc)</label><textarea name="checklist">${esc(mine.map((x) => (x.required ? "! " : "") + x.label).join("\n"))}</textarea></div><div class="field"><label>Trở ngại</label><textarea name="obstacle">${esc(t.obstacle || "")}</textarea></div><div class="field"><label>Ghi chú/kết quả</label><textarea name="notes">${esc(t.notes || "")}</textarea></div>${renderCustomInputs(customDefs, t.custom_values)}</div></form>`,
             `<button class="btn" id="cancelTask">Hủy</button><button class="btn primary" id="saveTask">Lưu công việc</button>`,
             true,
           );
@@ -2467,15 +2227,6 @@
             toast("Đã lưu công việc");
             renderTasks();
           };
-        }
-        function nextRepeatDate(value, rule) {
-          if (!value || rule === "none") return null;
-          const d = new Date(`${value}T12:00:00`);
-          if (rule === "daily") d.setDate(d.getDate() + 1);
-          if (rule === "weekly") d.setDate(d.getDate() + 7);
-          if (rule === "monthly") d.setMonth(d.getMonth() + 1);
-          if (rule === "yearly") d.setFullYear(d.getFullYear() + 1);
-          return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
         }
         async function generateRecurringTasks() {
           const tasks = await db.all("tasks"),
@@ -2671,51 +2422,6 @@
           };
         }
 
-        function criterionScore(entry, criterion, set) {
-          let score = Number(entry?.value || 0);
-          if (criterion.data_type === "count")
-            score *= Number(criterion.points || 0);
-          if (criterion.data_type === "boolean")
-            score = entry?.value ? Number(criterion.points || 0) : 0;
-          if (criterion.data_type === "note") score = 0;
-          if (set?.formula === "weighted")
-            score *= Number(criterion.weight || 1);
-          return score;
-        }
-        function scoreWeekdays(week) {
-          if (!week?.start_date) return [];
-          const labels = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu"],
-            start = new Date(`${week.start_date}T00:00:00`),
-            days = [];
-          for (let offset = 0; offset < 7 && days.length < 5; offset++) {
-            const date = new Date(start);
-            date.setDate(start.getDate() + offset);
-            if (date.getDay() >= 1 && date.getDay() <= 5)
-              days.push({ date: localISO(date), label: labels[date.getDay() - 1] });
-          }
-          return days;
-        }
-        function scoreAdjustment(entries, criteria, set) {
-          return entries.reduce((total, entry) => {
-            const criterion = criteria.find((row) => row.id === entry.criteria_id);
-            return total +
-              (criterion && entry.entry_state === "value"
-                ? criterionScore(entry, criterion, set)
-                : 0);
-          }, 0);
-        }
-        function classScoreSummary(ctx, classId) {
-          const entries = ctx.entries.filter((entry) => entry.class_id === classId),
-            selectedEntries = entries.filter(
-              (entry) => entry.entry_date === state.scoreDate,
-            );
-          return {
-            dayAdjustment: scoreAdjustment(selectedEntries, ctx.criteria, ctx.set),
-            weeklyTotal:
-              (ctx.set?.formula === "base" ? Number(ctx.set.base_score || 0) : 0) +
-              scoreAdjustment(entries, ctx.criteria, ctx.set),
-          };
-        }
         async function renderScores() {
           const ctx = await scoreContext(),
             week = state.cache.weeks.find((x) => x.id === state.weekId),
@@ -2748,7 +2454,7 @@
           );
           if ($("#assignScoreGraders"))
             $("#assignScoreGraders").onclick = showScoreGraderAssignments;
-          if ($("#criteriaConfig")) $("#criteriaConfig").onclick = showCriteriaConfig;
+          if ($("#criteriaConfig")) $("#criteriaConfig").onclick = showRulesetConfig;
           if ($("#scoreSetSelect"))
             $("#scoreSetSelect").onchange = (e) => {
               state.criteriaSetId = e.target.value;
@@ -2772,10 +2478,11 @@
           );
         }
         async function showScoreGraderAssignments() {
-          const [allUsers, assignments, allClasses] = await Promise.all([
+          const [allUsers, assignments, allClasses, allGroups] = await Promise.all([
               db.listUsers(),
               db.all("score_grader_assignments"),
               db.all("classes"),
+              db.all("class_groups"),
             ]),
             users = allUsers.filter(
               (user) => user.role === "user" && !user.disabled,
@@ -2793,7 +2500,12 @@
                   "vi",
                   { numeric: true },
                 ),
-              );
+              ),
+            classGroups = allGroups.filter(
+              (group) =>
+                group.active !== false &&
+                group.school_year_id === state.yearId,
+            );
           if (!users.length)
             return toast(
               "Chưa có tài khoản User đang hoạt động để phân công.",
@@ -2801,7 +2513,7 @@
             );
           openModal(
             "Phân công chấm điểm theo lớp",
-            `<div class="notice">Mỗi lớp chỉ giao cho một User trong năm học đang chọn. Admin và Superadmin luôn có thể quản lý tất cả lớp.</div><div class="field mt"><label>Người chấm điểm</label><select id="scoreGraderUser">${users.map((user) => `<option value="${user.id}">${esc(user.displayName)} (${esc(user.username)})</option>`).join("")}</select></div><div class="toolbar mt"><button class="btn small" id="selectAllGraderClasses" type="button">Chọn lớp còn trống</button><button class="btn small" id="clearGraderClasses" type="button">Bỏ chọn tất cả</button></div><div class="form-grid" id="scoreGraderClasses"></div>`,
+            `<div class="notice">Mỗi lớp chỉ giao cho một User trong năm học đang chọn. Admin và Superadmin luôn có thể quản lý tất cả lớp.</div><div class="field mt"><label>Người chấm điểm</label><select id="scoreGraderUser">${users.map((user) => `<option value="${user.id}">${esc(user.displayName)} (${esc(user.username)})</option>`).join("")}</select></div><div class="toolbar mt"><button class="btn small" id="selectAllGraderClasses" type="button">Chọn lớp còn trống</button><button class="btn small" id="clearGraderClasses" type="button">Bỏ chọn tất cả</button>${classGroups.length ? `<label class="muted">Chọn nhanh nhóm <select id="graderClassGroup"><option value="">— Chọn nhóm —</option>${classGroups.map((group) => `<option value="${group.id}">${esc(group.name)}</option>`).join("")}</select></label>` : ""}</div><div class="form-grid" id="scoreGraderClasses"></div>`,
             '<button class="btn" id="cancelScoreGrader">Hủy</button><button class="btn primary" id="saveScoreGrader">Lưu phân công</button>',
             true,
           );
@@ -2833,7 +2545,10 @@
                   .map((schoolClass) => {
                     const owner = assignedToOthers.get(schoolClass.id),
                       checked = current?.class_ids?.includes(schoolClass.id);
-                    return `<label class="check-row"><input type="checkbox" data-grader-class="${schoolClass.id}" ${checked ? "checked" : ""} ${owner ? "disabled" : ""}><span><strong>${esc(schoolClass.class_name)}</strong><br><small class="muted">${owner ? `Đã giao: ${esc(owner)}` : esc(campusName(schoolClass.campus_id))}</small></span></label>`;
+                    const groupName = classGroups.find((group) =>
+                      group.class_ids?.includes(schoolClass.id),
+                    )?.name;
+                    return `<label class="check-row"><input type="checkbox" data-grader-class="${schoolClass.id}" ${checked ? "checked" : ""} ${owner ? "disabled" : ""}><span><strong>${esc(schoolClass.class_name)}</strong><br><small class="muted">${owner ? `Đã giao: ${esc(owner)}` : `${esc(campusName(schoolClass.campus_id))}${groupName ? ` • ${esc(groupName)}` : ""}`}</small></span></label>`;
                   })
                   .join("")
               : '<div class="empty">Chưa có lớp trong năm học này.</div>';
@@ -2848,6 +2563,19 @@
             $$('[data-grader-class]').forEach(
               (checkbox) => (checkbox.checked = false),
             );
+          if ($("#graderClassGroup"))
+            $("#graderClassGroup").onchange = (event) => {
+              const group = classGroups.find(
+                (item) => item.id === event.target.value,
+              );
+              if (!group) return;
+              $$('[data-grader-class]:not(:disabled)').forEach(
+                (checkbox) =>
+                  (checkbox.checked = group.class_ids.includes(
+                    checkbox.dataset.graderClass,
+                  )),
+              );
+            };
           $("#cancelScoreGrader").onclick = closeModal;
           $("#saveScoreGrader").onclick = async () => {
             const userId = $("#scoreGraderUser").value,
@@ -2877,11 +2605,6 @@
             }
           };
         }
-        function entryMap(entries) {
-          return new Map(
-            entries.map((e) => [e.class_id + "|" + e.criteria_id, e]),
-          );
-        }
         function renderScoreEntry(ctx) {
           const area = $("#scoreArea");
           if (!ctx.set || !ctx.criteria.length)
@@ -2899,8 +2622,8 @@
             return (area.innerHTML =
               '<div class="empty">Tuần đang chọn chưa có ngày học từ Thứ Hai đến Thứ Sáu.</div>');
           const map = entryMap(ctx.selectedEntries),
-            locked = ctx.sheet.status === "locked";
-          area.innerHTML = `<div class="score-day-picker" aria-label="Chọn ngày nhập điểm">${ctx.days.map((day) => `<button type="button" data-score-date="${day.date}" class="${day.date === state.scoreDate ? "active" : ""}"><strong>${day.label}</strong><span>${fmtDate(day.date)}</span></button>`).join("")}</div><div class="score-wrap"><table class="score-table"><thead><tr><th style="min-width:110px">Lớp</th>${ctx.criteria.map((c) => `<th title="${esc(c.name)}">${esc(c.code)}<br><small>${esc(c.group)}</small></th>`).join("")}<th>Điểm ngày</th><th>Tổng tuần</th><th>Trạng thái ngày</th></tr></thead><tbody>${ctx.classes
+            locked = ["approved", "locked"].includes(ctx.sheet.status);
+          area.innerHTML = `<div class="score-day-picker" aria-label="Chọn ngày nhập điểm">${ctx.days.map((day) => `<button type="button" data-score-date="${day.date}" class="${day.date === state.scoreDate ? "active" : ""}"><strong>${day.label}</strong><span>${fmtDate(day.date)}</span></button>`).join("")}</div><div class="score-wrap"><table class="score-table"><thead><tr><th style="min-width:110px">Lớp</th>${ctx.criteria.map((c) => `<th title="${esc(c.name)}">${esc(c.code)}<br><small>${esc(c.is_category ? c.name : c.group)}</small></th>`).join("")}<th>Điểm ngày</th><th>Tổng tuần</th><th>Trạng thái ngày</th></tr></thead><tbody>${ctx.classes
             .map((cl, ri) => {
               let filled = 0;
               const cells = ctx.criteria
@@ -2915,11 +2638,24 @@
                   if (e && e.entry_state === "value") {
                     filled++;
                   } else if (e) filled++;
+                  if (c.is_category) {
+                    const count = e?.incidents?.length || 0,
+                      label = !e
+                        ? "Thêm ghi nhận"
+                        : e.entry_state === "na"
+                          ? "KAD"
+                          : e.entry_state === "exempt"
+                            ? "MIỄN"
+                            : count
+                              ? `${count} ghi nhận • ${Number(e.value || 0) > 0 ? "+" : ""}${Number(e.value || 0)}`
+                              : "Không có ghi nhận";
+                    return `<td><button type="button" class="incident-score-button ${e ? "" : "missing"}" data-row="${ri}" data-col="${ci}" data-class="${cl.id}" data-category="${c.id}" data-entry="${e?.id || ""}" ${locked ? "disabled" : ""} aria-label="${esc(cl.class_name)} - ${esc(c.name)}">${esc(label)}</button></td>`;
+                  }
                   return `<td><input class="score-input ${e ? "" : "missing"}" data-row="${ri}" data-col="${ci}" data-class="${cl.id}" data-criterion="${c.id}" data-entry="${e?.id || ""}" value="${esc(v)}" ${locked ? "disabled" : ""} aria-label="${esc(cl.class_name)} - ${esc(c.name)}"></td>`;
                 })
                 .join("");
-              const totals = classScoreSummary(ctx, cl.id);
-              return `<tr><td><strong>${esc(cl.class_name)}</strong><br><small>${esc(campusName(cl.campus_id))}</small></td>${cells}<td class="score-total">${totals.dayAdjustment.toFixed(1)}</td><td class="score-total" data-total="${cl.id}">${totals.weeklyTotal.toFixed(1)}</td><td>${filled === ctx.criteria.length ? '<span class="badge green">Đủ</span>' : `<span class="badge yellow">${filled}/${ctx.criteria.length}</span>`}</td></tr>`;
+              const totals = classScoreSummary(ctx, cl.id, state.scoreDate);
+              return `<tr><td><strong>${esc(cl.class_name)}</strong><br><small>${esc(campusName(cl.campus_id))}${cl.class_group_name ? ` • ${esc(cl.class_group_name)}` : ""}</small></td>${cells}<td class="score-total">${totals.dayAdjustment.toFixed(1)}</td><td class="score-total" data-total="${cl.id}">${totals.weeklyTotal.toFixed(1)}</td><td>${filled === ctx.criteria.length ? '<span class="badge green">Đủ</span>' : `<span class="badge yellow">${filled}/${ctx.criteria.length}</span>`}</td></tr>`;
             })
             .join(
               "",
@@ -2936,6 +2672,192 @@
             i.addEventListener("keydown", scoreKeyNav);
             i.addEventListener("paste", scorePaste);
           });
+          $$(".incident-score-button").forEach(
+            (button) =>
+              (button.onclick = () => openCategoryScoreEntry(button)),
+          );
+        }
+        async function openCategoryScoreEntry(button) {
+          const ctx = await scoreContext(),
+            category = ctx.criteria.find(
+              (item) => item.is_category && item.id === button.dataset.category,
+            ),
+            schoolClass = ctx.classes.find(
+              (item) => item.id === button.dataset.class,
+            ),
+            rules = ctx.rules.filter(
+              (rule) => rule.criteria_group_id === category?.id,
+            ),
+            existing = button.dataset.entry
+              ? await db.get("score_entries", button.dataset.entry)
+              : null;
+          if (!category || !schoolClass) return;
+          let entryState = existing?.entry_state || "value",
+            incidents = (existing?.incidents || []).map((incident) => ({
+              ...incident,
+            }));
+          openModal(
+            `${category.code} - ${category.name}`,
+            `<div class="notice"><strong>${esc(schoolClass.class_name)}</strong> • ${fmtDate(state.scoreDate)}<br>Chọn đúng nội dung do Admin cấu hình. Điểm được tính tự động và không thể sửa trực tiếp.</div><div class="field mt"><label>Trạng thái ghi nhận</label><select id="incidentEntryState"><option value="value" ${entryState === "value" ? "selected" : ""}>Có dữ liệu / không có sự việc</option><option value="na" ${entryState === "na" ? "selected" : ""}>Không áp dụng (KAD)</option><option value="exempt" ${entryState === "exempt" ? "selected" : ""}>Được miễn</option></select></div><div id="incidentEditor" class="mt"></div>`,
+            `<button class="btn" id="cancelIncidentEntry">Hủy</button>${existing ? '<button class="btn danger" id="deleteIncidentEntry">Xóa dữ liệu</button>' : ""}<button class="btn primary" id="saveIncidentEntry">Lưu ghi nhận</button>`,
+            true,
+          );
+          const renderIncidents = () => {
+            const editor = $("#incidentEditor");
+            if (entryState !== "value") {
+              editor.innerHTML =
+                '<div class="notice">Trạng thái này không chứa ghi nhận cộng/trừ điểm.</div>';
+              return;
+            }
+            const total = incidents.reduce((sum, incident) => {
+              const rule = rules.find(
+                (item) => item.id === incident.criteria_id,
+              );
+              return sum + Number(rule?.points || 0);
+            }, 0);
+            editor.innerHTML = `${rules.length ? "" : '<div class="notice warn">Danh mục này chưa có nội dung chấm điểm đang hoạt động. Admin cần cấu hình trước.</div>'}<div class="incident-list">${incidents
+              .map((incident, index) => {
+                const rule = rules.find(
+                    (item) => item.id === incident.criteria_id,
+                  ),
+                  points = Number(rule?.points || 0);
+                return `<div class="incident-row"><div class="field"><label class="required">Người được ghi nhận</label><input data-incident-person="${index}" value="${esc(incident.person_name || "")}" maxlength="120" placeholder="Họ và tên" required></div><div class="field"><label class="required">Nội dung</label><select data-incident-rule="${index}" required><option value="">— Chọn nội dung —</option>${rules.map((item) => `<option value="${item.id}" ${item.id === incident.criteria_id ? "selected" : ""}>${esc(item.code)} - ${esc(item.name)}</option>`).join("")}</select></div><div class="incident-points ${points < 0 ? "negative" : points > 0 ? "positive" : ""}">${points > 0 ? "+" : ""}${points}</div><button type="button" class="btn danger small" data-remove-incident="${index}">Xóa</button></div>`;
+              })
+              .join("")}</div><div class="toolbar incident-summary"><button type="button" class="btn small" id="addIncident" ${rules.length ? "" : "disabled"}>＋ Thêm ghi nhận</button><strong>Tổng điều chỉnh: <span class="${total < 0 ? "negative" : total > 0 ? "positive" : ""}">${total > 0 ? "+" : ""}${total}</span></strong></div>${incidents.length ? "" : '<div class="notice mt">Không có dòng nào nghĩa là danh mục đã được kiểm tra và không có sự việc, tổng điều chỉnh bằng 0.</div>'}`;
+            $$('[data-incident-person]').forEach(
+              (input) =>
+                (input.oninput = () => {
+                  incidents[Number(input.dataset.incidentPerson)].person_name =
+                    input.value;
+                }),
+            );
+            $$('[data-incident-rule]').forEach(
+              (select) =>
+                (select.onchange = () => {
+                  incidents[Number(select.dataset.incidentRule)].criteria_id =
+                    select.value;
+                  renderIncidents();
+                }),
+            );
+            $$('[data-remove-incident]').forEach(
+              (removeButton) =>
+                (removeButton.onclick = () => {
+                  incidents.splice(
+                    Number(removeButton.dataset.removeIncident),
+                    1,
+                  );
+                  renderIncidents();
+                }),
+            );
+            if ($("#addIncident"))
+              $("#addIncident").onclick = () => {
+                incidents.push({
+                  id: uid(),
+                  criteria_id: rules[0]?.id || "",
+                  person_name: "",
+                });
+                renderIncidents();
+                $$('[data-incident-person]').at(-1)?.focus();
+              };
+          };
+          renderIncidents();
+          $("#incidentEntryState").onchange = (event) => {
+            entryState = event.target.value;
+            renderIncidents();
+          };
+          $("#cancelIncidentEntry").onclick = closeModal;
+          if ($("#deleteIncidentEntry"))
+            $("#deleteIncidentEntry").onclick = async () => {
+              await db.remove("score_entries", existing.id);
+              await db.put("audit_logs", {
+                action: "score_clear",
+                entity: "score_entries",
+                entity_id: existing.id,
+                summary: `${state.scoreDate}|${schoolClass.id}|${category.id}`,
+                old_value: existing.value,
+                new_value: null,
+                reason: "Xóa ghi nhận theo danh mục",
+              });
+              state.lastScoreUndo = { type: "restore", row: existing };
+              closeModal();
+              toast("Đã xóa dữ liệu ghi nhận");
+              renderScores();
+            };
+          $("#saveIncidentEntry").onclick = async () => {
+            if (entryState === "value") {
+              const incomplete = incidents.some(
+                (incident) =>
+                  !incident.person_name.trim() ||
+                  !rules.some((rule) => rule.id === incident.criteria_id),
+              );
+              if (incomplete)
+                return toast(
+                  "Mỗi ghi nhận phải có họ tên và nội dung hợp lệ.",
+                  "bad",
+                );
+            }
+            const rows =
+                entryState === "value"
+                  ? incidents.map((incident) => {
+                      const rule = rules.find(
+                        (item) => item.id === incident.criteria_id,
+                      );
+                      return {
+                        id: incident.id || uid(),
+                        criteria_id: rule.id,
+                        person_name: incident.person_name.trim(),
+                        rule_code: rule.code,
+                        rule_name: rule.name,
+                        points: Number(rule.points),
+                      };
+                    })
+                  : [],
+              value =
+                entryState === "value"
+                  ? rows.reduce(
+                      (sum, incident) => sum + Number(incident.points),
+                      0,
+                    )
+                  : null;
+            try {
+              const saved = await db.put(
+                "score_entries",
+                {
+                  ...(existing || {}),
+                  sheet_id: ctx.sheet.id,
+                  school_year_id: state.yearId,
+                  campus_id: schoolClass.campus_id,
+                  class_id: schoolClass.id,
+                  criteria_group_id: category.id,
+                  criteria_id: undefined,
+                  week_id: state.weekId,
+                  entry_date: state.scoreDate,
+                  entry_state: entryState,
+                  incidents: rows,
+                  value,
+                  reason: existing?.reason || "",
+                },
+                { audit: false },
+              );
+              await db.put("audit_logs", {
+                action: existing ? "score_update" : "score_create",
+                entity: "score_entries",
+                entity_id: saved.id,
+                summary: `${state.scoreDate}|${schoolClass.id}|${category.id}`,
+                old_value: existing?.value ?? existing?.entry_state ?? null,
+                new_value: value ?? entryState,
+                reason: `Ghi nhận ${rows.length} sự việc theo danh mục`,
+              });
+              state.lastScoreUndo = existing
+                ? { type: "restore", row: existing }
+                : { type: "delete", id: saved.id };
+              closeModal();
+              toast("Đã lưu ghi nhận");
+              renderScores();
+            } catch (error) {
+              toast(error.message, "bad");
+            }
+          };
         }
         async function saveScoreCell(ev) {
           const i = ev.currentTarget,
@@ -3053,7 +2975,7 @@
             for (let c = 0; c < matrix[r].length; c++) {
               const cl = ctx.classes[startR + r],
                 criterion = ctx.criteria[startC + c];
-              if (!cl || !criterion) continue;
+              if (!cl || !criterion || criterion.is_category) continue;
               const raw = matrix[r][c].trim().toUpperCase(),
                 old = map.get(cl.id + "|" + criterion.id);
               let entry_state = "value",
@@ -3108,6 +3030,14 @@
         async function undoScore() {
           const u = state.lastScoreUndo;
           if (!u) return;
+          const ctx = await scoreContext();
+          if (["approved", "locked"].includes(ctx.sheet?.status)) {
+            state.lastScoreUndo = null;
+            return toast(
+              "Bảng đã duyệt hoặc khóa; không thể hoàn tác điểm.",
+              "bad",
+            );
+          }
           if (u.type === "delete") await db.remove("score_entries", u.id);
           else await db.put("score_entries", u.row, { audit: false });
           state.lastScoreUndo = null;
@@ -3142,7 +3072,7 @@
               filled = new Set(
                 ctx.entries.map(
                   (entry) =>
-                    `${entry.entry_date}|${entry.class_id}|${entry.criteria_id}`,
+                    `${entry.entry_date}|${entry.class_id}|${scoreEntryCriterionId(entry)}`,
                 ),
               ).size;
             if (filled < expected)
@@ -3156,6 +3086,18 @@
           else if (sheet.status === "review") {
             sheet.status = "approved";
             sheet.approved_at = now();
+            const ranked = await calculateRanking(false);
+            await db.put("ranking_snapshots", {
+              school_year_id: state.yearId,
+              semester_id: state.semesterId === "all" ? null : state.semesterId,
+              campus_id: state.campusId,
+              week_id: state.weekId,
+              sheet_id: sheet.id,
+              criteria_set_id: ctx.set?.id,
+              criteria_version: ctx.set?.version,
+              rows: ranked.map((row) => ({ ...row })),
+              snapshot_stage: "approved",
+            });
           } else if (sheet.status === "approved") {
             await createInternalSnapshot(
               `Trước khóa bảng thi đua ${state.weekId}`,
@@ -3171,6 +3113,8 @@
             sheet.criteria_snapshot = {
               set: ctx.set,
               criteria: ctx.criteria.map((x) => ({ ...x })),
+              groups: ctx.groups.map((x) => ({ ...x })),
+              rules: ctx.rules.map((x) => ({ ...x })),
             };
             const ranked = await calculateRanking(false);
             await db.put("ranking_snapshots", {
@@ -3182,9 +3126,11 @@
               criteria_set_id: ctx.set?.id,
               criteria_version: ctx.set?.version,
               rows: ranked.map((x) => ({ ...x })),
+              snapshot_stage: "locked",
             });
           } else if (sheet.status === "locked") return unlockSheet(sheet);
           await db.put("weekly_score_sheets", sheet);
+          state.lastScoreUndo = null;
           await db.put("audit_logs", {
             action: "sheet_status",
             entity: "weekly_score_sheets",
@@ -3241,6 +3187,20 @@
             (official && !["approved", "locked"].includes(ctx.sheet.status))
           )
             return [];
+          if (official && ["approved", "locked"].includes(ctx.sheet.status)) {
+            const snapshot = (await scoped("ranking_snapshots"))
+              .filter((row) => row.sheet_id === ctx.sheet.id)
+              .sort((a, b) =>
+                String(b.updated_at || b.created_at).localeCompare(
+                  String(a.updated_at || a.created_at),
+                ),
+              )[0];
+            if (
+              snapshot?.rows?.length &&
+              snapshot.rows.every((row) => row.class_group_id)
+            )
+              return snapshot.rows.map((row) => ({ ...row }));
+          }
           const ranked = ctx.classes
             .map((cl) => {
               let total =
@@ -3251,7 +3211,10 @@
               const entries = ctx.entries.filter((entry) => entry.class_id === cl.id);
               total += scoreAdjustment(entries, ctx.criteria, ctx.set);
               filled = new Set(
-                entries.map((entry) => `${entry.entry_date}|${entry.criteria_id}`),
+                entries.map(
+                  (entry) =>
+                    `${entry.entry_date}|${scoreEntryCriterionId(entry)}`,
+                ),
               ).size;
               const daily = Object.fromEntries(
                 ctx.days.map((day) => [
@@ -3267,6 +3230,9 @@
                 id: cl.id,
                 class_name: cl.class_name,
                 campus_id: cl.campus_id,
+                class_group_id: cl.class_group_id,
+                class_group_name: cl.class_group_name,
+                class_group_order: cl.class_group_order,
                 total,
                 daily,
                 filled,
@@ -3276,24 +3242,37 @@
             .filter((x) => x.filled > 0)
             .sort(
               (a, b) =>
+                a.class_group_order - b.class_group_order ||
+                a.class_group_name.localeCompare(b.class_group_name, "vi") ||
                 b.total - a.total ||
                 a.class_name.localeCompare(b.class_name, "vi", {
                   numeric: true,
-                }),
+                }) || String(a.id).localeCompare(String(b.id)),
             );
-          ranked.forEach((row, index) => {
+          const groupPositions = new Map();
+          for (const row of ranked) {
+            const position = groupPositions.get(row.class_group_id) || {
+              index: 0,
+              previousTotal: null,
+              previousRank: 0,
+            };
+            position.index += 1;
             row.rank =
-              index > 0 && row.total === ranked[index - 1].total
-                ? ranked[index - 1].rank
-                : index + 1;
-          });
+              position.index > 1 &&
+              Math.abs(row.total - position.previousTotal) < 1e-9
+                ? position.previousRank
+                : position.index;
+            position.previousTotal = row.total;
+            position.previousRank = row.rank;
+            groupPositions.set(row.class_group_id, position);
+          }
           return ranked;
         }
         async function renderScoreRanking(ctx) {
           const area = $("#scoreArea"),
             official = ["approved", "locked"].includes(ctx.sheet?.status),
-            rank = await calculateRanking(false);
-          area.innerHTML = `${!official ? '<div class="notice warn">Bảng chưa được duyệt. Xếp hạng dưới đây là tạm thời, không dùng cho báo cáo chính thức.</div>' : ""}<div class="table-wrap"><table><thead><tr><th>Hạng</th><th>Lớp</th><th>Cơ sở</th>${ctx.days.map((day) => `<th>${day.label.replace("Thứ ", "T")}</th>`).join("")}<th>Tổng tuần</th><th>Mức dữ liệu</th><th>Loại</th></tr></thead><tbody>${rank.map((r) => `<tr><td><strong>${r.rank}</strong></td><td>${esc(r.class_name)}</td><td>${esc(campusName(r.campus_id))}</td>${ctx.days.map((day) => `<td>${Number(r.daily[day.date] || 0).toFixed(1)}</td>`).join("")}<td><strong>${r.total.toFixed(1)}</strong></td><td>${r.complete ? '<span class="badge green">Đủ</span>' : '<span class="badge yellow">Chưa đủ</span>'}</td><td>${official ? '<span class="badge green">Chính thức</span>' : '<span class="badge yellow">Tạm thời</span>'}</td></tr>`).join("") || `<tr><td colspan="${ctx.days.length + 6}" class="empty">Chưa có dữ liệu xếp hạng.</td></tr>`}</tbody></table></div>`;
+            rank = await calculateRanking(official);
+          area.innerHTML = `${!official ? '<div class="notice warn">Bảng chưa được duyệt. Xếp hạng dưới đây là tạm thời, không dùng cho báo cáo chính thức.</div>' : ""}<div class="notice">Mỗi nhóm lớp có thứ hạng riêng. Các lớp chưa phân nhóm chỉ cạnh tranh trong nhóm “Chưa phân nhóm”.</div><div class="table-wrap"><table><thead><tr><th>Hạng trong nhóm</th><th>Lớp</th><th>Nhóm lớp</th><th>Cơ sở</th>${ctx.days.map((day) => `<th>${day.label.replace("Thứ ", "T")}</th>`).join("")}<th>Tổng tuần</th><th>Mức dữ liệu</th><th>Loại</th></tr></thead><tbody>${rank.map((r) => `<tr><td><strong>${r.rank}</strong></td><td>${esc(r.class_name)}</td><td>${esc(r.class_group_name)}</td><td>${esc(campusName(r.campus_id))}</td>${ctx.days.map((day) => `<td>${Number(r.daily[day.date] || 0).toFixed(1)}</td>`).join("")}<td><strong>${r.total.toFixed(1)}</strong></td><td>${r.complete ? '<span class="badge green">Đủ</span>' : '<span class="badge yellow">Chưa đủ</span>'}</td><td>${official ? '<span class="badge green">Chính thức</span>' : '<span class="badge yellow">Tạm thời</span>'}</td></tr>`).join("") || `<tr><td colspan="${ctx.days.length + 7}" class="empty">Chưa có dữ liệu xếp hạng.</td></tr>`}</tbody></table></div>`;
         }
         function renderScoreAnomalies(ctx) {
           const items = [],
@@ -3302,7 +3281,10 @@
             const count = new Set(
               ctx.entries
                 .filter((entry) => entry.class_id === cl.id)
-                .map((entry) => `${entry.entry_date}|${entry.criteria_id}`),
+                .map(
+                  (entry) =>
+                    `${entry.entry_date}|${scoreEntryCriterionId(entry)}`,
+                ),
             ).size;
             if (!count)
               items.push({
@@ -3316,7 +3298,9 @@
               });
           });
           ctx.entries.forEach((e) => {
-            const c = ctx.criteria.find((x) => x.id === e.criteria_id);
+            const c = ctx.criteria.find(
+              (x) => x.id === scoreEntryCriterionId(e),
+            );
             if (c?.evidence_required && !e.evidence_id)
               items.push({
                 level: "yellow",
@@ -3341,7 +3325,7 @@
             )
             .sort((a, b) => b.created_at.localeCompare(a.created_at));
           $("#scoreArea").innerHTML =
-            `<div class="table-wrap"><table><thead><tr><th>Thời gian</th><th>Hành động</th><th>Nội dung</th><th>Giá trị cũ</th><th>Giá trị mới</th><th>Lý do</th></tr></thead><tbody>${logs.map((x) => `<tr><td>${fmtDateTime(x.created_at)}</td><td>${esc(x.action)}</td><td>${esc(x.summary)}</td><td>${esc(x.old_value ?? "—")}</td><td>${esc(x.new_value ?? "—")}</td><td class="wrap">${esc(x.reason || "—")}</td></tr>`).join("") || '<tr><td colspan="6" class="empty">Chưa có điều chỉnh.</td></tr>'}</tbody></table></div>`;
+            `<div class="table-wrap"><table><thead><tr><th>Thời gian</th><th>Hành động</th><th>Nội dung</th><th>Giá trị cũ</th><th>Giá trị mới</th><th>Lý do</th></tr></thead><tbody>${logs.map((x) => `<tr><td>${fmtDateTime(x.created_at)}</td><td>${esc({ score_clear: "Xóa điểm", score_update: "Cập nhật điểm", score_create: "Tạo điểm", score_bulk_paste: "Dán điểm hàng loạt", score_undo: "Hoàn tác điểm", sheet_status: "Đổi trạng thái bảng", sheet_unlock: "Mở khóa bảng" }[x.action] || x.action)}</td><td>${esc(x.summary)}</td><td>${esc({ value: "Có dữ liệu", na: "Không áp dụng", exempt: "Được miễn" }[x.old_value] || (x.old_value ?? "—"))}</td><td>${esc({ value: "Có dữ liệu", na: "Không áp dụng", exempt: "Được miễn" }[x.new_value] || (x.new_value ?? "—"))}</td><td class="wrap">${esc(x.reason || "—")}</td></tr>`).join("") || '<tr><td colspan="6" class="empty">Chưa có điều chỉnh.</td></tr>'}</tbody></table></div>`;
         }
 
         async function reportData() {
@@ -3382,12 +3366,12 @@
               "Tổng hợp số liệu đã xác nhận và truy ngược về bản ghi gốc.",
               `<button class="btn" id="exportReportPackage">Gói báo cáo chốt</button><button class="btn" id="exportReportCsv">Xuất CSV</button><button class="btn" onclick="window.print()">In/Lưu PDF</button><button class="btn" id="saveReportDraft">Lưu nháp</button><button class="btn primary" id="finalizeReport">Chốt báo cáo</button>`,
             ) +
-              `<div class="toolbar no-print"><select id="reportType"><option value="week">Báo cáo công tác tuần</option><option value="scores">Tổng hợp thi đua lớp</option><option value="tasks">Tiến độ công việc</option><option value="activities">Báo cáo hoạt động</option><option value="equipment">Báo cáo thiết bị</option></select><select id="reportPaper"><option value="landscape">A4 ngang</option><option value="portrait">A4 dọc</option></select><input id="reportRecipient" placeholder="Nơi nhận (tùy chọn)"><select id="reportSubmission"><option value="not_submitted">Chưa gửi</option><option value="submitted">Đã gửi</option><option value="accepted">Đã tiếp nhận</option></select><span class="muted">Số liệu nguồn không sửa tại báo cáo</span></div><div class="notice warn no-print"><strong>Nháp</strong> có thể tạo lại; <strong>báo cáo chốt</strong> lưu nội dung tĩnh, phiên bản, bộ lọc, checksum và trạng thái gửi. Muốn sửa sau chốt phải tạo phiên bản mới.</div><article class="card" id="reportPreview"><div class="card-body">${await reportHTML("week", d)}</div></article><div class="card mt no-print"><div class="card-head"><h2>Phiên bản báo cáo đã lưu</h2><span class="meta">${saved.length} phiên bản</span></div><div class="card-body"><ul class="compact-list">${
+              `<div class="toolbar no-print"><select id="reportType"><option value="week">Báo cáo công tác tuần</option><option value="scores">Tổng hợp thi đua lớp</option><option value="tasks">Tiến độ công việc</option><option value="activities">Báo cáo hoạt động</option><option value="equipment">Báo cáo thiết bị</option></select><select id="reportPaper"><option value="landscape">A4 ngang</option><option value="portrait">A4 dọc</option></select><input id="reportRecipient" placeholder="Nơi nhận (tùy chọn)"><select id="reportSubmission"><option value="not_submitted">Chưa gửi</option><option value="submitted">Đã gửi</option><option value="accepted">Đã tiếp nhận</option></select><span class="muted">Số liệu nguồn không sửa tại báo cáo</span></div><div class="notice warn no-print"><strong>Nháp</strong> có thể tạo lại; <strong>báo cáo chốt</strong> lưu nội dung tĩnh, phiên bản, bộ lọc, mã kiểm tra và trạng thái gửi. Muốn sửa sau chốt phải tạo phiên bản mới.</div><article class="card" id="reportPreview"><div class="card-body">${await reportHTML("week", d)}</div></article><div class="card mt no-print"><div class="card-head"><h2>Phiên bản báo cáo đã lưu</h2><span class="meta">${saved.length} phiên bản</span></div><div class="card-body"><ul class="compact-list">${
                 saved
                   .slice(0, 30)
                   .map(
                     (r) =>
-                      `<li><div class="main"><strong>${esc(r.name)}</strong><small>${fmtDateTime(r.generated_at || r.created_at)} • ${esc(r.type)} • v${Number(r.version || 1)} • ${r.status === "finalized" ? "đã chốt" : "bản nháp"} • ${statusLabel(r.submission_status)}</small></div><span class="badge ${r.status === "finalized" ? "green" : "yellow"}">${r.status === "finalized" ? "Bất biến" : "Nháp"}</span><button class="link-btn" data-open-report="${r.id}">Mở lại</button></li>`,
+                      `<li><div class="main"><strong>${esc(r.name)}</strong><small>${fmtDateTime(r.generated_at || r.created_at)} • ${esc({ week: "Công tác tuần", scores: "Thi đua lớp", tasks: "Tiến độ công việc", activities: "Hoạt động", equipment: "Thiết bị", "year-final": "Tổng kết năm học" }[r.type] || r.type)} • v${Number(r.version || 1)} • ${r.status === "finalized" ? "đã chốt" : "bản nháp"} • ${statusLabel(r.submission_status)}</small></div><span class="badge ${r.status === "finalized" ? "green" : "yellow"}">${r.status === "finalized" ? "Bất biến" : "Nháp"}</span><button class="link-btn" data-open-report="${r.id}">Mở lại</button></li>`,
                   )
                   .join("") ||
                 '<li class="muted">Chưa lưu phiên bản báo cáo.</li>'
@@ -3419,7 +3403,7 @@
                 );
                 openModal(
                   r.name,
-                  `<div class="notice">Bản lưu lúc ${fmtDateTime(r.generated_at || r.created_at)} • v${Number(r.version || 1)} • ${r.status === "finalized" ? "đã chốt, bất biến" : "bản nháp"}. Nội dung không tự cập nhật theo nguồn hiện tại.</div><div class="split"><span>Nơi nhận/trạng thái gửi</span><strong>${esc(r.recipient || "Chưa ghi")} • ${esc(statusLabel(r.submission_status))}</strong></div><div class="split mt"><span>Checksum nguồn</span><code>${esc(r.source_checksum || "Chưa có ở phiên bản cũ")}</code></div><article class="mt">${r.content_html || `<pre style="white-space:pre-wrap">${esc(r.content || r.content_text || "")}</pre>`}</article>`,
+                  `<div class="notice">Bản lưu lúc ${fmtDateTime(r.generated_at || r.created_at)} • v${Number(r.version || 1)} • ${r.status === "finalized" ? "đã chốt, bất biến" : "bản nháp"}. Nội dung không tự cập nhật theo nguồn hiện tại.</div><div class="split"><span>Nơi nhận/trạng thái gửi</span><strong>${esc(r.recipient || "Chưa ghi")} • ${esc(statusLabel(r.submission_status))}</strong></div><div class="split mt"><span>Mã kiểm tra nguồn</span><code>${esc(r.source_checksum || "Chưa có ở phiên bản cũ")}</code></div><article class="mt">${r.content_html || `<pre style="white-space:pre-wrap">${esc(r.content || r.content_text || "")}</pre>`}</article>`,
                   `<button class="btn primary" id="closeSavedReport">Đóng</button>`,
                   true,
                 );
@@ -3676,8 +3660,9 @@
               ? '<div class="notice warn">Bảng tuần chưa được duyệt nên chưa có xếp hạng chính thức.</div>'
               : simpleTable(
                   [
-                    "Hạng",
+                    "Hạng trong nhóm",
                     "Lớp",
+                    "Nhóm lớp",
                     "Cơ sở",
                     ...d.ctx.days.map((day) => day.label),
                     "Tổng tuần",
@@ -3685,6 +3670,7 @@
                   d.rank.map((x) => [
                     x.rank,
                     x.class_name,
+                    x.class_group_name,
                     campusName(x.campus_id),
                     ...d.ctx.days.map((day) =>
                       Number(x.daily[day.date] || 0).toFixed(1),
@@ -3730,16 +3716,14 @@
           }
           return `<div class="center"><small>${esc(d.school?.name || "TRƯỜNG TH-THCS")}</small><h2 style="margin:8px 0">${title}</h2><p>${esc(d.week?.name || "")} • ${esc(campusName(state.campusId))}</p></div><div class="split"><small>Tạo lúc: ${fmtDateTime(now())}</small><small>Phạm vi dữ liệu: ${esc(d.week?.name || "Năm học")} / ${esc(campusName(state.campusId))}</small></div><hr style="border:0;border-top:1px solid var(--line)">${body}<div style="display:grid;grid-template-columns:1fr 1fr;text-align:center;margin-top:35px"><div><strong>Người lập báo cáo</strong></div><div><strong>Xác nhận của nhà trường</strong></div></div>`;
         }
-        function simpleTable(head, rows) {
-          return `<div class="table-wrap" style="max-height:none"><table><thead><tr>${head.map((x) => `<th>${esc(x)}</th>`).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${r.map((x, i) => `<td class="${i === 0 ? "wrap" : ""}">${esc(x)}</td>`).join("")}</tr>`).join("") || `<tr><td colspan="${head.length}" class="empty">Không có dữ liệu trong phạm vi đã chọn.</td></tr>`}</tbody></table></div>`;
-        }
         function exportReportCSV(type, d) {
           let head = [],
             rows = [];
           if (type === "scores") {
             head = [
-              "Hạng",
+              "Hạng trong nhóm",
               "Lớp",
+              "Nhóm lớp",
               "Cơ sở",
               ...d.ctx.days.map((day) => `${day.label} (${day.date})`),
               "Tổng tuần",
@@ -3747,6 +3731,7 @@
             rows = d.rank.map((x) => [
               x.rank,
               x.class_name,
+              x.class_group_name,
               campusName(x.campus_id),
               ...d.ctx.days.map((day) => x.daily[day.date] || 0),
               x.total,
@@ -3782,7 +3767,7 @@
             pageHead(
               "Trợ lý tổng hợp",
               "Trả lời theo quy tắc từ dữ liệu đã lưu; không tự sửa hoặc tạo số liệu.",
-              `<span class="badge blue">AssistantProvider cục bộ</span>`,
+              `<span class="badge blue">Bộ trợ lý cục bộ</span>`,
             ) +
               `<div class="assistant-layout"><aside class="card quick-prompts"><div class="card-head"><h2>Câu hỏi nhanh</h2></div><div class="card-body">${["Hôm nay tôi cần làm gì?", "Việc nào đang quá hạn?", "Lớp nào chưa nhập thi đua?", "Tuần này có bất thường gì?", "Tạo nháp báo cáo tuần.", "Tóm tắt tiến độ tháng.", "Hoạt động sắp tới còn thiếu gì?", "Dữ liệu nào chưa được sao lưu?"].map((x) => `<button data-prompt="${esc(x)}">${esc(x)}</button>`).join("")}</div></aside><section class="card assistant-answer"><div class="card-head"><h2>Tra cứu dữ liệu</h2></div><div class="card-body"><div class="split"><input id="assistantQuery" style="flex:1;height:38px;border:1px solid var(--line);border-radius:7px;padding:0 9px" placeholder="Nhập câu hỏi về dữ liệu hệ thống…"><button class="btn primary" id="askAssistant">Tra cứu</button></div><div id="assistantOutput" class="mt"><div class="notice">Chọn một câu hỏi nhanh hoặc nhập câu hỏi. Phản hồi luôn ghi rõ thời điểm và phạm vi.</div></div></div></section></div>`,
           );
@@ -3808,7 +3793,10 @@
               const filled = new Set(
                 d.ctx.entries
                   .filter((entry) => entry.class_id === cl.id)
-                  .map((entry) => `${entry.entry_date}|${entry.criteria_id}`),
+                  .map(
+                    (entry) =>
+                      `${entry.entry_date}|${scoreEntryCriterionId(entry)}`,
+                  ),
               ).size;
               return filled < expected;
             }),
@@ -3846,7 +3834,9 @@
             title = "Dấu hiệu cần kiểm tra";
             html = `Có ${missing.length} lớp chưa nhập đủ điểm ngày; ${
               d.ctx.entries.filter((x) => {
-                const c = d.ctx.criteria.find((y) => y.id === x.criteria_id);
+                const c = d.ctx.criteria.find(
+                  (y) => y.id === scoreEntryCriterionId(x),
+                );
                 return (
                   x.entry_state === "value" &&
                   (x.value < c?.min || x.value > c?.max)
@@ -3855,7 +3845,7 @@
             } giá trị vượt giới hạn cấu hình. Cảnh báo không phải kết luận sai phạm.`;
           } else if (q.includes("báo cáo")) {
             title = "Nháp báo cáo tuần";
-            html = `Trong phạm vi đã chọn có ${d.tasks.length} công việc, ${d.completed.length} việc hoàn thành và ${d.overdue.length} việc quá hạn. Có ${d.upcoming.length} hoạt động/lịch sắp tới. ${["approved", "locked"].includes(d.ctx.sheet?.status) ? `Bảng thi đua đã được duyệt; lớp dẫn đầu là ${esc(d.rank[0]?.class_name || "chưa xác định")}.` : "Bảng thi đua chưa được duyệt nên không đưa xếp hạng vào báo cáo chính thức."}<br><button class="btn small mt" data-assistant-go="reports">Mở báo cáo để kiểm tra</button>`;
+            html = `Trong phạm vi đã chọn có ${d.tasks.length} công việc, ${d.completed.length} việc hoàn thành và ${d.overdue.length} việc quá hạn. Có ${d.upcoming.length} hoạt động/lịch sắp tới. ${["approved", "locked"].includes(d.ctx.sheet?.status) ? `Bảng thi đua đã được duyệt và xếp hạng riêng cho ${new Set(d.rank.map((row) => row.class_group_id)).size} nhóm lớp.` : "Bảng thi đua chưa được duyệt nên không đưa xếp hạng vào báo cáo chính thức."}<br><button class="btn small mt" data-assistant-go="reports">Mở báo cáo để kiểm tra</button>`;
           } else if (q.includes("tiến độ")) {
             const p = d.tasks.length
               ? Math.round((d.completed.length / d.tasks.length) * 100)
@@ -3910,19 +3900,59 @@
                     x.semester_id === state.semesterId),
               ) ||
               allSets[0],
-            criteria = set
-              ? (await db.all("criteria"))
+            allCriteria = set
+              ? (await db.all("criteria")).filter(
+                  (x) => x.criteria_set_id === set.id && x.active !== false,
+                )
+              : [],
+            groups = set
+              ? (await db.all("criteria_groups"))
                   .filter(
                     (x) => x.criteria_set_id === set.id && x.active !== false,
                   )
                   .sort((a, b) => (a.order || 0) - (b.order || 0))
               : [],
+            rules = allCriteria
+              .filter(
+                (criterion) =>
+                  criterion.criteria_group_id &&
+                  groups.some(
+                    (group) => group.id === criterion.criteria_group_id,
+                  ),
+              )
+              .sort((a, b) => (a.order || 0) - (b.order || 0)),
+            criteria = [
+              ...groups.map((group) => ({
+                ...group,
+                is_category: true,
+                data_type: "incidents",
+              })),
+              ...allCriteria.filter((criterion) => !criterion.criteria_group_id),
+            ].sort((a, b) => (a.order || 0) - (b.order || 0)),
+            classGroups = (await scoped("class_groups")).filter(
+              (group) => group.active !== false,
+            ),
             classes = (await scoped("classes"))
               .filter(
                 (x) =>
                   x.active !== false &&
                   (canManageScores() || state.scoreClassIds.has(x.id)),
               )
+              .map((schoolClass) => ({
+                ...schoolClass,
+                ...(() => {
+                  const group = classGroups.find((item) =>
+                    item.class_ids?.includes(schoolClass.id),
+                  );
+                  return {
+                    class_group_id: group?.id || "__ungrouped__",
+                    class_group_name: group?.name || "Chưa phân nhóm",
+                    class_group_order: Number.isFinite(Number(group?.order))
+                      ? Number(group.order)
+                      : Number.MAX_SAFE_INTEGER,
+                  };
+                })(),
+              }))
               .sort((a, b) =>
                 String(a.class_name).localeCompare(String(b.class_name), "vi", {
                   numeric: true,
@@ -3951,6 +3981,9 @@
             sets: allSets,
             set,
             criteria,
+            groups,
+            rules,
+            classGroups,
             classes,
             sheet,
             entries,
@@ -4038,7 +4071,7 @@
                 const c = await db.get("criteria", b.dataset.toggleCriterion);
                 await db.put("criteria", { ...c, active: c.active === false });
                 closeModal();
-                showCriteriaConfig(set.id);
+                showRulesetConfig(set.id);
               }),
           );
         }
@@ -4091,11 +4124,6 @@
           closeModal();
           toast("Đã tạo phiên bản mới; dữ liệu tuần cũ không thay đổi");
           showCriteriaConfig(row.id);
-        }
-        function nextVersion(v) {
-          const parts = String(v || "1.0").split("."),
-            last = Number(parts.pop()) || 0;
-          return [...parts, last + 1].join(".");
         }
         async function criterionForm(set, id = "") {
           const c = id
@@ -4166,78 +4194,277 @@
               active: !!d.active,
             });
             closeModal();
-            showCriteriaConfig(set.id);
+            showRulesetConfig(set.id);
           };
         }
 
-        async function encryptText(text, password) {
-          const enc = new TextEncoder(),
-            salt = crypto.getRandomValues(new Uint8Array(16)),
-            iv = crypto.getRandomValues(new Uint8Array(12)),
-            base = await crypto.subtle.importKey(
-              "raw",
-              enc.encode(password),
-              "PBKDF2",
-              false,
-              ["deriveKey"],
+        async function showRulesetConfig(selectedId = "") {
+          const sets = (await scoped("criteria_sets")).sort((a, b) =>
+              String(b.updated_at).localeCompare(a.updated_at),
             ),
-            key = await crypto.subtle.deriveKey(
-              { name: "PBKDF2", salt, iterations: 210000, hash: "SHA-256" },
-              base,
-              { name: "AES-GCM", length: 256 },
-              false,
-              ["encrypt"],
-            ),
-            data = await crypto.subtle.encrypt(
-              { name: "AES-GCM", iv },
-              key,
-              enc.encode(text),
+            set =
+              sets.find((item) => item.id === selectedId) ||
+              sets.find((item) => item.id === state.criteriaSetId) ||
+              sets[0],
+            [allGroups, allCriteria, sheets] = await Promise.all([
+              db.all("criteria_groups"),
+              db.all("criteria"),
+              db.all("weekly_score_sheets"),
+            ]),
+            groups = set
+              ? allGroups
+                  .filter((item) => item.criteria_set_id === set.id)
+                  .sort((a, b) => (a.order || 0) - (b.order || 0))
+              : [],
+            criteria = set
+              ? allCriteria
+                  .filter((item) => item.criteria_set_id === set.id)
+                  .sort((a, b) => (a.order || 0) - (b.order || 0))
+              : [],
+            used = !!set && sheets.some((sheet) => sheet.criteria_set_id === set.id),
+            categoryHtml = groups
+              .map((group) => {
+                const rules = criteria.filter(
+                  (criterion) => criterion.criteria_group_id === group.id,
+                );
+                return `<section class="ruleset-category"><div class="ruleset-category-head"><div><strong>${esc(group.code)} - ${esc(group.name)}</strong>${group.description ? `<br><small>${esc(group.description)}</small>` : ""}</div><div><span class="badge ${group.active === false ? "" : "green"}">${group.active === false ? "Tắt" : "Đang dùng"}</span> <button class="link-btn" data-edit-score-category="${group.id}" ${used ? "disabled" : ""}>Sửa</button> <button class="btn small" data-add-score-rule="${group.id}" ${used ? "disabled" : ""}>＋ Nội dung</button></div></div><div class="table-wrap"><table><thead><tr><th>Mã</th><th>Nội dung</th><th>Điểm</th><th>Trạng thái</th><th></th></tr></thead><tbody>${rules
+                  .map(
+                    (rule) =>
+                      `<tr><td><strong>${esc(rule.code)}</strong></td><td>${esc(rule.name)}</td><td><strong class="${Number(rule.points) < 0 ? "negative" : Number(rule.points) > 0 ? "positive" : ""}">${Number(rule.points) > 0 ? "+" : ""}${Number(rule.points)}</strong></td><td>${rule.active === false ? "Tắt" : "Dùng"}</td><td><button class="link-btn" data-edit-score-rule="${rule.id}" ${used ? "disabled" : ""}>Sửa</button></td></tr>`,
+                  )
+                  .join("") || '<tr><td colspan="5" class="empty">Chưa có nội dung cộng/trừ điểm.</td></tr>'}</tbody></table></div></section>`;
+              })
+              .join(""),
+            legacyCriteria = criteria.filter(
+              (criterion) => !criterion.criteria_group_id,
             );
-          return {
-            format: "TPT-ENCRYPTED-1",
-            kdf: "PBKDF2-SHA256",
-            iterations: 210000,
-            cipher: "AES-GCM",
-            salt: b64(salt),
-            iv: b64(iv),
-            data: b64(new Uint8Array(data)),
+          openModal(
+            "Quản lý bộ quy tắc thi đua",
+            `<div class="notice warn">Admin tự tạo toàn bộ bộ quy tắc, danh mục và nội dung cộng/trừ điểm. Bộ đã dùng trong bảng tuần không thể sửa; hãy nhân bản thành phiên bản mới.</div><div class="toolbar"><select id="rulesetChooser" class="grow"><option value="">— Chọn bộ quy tắc —</option>${sets.map((item) => `<option value="${item.id}" ${item.id === set?.id ? "selected" : ""}>${esc(item.name)} • v${esc(item.version || "1.0")} • ${statusLabel(item.status)}</option>`).join("")}</select><button class="btn small" id="newRuleset">＋ Bộ mới</button><button class="btn small" id="cloneRuleset" ${set ? "" : "disabled"}>Nhân bản</button><button class="btn small" id="exportRuleset" ${set ? "" : "disabled"}>Xuất JSON</button></div>${set ? `<form id="rulesetSettings"><div class="form-grid"><div class="field full"><label class="required">Tên bộ quy tắc</label><input name="name" value="${esc(set.name || "")}" required ${used ? "readonly" : ""}></div><div class="field"><label>Phiên bản</label><input name="version" value="${esc(set.version || "1.0")}" required ${used ? "readonly" : ""}></div><div class="field"><label>Cách tính</label><select name="formula" ${used ? "disabled" : ""}><option value="base" ${set.formula === "base" ? "selected" : ""}>Điểm chuẩn rồi cộng/trừ</option><option value="sum" ${set.formula === "sum" ? "selected" : ""}>Cộng các điều chỉnh</option></select></div><div class="field"><label>Điểm chuẩn</label><input type="number" step="0.01" name="base_score" value="${Number(set.base_score || 0)}" ${used ? "readonly" : ""}></div><div class="field"><label>Trạng thái</label><select name="status" ${used ? "disabled" : ""}><option value="draft" ${set.status === "draft" ? "selected" : ""}>Dự thảo</option><option value="active" ${set.status === "active" ? "selected" : ""}>Đang áp dụng</option><option value="stopped" ${set.status === "stopped" ? "selected" : ""}>Ngừng áp dụng</option></select></div><div class="field full"><label>Căn cứ / ghi chú</label><textarea name="basis" ${used ? "readonly" : ""}>${esc(set.basis || "")}</textarea></div></div></form><div class="card mt"><div class="card-head"><h3>Danh mục và nội dung chấm điểm</h3><button class="btn small" id="newScoreCategory" ${used ? "disabled" : ""}>＋ Thêm danh mục</button></div><div class="card-body ruleset-categories">${categoryHtml || '<div class="empty">Chưa có danh mục. Mã, tên và nội dung đều do Admin cấu hình.</div>'}</div></div>${legacyCriteria.length ? `<div class="card mt"><div class="card-head"><h3>Tiêu chí kiểu cũ</h3></div><div class="card-body"><div class="notice">Các tiêu chí này tiếp tục dùng ô nhập số để bảo toàn dữ liệu hiện có.</div><div class="table-wrap"><table><tbody>${legacyCriteria.map((criterion) => `<tr><td><strong>${esc(criterion.code)}</strong></td><td>${esc(criterion.name)}</td><td><button class="link-btn" data-edit-legacy-criterion="${criterion.id}" ${used ? "disabled" : ""}>Sửa</button></td></tr>`).join("")}</tbody></table></div></div></div>` : ""}` : '<div class="empty">Tạo bộ quy tắc đầu tiên để bắt đầu.</div>'}`,
+            `<button class="btn" id="closeRuleset">Đóng</button>${set && !used ? '<button class="btn primary" id="saveRuleset">Lưu bộ quy tắc</button>' : ""}`,
+            true,
+          );
+          $("#closeRuleset").onclick = closeModal;
+          $("#rulesetChooser").onchange = (event) => {
+            state.criteriaSetId = event.target.value;
+            closeModal();
+            showRulesetConfig(event.target.value);
+          };
+          $("#newRuleset").onclick = () => rulesetForm();
+          if ($("#cloneRuleset"))
+            $("#cloneRuleset").onclick = () =>
+              cloneRuleset(set, groups, criteria);
+          if ($("#exportRuleset"))
+            $("#exportRuleset").onclick = () =>
+              download(
+                JSON.stringify(
+                  { format: "TPT-CRITERIA-2", set, groups, criteria },
+                  null,
+                  2,
+                ),
+                `bo-quy-tac-${today()}.json`,
+                "application/json",
+              );
+          if ($("#saveRuleset"))
+            $("#saveRuleset").onclick = async () => {
+              const form = $("#rulesetSettings");
+              if (!form.reportValidity()) return;
+              const data = Object.fromEntries(new FormData(form));
+              if (
+                data.status === "active" &&
+                !criteria.some(
+                  (criterion) =>
+                    criterion.active !== false &&
+                    (!criterion.criteria_group_id ||
+                      groups.some(
+                        (group) =>
+                          group.id === criterion.criteria_group_id &&
+                          group.active !== false,
+                      )),
+                )
+              )
+                return toast(
+                  "Bộ đang áp dụng phải có ít nhất một nội dung chấm điểm hoạt động.",
+                  "bad",
+                );
+              await db.put("criteria_sets", {
+                ...set,
+                ...data,
+                formula:
+                  set.formula === "weighted" ? "weighted" : data.formula,
+                base_score: Number(data.base_score || 0),
+              });
+              closeModal();
+              toast("Đã lưu bộ quy tắc");
+              renderScores();
+            };
+          if ($("#newScoreCategory"))
+            $("#newScoreCategory").onclick = () => scoreCategoryForm(set);
+          $$('[data-edit-score-category]').forEach(
+            (button) =>
+              (button.onclick = () =>
+                scoreCategoryForm(set, button.dataset.editScoreCategory)),
+          );
+          $$('[data-add-score-rule]').forEach(
+            (button) =>
+              (button.onclick = () =>
+                scoreRuleForm(set, button.dataset.addScoreRule)),
+          );
+          $$('[data-edit-score-rule]').forEach(
+            (button) =>
+              (button.onclick = async () => {
+                const rule = await db.get(
+                  "criteria",
+                  button.dataset.editScoreRule,
+                );
+                scoreRuleForm(set, rule.criteria_group_id, rule.id);
+              }),
+          );
+          $$('[data-edit-legacy-criterion]').forEach(
+            (button) =>
+              (button.onclick = () =>
+                criterionForm(set, button.dataset.editLegacyCriterion)),
+          );
+        }
+
+        function rulesetForm() {
+          openModal(
+            "Tạo bộ quy tắc",
+            `<form id="newRulesetForm"><div class="form-grid"><div class="field full"><label class="required">Tên bộ quy tắc</label><input name="name" required></div><div class="field"><label>Phiên bản</label><input name="version" value="1.0" required></div><div class="field"><label>Cách tính</label><select name="formula"><option value="base">Điểm chuẩn rồi cộng/trừ</option><option value="sum">Cộng các điều chỉnh</option></select></div><div class="field"><label>Điểm chuẩn</label><input type="number" step="0.01" name="base_score" value="100"></div><div class="field full"><label>Căn cứ / ghi chú</label><textarea name="basis"></textarea></div></div></form>`,
+            '<button class="btn" id="cancelNewRuleset">Hủy</button><button class="btn primary" id="saveNewRuleset">Tạo bộ</button>',
+          );
+          $("#cancelNewRuleset").onclick = closeModal;
+          $("#saveNewRuleset").onclick = async () => {
+            const form = $("#newRulesetForm");
+            if (!form.reportValidity()) return;
+            const data = Object.fromEntries(new FormData(form)),
+              row = await db.put("criteria_sets", {
+                ...data,
+                base_score: Number(data.base_score || 0),
+                status: "draft",
+                school_year_id: state.yearId,
+                semester_id:
+                  state.semesterId === "all" ? null : state.semesterId,
+                campus_id: state.campusId,
+                effective_from: today(),
+              });
+            state.criteriaSetId = row.id;
+            closeModal();
+            showRulesetConfig(row.id);
           };
         }
-        async function decryptText(obj, password) {
-          const enc = new TextEncoder(),
-            base = await crypto.subtle.importKey(
-              "raw",
-              enc.encode(password),
-              "PBKDF2",
-              false,
-              ["deriveKey"],
-            ),
-            key = await crypto.subtle.deriveKey(
-              {
-                name: "PBKDF2",
-                salt: unb64(obj.salt),
-                iterations: obj.iterations,
-                hash: "SHA-256",
-              },
-              base,
-              { name: "AES-GCM", length: 256 },
-              false,
-              ["decrypt"],
-            ),
-            data = await crypto.subtle.decrypt(
-              { name: "AES-GCM", iv: unb64(obj.iv) },
-              key,
-              unb64(obj.data),
+
+        async function cloneRuleset(set, groups, criteria) {
+          const row = await db.put("criteria_sets", {
+              ...set,
+              id: undefined,
+              revision: undefined,
+              name: `${set.name} - Phiên bản mới`,
+              version: nextVersion(set.version),
+              status: "draft",
+              locked_version: false,
+              source_set_id: set.id,
+            }),
+            groupIds = new Map();
+          for (const group of groups) {
+            const cloned = await db.put("criteria_groups", {
+              ...group,
+              id: undefined,
+              revision: undefined,
+              criteria_set_id: row.id,
+              source_group_id: group.id,
+            });
+            groupIds.set(group.id, cloned.id);
+          }
+          if (criteria.length)
+            await db.bulkPut(
+              "criteria",
+              criteria.map((criterion) => ({
+                ...criterion,
+                id: uid(),
+                revision: undefined,
+                criteria_set_id: row.id,
+                criteria_group_id: criterion.criteria_group_id
+                  ? groupIds.get(criterion.criteria_group_id)
+                  : undefined,
+                source_criteria_id: criterion.id,
+              })),
             );
-          return new TextDecoder().decode(data);
+          state.criteriaSetId = row.id;
+          closeModal();
+          toast("Đã tạo phiên bản mới; dữ liệu tuần cũ không thay đổi");
+          showRulesetConfig(row.id);
         }
-        const b64 = (u) => {
-            let s = "";
-            for (let i = 0; i < u.length; i += 32768)
-              s += String.fromCharCode(...u.subarray(i, i + 32768));
-            return btoa(s);
-          },
-          unb64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+
+        async function scoreCategoryForm(set, id = "") {
+          const category = id
+            ? await db.get("criteria_groups", id)
+            : { active: true, order: 99 };
+          openModal(
+            id ? "Sửa danh mục" : "Thêm danh mục",
+            `<form id="scoreCategoryForm"><div class="form-grid"><div class="field"><label class="required">Mã danh mục</label><input name="code" value="${esc(category.code || "")}" maxlength="40" required></div><div class="field"><label class="required">Tên danh mục</label><input name="name" value="${esc(category.name || "")}" maxlength="120" required></div><div class="field full"><label>Mô tả</label><textarea name="description">${esc(category.description || "")}</textarea></div><div class="field"><label>Thứ tự</label><input type="number" name="order" value="${Number(category.order || 99)}"></div><label class="check-row"><input type="checkbox" name="active" ${category.active !== false ? "checked" : ""}> Đang sử dụng</label></div></form>`,
+            '<button class="btn" id="cancelScoreCategory">Hủy</button><button class="btn primary" id="saveScoreCategory">Lưu danh mục</button>',
+          );
+          $("#cancelScoreCategory").onclick = closeModal;
+          $("#saveScoreCategory").onclick = async () => {
+            const form = $("#scoreCategoryForm");
+            if (!form.reportValidity()) return;
+            const data = Object.fromEntries(new FormData(form));
+            try {
+              await db.put("criteria_groups", {
+                ...category,
+                ...data,
+                criteria_set_id: set.id,
+                school_year_id: state.yearId,
+                campus_id: set.campus_id || "all",
+                order: Number(data.order || 99),
+                active: !!data.active,
+              });
+              closeModal();
+              showRulesetConfig(set.id);
+            } catch (error) {
+              toast(error.message, "bad");
+            }
+          };
+        }
+
+        async function scoreRuleForm(set, categoryId, id = "") {
+          const rule = id
+            ? await db.get("criteria", id)
+            : { active: true, points: -1, order: 99 };
+          openModal(
+            id ? "Sửa nội dung chấm điểm" : "Thêm nội dung chấm điểm",
+            `<form id="scoreRuleForm"><div class="form-grid"><div class="field"><label class="required">Mã nội dung</label><input name="code" value="${esc(rule.code || "")}" maxlength="40" required></div><div class="field"><label class="required">Tên nội dung</label><input name="name" value="${esc(rule.name || "")}" maxlength="160" required></div><div class="field full"><label>Mô tả</label><textarea name="description">${esc(rule.description || "")}</textarea></div><div class="field"><label class="required">Điểm cộng/trừ</label><input type="number" step="0.01" name="points" value="${Number(rule.points || 0)}" required><small class="hint">Số âm để trừ điểm, số dương để cộng điểm.</small></div><div class="field"><label>Thứ tự</label><input type="number" name="order" value="${Number(rule.order || 99)}"></div><label class="check-row"><input type="checkbox" name="active" ${rule.active !== false ? "checked" : ""}> Đang sử dụng</label></div></form>`,
+            '<button class="btn" id="cancelScoreRule">Hủy</button><button class="btn primary" id="saveScoreRule">Lưu nội dung</button>',
+          );
+          $("#cancelScoreRule").onclick = closeModal;
+          $("#saveScoreRule").onclick = async () => {
+            const form = $("#scoreRuleForm");
+            if (!form.reportValidity()) return;
+            const data = Object.fromEntries(new FormData(form)),
+              points = Number(data.points);
+            if (!Number.isFinite(points))
+              return toast("Điểm cộng/trừ không hợp lệ.", "bad");
+            try {
+              await db.put("criteria", {
+                ...rule,
+                ...data,
+                criteria_set_id: set.id,
+                criteria_group_id: categoryId,
+                school_year_id: state.yearId,
+                campus_id: set.campus_id || "all",
+                data_type: "incident",
+                points,
+                order: Number(data.order || 99),
+                active: !!data.active,
+              });
+              closeModal();
+              showRulesetConfig(set.id);
+            } catch (error) {
+              toast(error.message, "bad");
+            }
+          };
+        }
 
         async function campusForm(id) {
           const c = id ? await db.get("campuses", id) : {};
@@ -4526,26 +4753,6 @@
             renderSettings();
           };
         }
-        function parseDelimited(line, delim) {
-          if (delim === "\t") return line.split("\t");
-          const out = [];
-          let cur = "",
-            q = false;
-          for (let i = 0; i < line.length; i++) {
-            const c = line[i];
-            if (c === '"') {
-              if (q && line[i + 1] === '"') {
-                cur += '"';
-                i++;
-              } else q = !q;
-            } else if (c === "," && !q) {
-              out.push(cur);
-              cur = "";
-            } else cur += c;
-          }
-          out.push(cur);
-          return out;
-        }
         async function deleteSampleData() {
           openModal(
             "Xóa dữ liệu mẫu",
@@ -4597,8 +4804,18 @@
               `sao-luu-day-du-truoc-khi-xoa-${today()}.tptbackup`,
               "application/json",
             );
+            const dependentStores = [
+              "score_entries",
+              "ranking_snapshots",
+              "score_grader_assignments",
+              "activity_classes",
+              "class_groups",
+              "weekly_score_sheets",
+            ];
+            for (const store of dependentStores) await db.hardClear(store);
             for (const s of STORES)
-              if (s !== "schools") await db.hardClear(s);
+              if (s !== "schools" && !dependentStores.includes(s))
+                await db.hardClear(s);
             closeModal();
             location.reload();
           };
@@ -4766,7 +4983,7 @@
             if (step === 7)
               body = `<div class="notice"><strong>Lưu trữ máy chủ:</strong> mọi thao tác nghiệp vụ được gửi tới API của ứng dụng.</div><p class="muted">Có thể tạo tệp sao lưu, điểm khôi phục nội bộ và chọn thư mục sao lưu sau khi hoàn tất.</p>`;
             if (step === 8)
-              body = `<div class="notice"><strong>Checklist sẵn sàng</strong><ul><li>${data.school ? "✓" : "○"} Tên trường</li><li>✓ ${data.campuses.length} cơ sở</li><li>✓ Năm học và 40 tuần</li><li>○ Danh sách lớp thật — có thể nhập sau</li><li>○ Bản sao lưu đầu tiên — tạo sau khi hoàn tất cấu hình</li></ul></div>`;
+              body = `<div class="notice"><strong>Checklist mức sẵn sàng</strong><ul><li>${data.school ? "✓" : "○"} Tên trường</li><li>✓ ${data.campuses.length} cơ sở</li><li>✓ Năm học và 40 tuần</li><li>○ Danh sách lớp thật — có thể nhập sau</li><li>○ Bản sao lưu đầu tiên — tạo sau khi hoàn tất cấu hình</li></ul></div>`;
             openModal(
               `${step + 1}/9 • ${titles[step]}`,
               `<div class="wizard-steps">${Array.from({ length: 9 }, (_, i) => `<span class="${i < step ? "done" : i === step ? "active" : ""}"></span>`).join("")}</div>${body}`,
@@ -4872,17 +5089,17 @@
               "Xuất, kiểm tra và khôi phục dữ liệu lưu trên máy chủ.",
               `<button class="btn primary" id="backupNow">Tạo bản sao lưu</button>`,
             ) +
-              `<div class="grid-3"><div class="card"><div class="card-head"><h2>Sao lưu gần nhất</h2></div><div class="card-body"><strong>${last ? fmtDateTime(last) : "Chưa có"}</strong><p>${quick.manifest.record_count.toLocaleString("vi-VN")} bản ghi • ${attachmentCount} tệp</p><button class="btn small" id="verifyLastBackup" ${backupRecords.length ? "" : "disabled"}>Kiểm tra bản đã ghi nhận</button></div></div><div class="card"><div class="card-head"><h2>Phục hồi an toàn</h2></div><div class="card-body"><p>Kiểm tra định dạng, định danh, phiên bản và checksum trước khi ghi.</p><button class="btn" id="restoreFile">Chọn tệp phục hồi</button></div></div><div class="card"><div class="card-head"><h2>Lưu trữ chính</h2></div><div class="card-body"><span class="badge blue">SQLite qua API máy chủ</span><p>Dữ liệu nghiệp vụ được lưu tập trung trên máy chủ.</p><small class="muted">Tệp xuất và thư mục sao lưu là các bản sao độc lập để phục hồi khi cần.</small></div></div></div><div class="notice warn mt"><strong>Phân biệt:</strong> tự lưu ghi lên máy chủ; điểm khôi phục bảo vệ trạng thái dữ liệu; bản sao lưu ngoài là tệp hoặc thư mục cục bộ; báo cáo chốt là hồ sơ nghiệp vụ bất biến.</div><div class="card mt"><div class="card-head"><h2>Ba phạm vi sao lưu ngoài</h2></div><div class="card-body">${simpleTable(
+              `<div class="grid-3"><div class="card"><div class="card-head"><h2>Sao lưu gần nhất</h2></div><div class="card-body"><strong>${last ? fmtDateTime(last) : "Chưa có"}</strong><p>${quick.manifest.record_count.toLocaleString("vi-VN")} bản ghi • ${attachmentCount} tệp</p><button class="btn small" id="verifyLastBackup" ${backupRecords.length ? "" : "disabled"}>Kiểm tra bản đã ghi nhận</button></div></div><div class="card"><div class="card-head"><h2>Phục hồi an toàn</h2></div><div class="card-body"><p>Kiểm tra định dạng, định danh, phiên bản và mã kiểm tra trước khi ghi.</p><button class="btn" id="restoreFile">Chọn tệp phục hồi</button></div></div><div class="card"><div class="card-head"><h2>Lưu trữ chính</h2></div><div class="card-body"><span class="badge blue">SQLite qua API máy chủ</span><p>Dữ liệu nghiệp vụ được lưu tập trung trên máy chủ.</p><small class="muted">Tệp xuất và thư mục sao lưu là các bản sao độc lập để phục hồi khi cần.</small></div></div></div><div class="notice warn mt"><strong>Phân biệt:</strong> tự lưu ghi lên máy chủ; điểm khôi phục bảo vệ trạng thái dữ liệu; bản sao lưu ngoài là tệp hoặc thư mục cục bộ; báo cáo chốt là hồ sơ nghiệp vụ bất biến.</div><div class="card mt"><div class="card-head"><h2>Ba phạm vi sao lưu ngoài</h2></div><div class="card-body">${simpleTable(
                 ["Chế độ", "Nội dung", "Phù hợp"],
                 [
                   [
                     "Nhanh",
-                    "Cấu hình, metadata và dữ liệu nghiệp vụ; không gồm Blob",
+                    "Cấu hình, siêu dữ liệu và dữ liệu nghiệp vụ; không gồm dữ liệu tệp",
                     "Sao lưu thường xuyên",
                   ],
                   [
                     "Đầy đủ",
-                    "Toàn bộ dữ liệu, tệp, manifest và SHA-256",
+                    "Toàn bộ dữ liệu, tệp, bản kê và SHA-256",
                     "Đổi máy, lưu trữ định kỳ",
                   ],
                   [
@@ -4891,7 +5108,7 @@
                     "Đóng năm/bàn giao",
                   ],
                 ],
-              )}</div></div><div class="card mt"><div class="card-head"><h2>Thư mục sao lưu ngoài</h2><span class="meta">${directorySupported ? "Trình duyệt hỗ trợ" : "Không hỗ trợ"}</span></div><div class="card-body"><p>${directoryRecord ? `Đã chọn: <strong>${esc(directoryRecord.name || directoryRecord.handle?.name || "Thư mục cục bộ")}</strong>` : "Chưa chọn thư mục. Mặc định ứng dụng chỉ yêu cầu trình duyệt tải tệp xuống."}</p><div class="toolbar"><button class="btn" id="chooseBackupDirectory" ${directorySupported ? "" : "disabled"}>Chọn/cấp lại thư mục</button><label class="check-row"><input id="directoryAutoBackup" type="checkbox" ${directoryAuto ? "checked" : ""} ${directoryRecord ? "" : "disabled"}> Tạo sao lưu nhanh mỗi ngày khi ứng dụng đang mở và quyền thư mục còn hiệu lực</label></div><div class="notice warn">Web/PWA không chạy lịch nền tin cậy khi đã đóng và không bảo đảm thao tác đổi tên tệp nguyên tử trên mọi trình duyệt. Tự động ở đây chỉ chạy lúc mở ứng dụng.</div></div></div><div class="card mt"><div class="card-head"><h2>Điểm khôi phục nội bộ</h2><span class="meta">${snapshots.length} điểm</span></div><div class="card-body"><div class="toolbar"><button class="btn small primary" id="createSnapshot">Tạo điểm ngay</button><span class="muted">Mặc định giữ 7 ngày • 4 tuần • 12 tháng; điểm bảo vệ không tự xóa.</span></div><div class="table-wrap" style="max-height:320px"><table><thead><tr><th>Thời gian</th><th>Tên</th><th>Loại</th><th>Bản ghi</th><th>Checksum</th><th>Thao tác</th></tr></thead><tbody>${snapshots.map((s) => `<tr><td>${fmtDateTime(s.created_at)}</td><td>${esc(s.name)}</td><td>${esc(s.tier)}${s.protected ? " • bảo vệ" : ""}</td><td>${Number(s.record_count || 0).toLocaleString("vi-VN")}</td><td><code>${esc(String(s.checksum || "").slice(0, 12))}…</code></td><td><button class="link-btn" data-view-snapshot="${s.id}">Xem</button><button class="link-btn" data-restore-snapshot="${s.id}">Khôi phục</button></td></tr>`).join("") || '<tr><td colspan="6" class="empty">Chưa có điểm khôi phục.</td></tr>'}</tbody></table></div></div></div>`,
+              )}</div></div><div class="card mt"><div class="card-head"><h2>Thư mục sao lưu ngoài</h2><span class="meta">${directorySupported ? "Trình duyệt hỗ trợ" : "Không hỗ trợ"}</span></div><div class="card-body"><p>${directoryRecord ? `Đã chọn: <strong>${esc(directoryRecord.name || directoryRecord.handle?.name || "Thư mục cục bộ")}</strong>` : "Chưa chọn thư mục. Mặc định ứng dụng chỉ yêu cầu trình duyệt tải tệp xuống."}</p><div class="toolbar"><button class="btn" id="chooseBackupDirectory" ${directorySupported ? "" : "disabled"}>Chọn/cấp lại thư mục</button><label class="check-row"><input id="directoryAutoBackup" type="checkbox" ${directoryAuto ? "checked" : ""} ${directoryRecord ? "" : "disabled"}> Tạo sao lưu nhanh mỗi ngày khi ứng dụng đang mở và quyền thư mục còn hiệu lực</label></div><div class="notice warn">Ứng dụng web/PWA không chạy lịch nền tin cậy khi đã đóng và không bảo đảm thao tác đổi tên tệp nguyên tử trên mọi trình duyệt. Tự động ở đây chỉ chạy lúc mở ứng dụng.</div></div></div><div class="card mt"><div class="card-head"><h2>Điểm khôi phục nội bộ</h2><span class="meta">${snapshots.length} điểm</span></div><div class="card-body"><div class="toolbar"><button class="btn small primary" id="createSnapshot">Tạo điểm ngay</button><span class="muted">Mặc định giữ 7 ngày • 4 tuần • 12 tháng; điểm bảo vệ không tự xóa.</span></div><div class="table-wrap" style="max-height:320px"><table><thead><tr><th>Thời gian</th><th>Tên</th><th>Loại</th><th>Bản ghi</th><th>Mã kiểm tra</th><th>Thao tác</th></tr></thead><tbody>${snapshots.map((s) => `<tr><td>${fmtDateTime(s.created_at)}</td><td>${esc(s.name)}</td><td>${esc({ manual: "Thủ công", protected: "Bảo vệ", daily: "Hằng ngày", weekly: "Hằng tuần", monthly: "Hằng tháng" }[s.tier] || s.tier)}${s.protected ? " • bảo vệ" : ""}</td><td>${Number(s.record_count || 0).toLocaleString("vi-VN")}</td><td><code>${esc(String(s.checksum || "").slice(0, 12))}…</code></td><td><button class="link-btn" data-view-snapshot="${s.id}">Xem</button><button class="link-btn" data-restore-snapshot="${s.id}">Khôi phục</button></td></tr>`).join("") || '<tr><td colspan="6" class="empty">Chưa có điểm khôi phục.</td></tr>'}</tbody></table></div></div></div>`,
           );
           $("#backupNow").onclick = chooseBackup;
           $("#restoreFile").onclick = () => {
@@ -4904,7 +5121,7 @@
             const record = backupRecords[0];
             openModal(
               "Bản sao lưu đã ghi nhận",
-              `<div class="notice"><strong>${esc(record.name)}</strong></div><div class="split"><span>Hoàn tất</span><strong>${fmtDateTime(record.completed_at)}</strong></div><div class="split mt"><span>Phạm vi</span><strong>${esc(record.scope)}</strong></div><div class="split mt"><span>Dung lượng</span><strong>${formatBytes(record.size)}</strong></div><div class="split mt"><span>Checksum</span><code>${esc(record.checksum)}</code></div><div class="notice warn mt">Đây là kiểm tra nhật ký và checksum lúc tạo. Trình duyệt không thể tự đọc lại tệp đã tải xuống nếu thầy chưa chọn lại tệp.</div>`,
+              `<div class="notice"><strong>${esc(record.name)}</strong></div><div class="split"><span>Hoàn tất</span><strong>${fmtDateTime(record.completed_at)}</strong></div><div class="split mt"><span>Phạm vi</span><strong>${esc({ quick: "Nhanh", full: "Đầy đủ", year: "Gói năm học", "academic-year": "Năm học" }[record.scope] || record.scope)}</strong></div><div class="split mt"><span>Dung lượng</span><strong>${formatBytes(record.size)}</strong></div><div class="split mt"><span>Mã kiểm tra</span><code>${esc(record.checksum)}</code></div><div class="notice warn mt">Đây là kết quả kiểm tra nhật ký và mã kiểm tra lúc tạo. Trình duyệt không thể tự đọc lại tệp đã tải xuống nếu thầy chưa chọn lại tệp.</div>`,
               `<button class="btn primary" id="closeBackupRecord">Đóng</button>`,
             );
             $("#closeBackupRecord").onclick = closeModal;
@@ -4955,7 +5172,7 @@
               );
               openModal(
                 "Chi tiết điểm khôi phục",
-                `<div class="notice">Điểm này không chứa Blob tệp để tránh nhân đôi dung lượng.</div>${simpleTable(
+                `<div class="notice">Điểm này không chứa dữ liệu tệp để tránh nhân đôi dung lượng.</div>${simpleTable(
                   ["Phân hệ", "Bản ghi"],
                   Object.entries(snapshot.counts || {})
                     .filter(([, count]) => count)
@@ -4979,12 +5196,12 @@
           const checksum = await sha256Text(stableJSON(snapshot.payload));
           if (checksum !== snapshot.checksum)
             return toast(
-              "Điểm khôi phục hỏng checksum; không phục hồi.",
+              "Mã kiểm tra của điểm khôi phục bị hỏng; không thể phục hồi.",
               "bad",
             );
           openModal(
             "Khôi phục điểm nội bộ",
-            `<div class="notice warn">Sẽ thay dữ liệu cấu trúc trong điểm <strong>${esc(snapshot.name)}</strong>. Tệp Blob hiện tại được giữ vì snapshot không nhân đôi tệp.</div><p>${Number(snapshot.record_count || 0).toLocaleString("vi-VN")} bản ghi • ${fmtDateTime(snapshot.created_at)}</p>`,
+            `<div class="notice warn">Sẽ thay dữ liệu cấu trúc trong điểm <strong>${esc(snapshot.name)}</strong>. Dữ liệu tệp hiện tại được giữ vì điểm khôi phục không nhân đôi tệp.</div><p>${Number(snapshot.record_count || 0).toLocaleString("vi-VN")} bản ghi • ${fmtDateTime(snapshot.created_at)}</p>`,
             `<button class="btn" id="cancelInternalRestore">Hủy</button><button class="btn danger" id="confirmInternalRestore">Khôi phục</button>`,
           );
           $("#cancelInternalRestore").onclick = closeModal;
@@ -5156,7 +5373,7 @@
               );
             const identityWarnings = [];
             if (obj.app_id && obj.app_id !== APP.appId)
-              identityWarnings.push("APP_ID của tệp khác ứng dụng hiện tại");
+              identityWarnings.push("APP_ID trong tệp khác với ứng dụng hiện tại");
             if (
               obj.school_profile_id &&
               obj.school_profile_id !== APP.schoolProfileId
@@ -5169,7 +5386,7 @@
               obj.manifest?.source_checksum &&
               obj.manifest.source_checksum !== dataChecksum
             )
-              throw new Error("Checksum dữ liệu cấu trúc không khớp.");
+              throw new Error("Mã kiểm tra dữ liệu cấu trúc không khớp.");
             const reconstructed = { ...obj, data: { ...obj.data } },
               files = Array.isArray(obj.files) ? obj.files : [],
               fileById = new Map(files.map((x) => [x.id, x]));
@@ -5184,7 +5401,7 @@
                 const blob = base64ToBlob(f.data, f.type),
                   hash = await sha256Blob(blob);
                 if (hash !== f.sha256 || blob.size !== f.size)
-                  throw new Error(`Checksum không khớp: ${f.name}.`);
+                  throw new Error(`Mã kiểm tra không khớp: ${f.name}.`);
                 reconstructed.data.attachments.push({
                   ...meta,
                   blob,
@@ -5222,7 +5439,7 @@
             }
             openModal(
               "Kiểm tra tệp phục hồi",
-              `<div class="notice"><strong>Tệp hợp lệ.</strong> Chưa có dữ liệu nào bị thay đổi.</div>${identityWarnings.length ? `<div class="notice danger"><strong>Cảnh báo định danh:</strong> ${esc(identityWarnings.join("; "))}. Chỉ tiếp tục khi đây là dữ liệu cần chuyển trường/hồ sơ.</div>` : ""}<div class="split"><span>Ngày tạo</span><strong>${fmtDateTime(obj.exported_at)}</strong></div><div class="split mt"><span>Lược đồ</span><strong>${obj.schema} → ${APP.schema}</strong></div><div class="split mt"><span>Bản ghi</span><strong>${total.toLocaleString("vi-VN")}</strong></div><div class="split mt"><span>Tệp đã kiểm tra</span><strong>${files.length}</strong></div><div class="split mt"><span>Bản ghi mới / tệp mới hơn / giữ hiện tại</span><strong>${conflicts.newRows} / ${conflicts.incomingNewer} / ${conflicts.currentKept}</strong></div><div class="field mt"><label>Phương thức</label><select id="restoreMode"><option value="merge">Hợp nhất theo ID, revision và thời điểm; mặc định giữ bản hiện tại khi không cũ hơn</option><option value="replace">Thay thế dữ liệu nghiệp vụ trong một giao dịch</option></select></div><div class="notice danger mt">Ứng dụng sẽ tạo điểm khôi phục nội bộ trước khi ghi. Điểm này không thay thế bản sao lưu ngoài thiết bị.</div>`,
+              `<div class="notice"><strong>Tệp hợp lệ.</strong> Chưa có dữ liệu nào bị thay đổi.</div>${identityWarnings.length ? `<div class="notice danger"><strong>Cảnh báo định danh:</strong> ${esc(identityWarnings.join("; "))}. Chỉ tiếp tục khi đây là dữ liệu cần chuyển trường/hồ sơ.</div>` : ""}<div class="split"><span>Ngày tạo</span><strong>${fmtDateTime(obj.exported_at)}</strong></div><div class="split mt"><span>Lược đồ</span><strong>${obj.schema} → ${APP.schema}</strong></div><div class="split mt"><span>Bản ghi</span><strong>${total.toLocaleString("vi-VN")}</strong></div><div class="split mt"><span>Tệp đã kiểm tra</span><strong>${files.length}</strong></div><div class="split mt"><span>Bản ghi mới / tệp mới hơn / giữ hiện tại</span><strong>${conflicts.newRows} / ${conflicts.incomingNewer} / ${conflicts.currentKept}</strong></div><div class="field mt"><label>Phương thức</label><select id="restoreMode"><option value="merge">Hợp nhất theo ID, phiên bản sửa đổi và thời điểm; mặc định giữ bản hiện tại khi không cũ hơn</option><option value="replace">Thay thế dữ liệu nghiệp vụ trong một giao dịch</option></select></div><div class="notice danger mt">Ứng dụng sẽ tạo điểm khôi phục nội bộ trước khi ghi. Điểm này không thay thế bản sao lưu ngoài thiết bị.</div>`,
               `<button class="btn" id="cancelRestore">Hủy</button><button class="btn danger" id="confirmRestore">Xác nhận phục hồi</button>`,
               true,
             );
@@ -5299,9 +5516,6 @@
             toast("Không thể đọc tệp: " + err.message, "bad");
           }
         }
-
-        const permissionList = (value) =>
-          [...new Set(String(value || "").split(/[\s,]+/).map((item) => item.trim().toLowerCase()).filter(Boolean))];
 
         function renderAccount() {
           const user = state.user,
@@ -5474,32 +5688,6 @@
           };
         }
 
-        const SETTINGS_TABS = [
-          ["school", "Thông tin trường"],
-          ["context", "Cơ sở – năm học – học kỳ – tuần"],
-          ["classes", "Lớp và giáo viên chủ nhiệm"],
-          ["competition", "Cấu hình thi đua"],
-          ["activities", "Danh mục hoạt động"],
-          ["tasks", "Công việc và checklist"],
-          ["documents", "Hồ sơ – tài liệu"],
-          ["team", "Tổ chức Đội – phong trào"],
-          ["awards", "Khen thưởng"],
-          ["equipment", "Thiết bị"],
-          ["reports", "Báo cáo và mẫu in"],
-          ["appearance", "Giao diện"],
-          ["data", "Dữ liệu – sao lưu"],
-          ["security", "Khóa phiên và bảo mật"],
-        ];
-        const SETTINGS_CONFIG_KEYS = {
-          activities: ["activity_type", "calendar_type"],
-          tasks: ["task_group", "task_status", "priority"],
-          documents: ["document_type", "document_status"],
-          team: ["team_group", "team_position", "program_type", "specialty"],
-          awards: ["award_type", "award_level"],
-          equipment: ["equipment_group", "equipment_condition", "unit"],
-          reports: ["report_type", "report_template"],
-          context: ["plan_type", "plan_level", "plan_status"],
-        };
         async function customFieldDefs(entity, includeInactive = false) {
           return (await db.all("custom_field_definitions"))
             .filter(
@@ -5553,7 +5741,7 @@
               commendations: "khen thưởng",
               equipment: "thiết bị",
             }[entity];
-          return `<div class="card mt"><div class="card-head"><h2>Trường thông tin tùy chỉnh – ${label}</h2><span class="meta">${defs.length} trường</span></div><div class="card-body"><div class="notice">Chỉ dùng các kiểu dữ liệu an toàn; không cho phép nhập hoặc thực thi mã JavaScript.</div><button class="btn small primary" data-custom-add="${entity}">＋ Thêm trường</button><div class="table-wrap mt" style="max-height:300px"><table><thead><tr><th>Thứ tự</th><th>Tên trường</th><th>Kiểu</th><th>Bắt buộc</th><th>Trạng thái</th><th></th></tr></thead><tbody>${defs.map((f, i) => `<tr><td>${i + 1}</td><td>${esc(f.name)}</td><td>${esc(f.field_type)}</td><td>${f.required ? "Có" : "Không"}</td><td>${f.active !== false ? "Đang dùng" : "Ngừng"}</td><td><button class="link-btn" data-custom-edit="${f.id}">Sửa</button><button class="link-btn" data-custom-toggle="${f.id}">${f.active !== false ? "Ngừng" : "Bật"}</button></td></tr>`).join("") || '<tr><td colspan="6" class="empty">Chưa có trường tùy chỉnh.</td></tr>'}</tbody></table></div></div></div>`;
+          return `<div class="card mt"><div class="card-head"><h2>Trường thông tin tùy chỉnh – ${label}</h2><span class="meta">${defs.length} trường</span></div><div class="card-body"><div class="notice">Chỉ dùng các kiểu dữ liệu an toàn; không cho phép nhập hoặc thực thi mã JavaScript.</div><button class="btn small primary" data-custom-add="${entity}">＋ Thêm trường</button><div class="table-wrap mt" style="max-height:300px"><table><thead><tr><th>Thứ tự</th><th>Tên trường</th><th>Kiểu</th><th>Bắt buộc</th><th>Trạng thái</th><th></th></tr></thead><tbody>${defs.map((f, i) => `<tr><td>${i + 1}</td><td>${esc(f.name)}</td><td>${esc({ short_text: "Văn bản ngắn", long_text: "Văn bản dài", number: "Số", date: "Ngày", single_choice: "Lựa chọn một", multi_choice: "Lựa chọn nhiều", boolean: "Có/không", link: "Liên kết", file: "Tệp đính kèm" }[f.field_type] || f.field_type)}</td><td>${f.required ? "Có" : "Không"}</td><td>${f.active !== false ? "Đang dùng" : "Ngừng"}</td><td><button class="link-btn" data-custom-edit="${f.id}">Sửa</button><button class="link-btn" data-custom-toggle="${f.id}">${f.active !== false ? "Ngừng" : "Bật"}</button></td></tr>`).join("") || '<tr><td colspan="6" class="empty">Chưa có trường tùy chỉnh.</td></tr>'}</tbody></table></div></div></div>`;
         }
         function bindCustomFieldActions() {
           $$("[data-custom-add]").forEach(
@@ -5647,10 +5835,10 @@
           if (!panel) return;
           if (tab === "school") return renderSchoolPanel(panel);
           if (tab === "context") return renderAcademicYearPanel(panel);
-          if (tab === "classes") return renderClassPanel(panel);
+          if (tab === "classes") return renderClassGroupPanel(panel);
           if (tab === "competition") {
             panel.innerHTML = `<div class="card"><div class="card-head"><h2>Bộ tiêu chí thi đua</h2></div><div class="card-body"><p>Quản lý nhiều bộ theo năm học, học kỳ, cơ sở, hiệu lực và phiên bản. Bộ đã có điểm chỉ được tạo phiên bản mới.</p><button class="btn primary" id="manageCriteria">Mở trình quản lý bộ tiêu chí</button></div></div>`;
-            return ($("#manageCriteria").onclick = showCriteriaConfig);
+            return ($("#manageCriteria").onclick = showRulesetConfig);
           }
           if (tab === "appearance") {
             const paper = (await setting("paper_orientation")) || "landscape",
@@ -5664,7 +5852,7 @@
             });
           }
           if (tab === "data") {
-            panel.innerHTML = `<div class="grid-2"><div class="card"><div class="card-head"><h2>Dữ liệu và sao lưu</h2></div><div class="card-body"><p>Sao lưu nhanh cho dữ liệu cấu trúc; sao lưu đầy đủ gồm cả tệp Blob và checksum.</p><button class="btn primary" id="openBackup">Mở Sao lưu – khôi phục</button></div></div><div class="card"><div class="card-head"><h2>Giới hạn tệp và cảnh báo dung lượng</h2></div><div class="card-body"><div class="field"><label>Dung lượng tối đa mỗi tệp (MB)</label><input id="maxFileMb" type="number" min="1" max="250" value="${Number(await setting("max_file_mb")) || 25}"></div><div class="form-grid mt"><div class="field"><label>Cảnh báo sớm (%)</label><input id="storageLow" type="number" min="50" max="90" value="${Number(await setting("storage_warning_low")) || 70}"></div><div class="field"><label>Cảnh báo cao (%)</label><input id="storageHigh" type="number" min="60" max="95" value="${Number(await setting("storage_warning_high")) || 85}"></div><div class="field"><label>Cảnh báo nguy cấp (%)</label><input id="storageCritical" type="number" min="70" max="99" value="${Number(await setting("storage_warning_critical")) || 95}"></div></div><button class="btn mt" id="saveFileLimit">Lưu giới hạn</button></div></div></div>`;
+            panel.innerHTML = `<div class="grid-2"><div class="card"><div class="card-head"><h2>Dữ liệu và sao lưu</h2></div><div class="card-body"><p>Sao lưu nhanh cho dữ liệu cấu trúc; sao lưu đầy đủ gồm cả dữ liệu tệp và mã kiểm tra.</p><button class="btn primary" id="openBackup">Mở Sao lưu – khôi phục</button></div></div><div class="card"><div class="card-head"><h2>Giới hạn tệp và cảnh báo dung lượng</h2></div><div class="card-body"><div class="field"><label>Dung lượng tối đa mỗi tệp (MB)</label><input id="maxFileMb" type="number" min="1" max="250" value="${Number(await setting("max_file_mb")) || 25}"></div><div class="form-grid mt"><div class="field"><label>Cảnh báo sớm (%)</label><input id="storageLow" type="number" min="50" max="90" value="${Number(await setting("storage_warning_low")) || 70}"></div><div class="field"><label>Cảnh báo cao (%)</label><input id="storageHigh" type="number" min="60" max="95" value="${Number(await setting("storage_warning_high")) || 85}"></div><div class="field"><label>Cảnh báo nguy cấp (%)</label><input id="storageCritical" type="number" min="70" max="99" value="${Number(await setting("storage_warning_critical")) || 95}"></div></div><button class="btn mt" id="saveFileLimit">Lưu giới hạn</button></div></div></div>`;
             $("#openBackup").onclick = () => go("backup");
             return ($("#saveFileLimit").onclick = async () => {
               const low = clamp($("#storageLow").value, 50, 90),
@@ -5778,7 +5966,7 @@
             })
             .join(
               "",
-            )}</tbody></table></div></div></div><div class="grid-2 mt"><div class="card"><div class="card-head"><h2>Quy tắc tạo năm</h2></div><div class="card-body"><ul><li>Tạo mới học kỳ và 40 tuần theo ngày bắt đầu.</li><li>Chỉ sao chép lớp và bộ tiêu chí khi được chọn.</li><li>Không sao chép điểm, xếp hạng, hoạt động, công việc đã phát sinh hay báo cáo cũ.</li></ul></div></div><div class="card"><div class="card-head"><h2>Quy tắc đóng năm</h2></div><div class="card-body"><ul><li>Kiểm tra bảng điểm chưa khóa, việc chưa xong và báo cáo nháp.</li><li>Tạo snapshot bảo vệ, báo cáo tổng kết chốt và gói năm học.</li><li>Sau khi đóng, bản ghi năm cũ chuyển sang chỉ đọc.</li></ul></div></div></div>`;
+            )}</tbody></table></div></div></div><div class="grid-2 mt"><div class="card"><div class="card-head"><h2>Quy tắc tạo năm</h2></div><div class="card-body"><ul><li>Tạo mới học kỳ và 40 tuần theo ngày bắt đầu.</li><li>Chỉ sao chép lớp và bộ tiêu chí khi được chọn.</li><li>Không sao chép điểm, xếp hạng, hoạt động, công việc đã phát sinh hay báo cáo cũ.</li></ul></div></div><div class="card"><div class="card-head"><h2>Quy tắc đóng năm</h2></div><div class="card-body"><ul><li>Kiểm tra bảng điểm chưa khóa, việc chưa xong và báo cáo nháp.</li><li>Tạo điểm khôi phục bảo vệ, báo cáo tổng kết chốt và gói năm học.</li><li>Sau khi đóng, bản ghi năm cũ chuyển sang chỉ đọc.</li></ul></div></div></div>`;
           $("#addCampusCenter").onclick = () => campusForm();
           $$('[data-edit-campus]').forEach(
             (button) =>
@@ -5894,24 +6082,52 @@
                 copiedCriteria = 0;
               if (values.copy_classes) {
                 const oldClasses = (await db.all("classes")).filter(
-                  (row) => row.school_year_id === previousId,
-                );
+                    (row) => row.school_year_id === previousId,
+                  ),
+                  classIdMap = new Map(),
+                  newClasses = oldClasses.map(
+                    ({ id, created_at, updated_at, revision, ...row }) => {
+                      const newId = uid();
+                      classIdMap.set(id, newId);
+                      return {
+                        ...row,
+                        id: newId,
+                        school_year_id: yearId,
+                        academic_year_id: yearId,
+                        source: "copied-year",
+                      };
+                    },
+                  );
                 await db.bulkPut(
                   "classes",
-                  oldClasses.map(
-                    ({ id, created_at, updated_at, revision, ...row }) => ({
-                      ...row,
-                      id: uid(),
-                      school_year_id: yearId,
-                      academic_year_id: yearId,
-                      source: "copied-year",
-                    }),
-                  ),
+                  newClasses,
                 );
+                const oldGroups = (await db.all("class_groups")).filter(
+                  (row) => row.school_year_id === previousId,
+                );
+                if (oldGroups.length)
+                  await db.bulkPut(
+                    "class_groups",
+                    oldGroups.map(
+                      ({ id, created_at, updated_at, revision, ...row }) => ({
+                        ...row,
+                        id: uid(),
+                        school_year_id: yearId,
+                        academic_year_id: yearId,
+                        class_ids: (row.class_ids || [])
+                          .map((classId) => classIdMap.get(classId))
+                          .filter(Boolean),
+                        source: "copied-year",
+                      }),
+                    ),
+                  );
                 copiedClasses = oldClasses.length;
               }
               if (values.copy_criteria) {
                 const sets = (await db.all("criteria_sets")).filter(
+                    (row) => row.school_year_id === previousId,
+                  ),
+                  criteriaGroups = (await db.all("criteria_groups")).filter(
                     (row) => row.school_year_id === previousId,
                   ),
                   criteria = (await db.all("criteria")).filter(
@@ -5931,6 +6147,25 @@
                     updated_at: undefined,
                     revision: undefined,
                   });
+                  const groupIdMap = new Map(),
+                    setGroups = criteriaGroups.filter(
+                      (row) => row.criteria_set_id === set.id,
+                    );
+                  for (const group of setGroups) {
+                    const newGroupId = uid();
+                    groupIdMap.set(group.id, newGroupId);
+                    await db.put("criteria_groups", {
+                      ...group,
+                      id: newGroupId,
+                      criteria_set_id: newSetId,
+                      school_year_id: yearId,
+                      academic_year_id: yearId,
+                      source: "copied-year",
+                      created_at: undefined,
+                      updated_at: undefined,
+                      revision: undefined,
+                    });
+                  }
                   const children = criteria.filter(
                     (row) => row.criteria_set_id === set.id,
                   );
@@ -5941,6 +6176,9 @@
                         ...row,
                         id: uid(),
                         criteria_set_id: newSetId,
+                        criteria_group_id: row.criteria_group_id
+                          ? groupIdMap.get(row.criteria_group_id)
+                          : undefined,
                         school_year_id: yearId,
                         academic_year_id: yearId,
                         source: "copied-year",
@@ -6016,7 +6254,7 @@
             ].filter(Boolean);
           openModal(
             `Đóng năm học ${year.name}`,
-            `${blockers.length ? `<div class="notice danger"><strong>Chưa đủ điều kiện đóng:</strong><ul>${blockers.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>Hãy xử lý hoặc xác nhận nghiệp vụ tại phân hệ tương ứng.</div>` : '<div class="notice"><strong>Đủ điều kiện kỹ thuật để đóng năm.</strong></div>'}<p>Khi xác nhận, ứng dụng tạo snapshot bảo vệ, báo cáo tổng kết chốt, gói năm học có checksum rồi chuyển năm sang chỉ đọc.</p><label class="check-row"><input id="confirmCloseYearCheck" type="checkbox" ${blockers.length ? "disabled" : ""}> Tôi đã đối chiếu số liệu và hiểu gói tải xuống cần được lưu ngoài thiết bị.</label><div id="closeYearProgress" class="muted mt" role="status"></div>`,
+            `${blockers.length ? `<div class="notice danger"><strong>Chưa đủ điều kiện đóng:</strong><ul>${blockers.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>Hãy xử lý hoặc xác nhận nghiệp vụ tại phân hệ tương ứng.</div>` : '<div class="notice"><strong>Đủ điều kiện kỹ thuật để đóng năm.</strong></div>'}<p>Khi xác nhận, ứng dụng tạo điểm khôi phục bảo vệ, báo cáo tổng kết chốt, gói năm học có mã kiểm tra rồi chuyển năm sang chỉ đọc.</p><label class="check-row"><input id="confirmCloseYearCheck" type="checkbox" ${blockers.length ? "disabled" : ""}> Tôi đã đối chiếu số liệu và hiểu gói tải xuống cần được lưu ngoài thiết bị.</label><div id="closeYearProgress" class="muted mt" role="status"></div>`,
             `<button class="btn" id="cancelCloseYear">Hủy</button><button class="btn danger" id="confirmCloseYear" ${blockers.length ? "disabled" : ""}>Chốt và đóng năm</button>`,
             true,
           );
@@ -6098,7 +6336,7 @@
           const year = await db.get("school_years", yearId);
           openModal(
             `Mở sửa ${year?.name || "năm cũ"}`,
-            `<div class="notice warn">Quyền chỉ tồn tại trong thẻ hiện tại. Mọi thay đổi vẫn có revision và nhật ký.</div><div class="field"><label class="required">Lý do hiệu chỉnh</label><textarea id="yearEditReason" required minlength="10" placeholder="Nêu rõ hồ sơ/số liệu cần hiệu chỉnh…"></textarea></div>`,
+            `<div class="notice warn">Quyền chỉ tồn tại trong thẻ hiện tại. Mọi thay đổi vẫn có phiên bản sửa đổi và nhật ký.</div><div class="field"><label class="required">Lý do hiệu chỉnh</label><textarea id="yearEditReason" required minlength="10" placeholder="Nêu rõ hồ sơ/số liệu cần hiệu chỉnh…"></textarea></div>`,
             `<button class="btn" id="cancelYearEdit">Hủy</button><button class="btn danger" id="confirmYearEdit">Mở quyền sửa</button>`,
           );
           $("#cancelYearEdit").onclick = closeModal;
@@ -6127,6 +6365,145 @@
           $$("[data-edit-center-class]").forEach(
             (b) => (b.onclick = () => classForm(b.dataset.editCenterClass)),
           );
+        }
+        async function renderClassGroupPanel(panel) {
+          const [classes, groups] = await Promise.all([
+              scoped("classes"),
+              scoped("class_groups"),
+            ]),
+            sortedClasses = classes.sort((a, b) =>
+              String(a.class_name).localeCompare(String(b.class_name), "vi", {
+                numeric: true,
+              }),
+            ),
+            sortedGroups = groups.sort(
+              (a, b) =>
+                (a.order || 0) - (b.order || 0) ||
+                String(a.name).localeCompare(String(b.name), "vi"),
+            ),
+            manager = canManageScores(),
+            groupByClass = new Map();
+          for (const group of sortedGroups)
+            for (const classId of group.class_ids || [])
+              groupByClass.set(classId, group);
+          const classRows = sortedClasses
+              .map((schoolClass) => {
+                const group = groupByClass.get(schoolClass.id);
+                return `<tr><td><strong>${esc(schoolClass.class_name)}</strong></td><td>${esc(schoolClass.grade)}</td><td>${group ? `<span class="badge blue">${esc(group.name)}</span>` : "—"}</td><td>${esc(campusName(schoolClass.campus_id))}</td><td>${esc(schoolClass.teacher || "—")}</td><td>${schoolClass.active !== false ? '<span class="badge green">Đang dùng</span>' : '<span class="badge">Ngừng dùng</span>'}</td><td>${manager ? `<button class="link-btn" data-edit-center-class="${schoolClass.id}">Sửa</button> <button class="link-btn red" data-delete-center-class="${schoolClass.id}">Xóa</button>` : "—"}</td></tr>`;
+              })
+              .join(""),
+            groupRows = sortedGroups
+              .map(
+                (group) =>
+                  `<tr><td>${esc(group.code || "—")}</td><td><strong>${esc(group.name)}</strong>${group.description ? `<br><small>${esc(group.description)}</small>` : ""}</td><td class="wrap">${(group.class_ids || []).map((classId) => sortedClasses.find((schoolClass) => schoolClass.id === classId)?.class_name).filter(Boolean).map((name) => `<span class="badge blue">${esc(name)}</span>`).join(" ") || "—"}</td><td>${group.active !== false ? '<span class="badge green">Đang dùng</span>' : '<span class="badge">Ngừng dùng</span>'}</td><td>${manager ? `<button class="link-btn" data-edit-class-group="${group.id}">Sửa</button> <button class="link-btn red" data-delete-class-group="${group.id}">Xóa</button>` : "—"}</td></tr>`,
+              )
+              .join("");
+          panel.innerHTML = `<div class="card"><div class="card-head"><h2>Danh sách lớp</h2><span class="meta">${classes.length} lớp</span></div><div class="card-body">${manager ? '<div class="toolbar"><button class="btn" id="addClassCenter">＋ Lớp</button><button class="btn" id="importClassCenter">Nhập CSV/dán Excel</button></div>' : ""}<div class="table-wrap" style="max-height:430px"><table><thead><tr><th>Lớp</th><th>Khối</th><th>Nhóm lớp</th><th>Cơ sở</th><th>Giáo viên chủ nhiệm</th><th>Trạng thái</th><th></th></tr></thead><tbody>${classRows || '<tr><td colspan="7" class="empty">Chưa có lớp.</td></tr>'}</tbody></table></div>${manager ? '<div class="notice warn mt">Lớp đã có điểm hoặc xếp hạng lịch sử không thể xóa. Hãy sửa lớp và bỏ chọn “Đang hoạt động” để ngừng sử dụng nhưng vẫn giữ dữ liệu cũ.</div>' : ""}</div></div><div class="card mt"><div class="card-head"><h2>Nhóm lớp</h2>${manager ? '<button class="btn small" id="addClassGroup">＋ Nhóm lớp</button>' : ""}</div><div class="card-body"><div class="notice">Mỗi lớp thuộc tối đa một nhóm trong năm học. Điểm được lưu theo từng lớp và thứ hạng được tính độc lập trong từng nhóm.</div><div class="table-wrap mt"><table><thead><tr><th>Mã</th><th>Tên nhóm</th><th>Các lớp</th><th>Trạng thái</th><th></th></tr></thead><tbody>${groupRows || '<tr><td colspan="5" class="empty">Chưa có nhóm lớp.</td></tr>'}</tbody></table></div></div></div>`;
+          if ($("#addClassCenter")) $("#addClassCenter").onclick = () => classForm();
+          if ($("#importClassCenter")) $("#importClassCenter").onclick = showClassImport;
+          if ($("#addClassGroup")) $("#addClassGroup").onclick = () => classGroupForm();
+          $$('[data-edit-center-class]').forEach(
+            (button) =>
+              (button.onclick = () =>
+                classForm(button.dataset.editCenterClass)),
+          );
+          $$('[data-delete-center-class]').forEach(
+            (button) =>
+              (button.onclick = () =>
+                removeClass(button.dataset.deleteCenterClass)),
+          );
+          $$('[data-edit-class-group]').forEach(
+            (button) =>
+              (button.onclick = () =>
+                classGroupForm(button.dataset.editClassGroup)),
+          );
+          $$('[data-delete-class-group]').forEach(
+            (button) =>
+              (button.onclick = async () => {
+                const group = sortedGroups.find(
+                  (item) => item.id === button.dataset.deleteClassGroup,
+                );
+                if (!confirm(`Xóa nhóm lớp “${group?.name || ""}”?`)) return;
+                try {
+                  await db.remove("class_groups", group.id);
+                  toast("Đã xóa nhóm lớp");
+                  renderClassGroupPanel(panel);
+                } catch (error) {
+                  toast(error.message, "bad");
+                }
+              }),
+          );
+        }
+        async function classGroupForm(id = "") {
+          const [group, classes, groups] = await Promise.all([
+              id
+                ? db.get("class_groups", id)
+                : Promise.resolve({ active: true, class_ids: [], order: 99 }),
+              db.all("classes"),
+              db.all("class_groups"),
+            ]),
+            owners = new Map();
+          const yearClasses = classes.filter(
+              (schoolClass) => schoolClass.school_year_id === state.yearId,
+            ),
+            yearGroups = groups.filter(
+              (item) => item.school_year_id === state.yearId,
+            );
+          for (const item of yearGroups)
+            if (item.id !== id)
+              for (const classId of item.class_ids || [])
+                owners.set(classId, item.name);
+          const sortedClasses = yearClasses.sort((a, b) =>
+            String(a.class_name).localeCompare(String(b.class_name), "vi", {
+              numeric: true,
+            }),
+          );
+          openModal(
+            id ? "Sửa nhóm lớp" : "Thêm nhóm lớp",
+            `<form id="classGroupForm"><div class="form-grid"><div class="field"><label>Mã nhóm</label><input name="code" value="${esc(group.code || "")}" maxlength="40"></div><div class="field"><label class="required">Tên nhóm</label><input name="name" value="${esc(group.name || "")}" maxlength="120" required></div><div class="field full"><label>Mô tả</label><textarea name="description">${esc(group.description || "")}</textarea></div><div class="field"><label>Thứ tự</label><input type="number" name="order" value="${Number(group.order || 99)}"></div><label class="check-row"><input type="checkbox" name="active" ${group.active !== false ? "checked" : ""}> Đang sử dụng</label><div class="field full"><label>Chọn lớp trong nhóm</label><div class="class-group-picker">${sortedClasses.map((schoolClass) => { const owner = owners.get(schoolClass.id), checked = group.class_ids?.includes(schoolClass.id); return `<label class="check-row ${owner ? "disabled" : ""}"><input type="checkbox" data-class-group-member="${schoolClass.id}" ${checked ? "checked" : ""} ${owner ? "disabled" : ""}><span><strong>${esc(schoolClass.class_name)}</strong><br><small>${owner ? `Đã thuộc ${esc(owner)}` : `${esc(campusName(schoolClass.campus_id))} • Khối ${esc(schoolClass.grade)}`}</small></span></label>`; }).join("") || '<div class="empty">Chưa có lớp trong năm học này.</div>'}</div></div></div></form>`,
+            '<button class="btn" id="cancelClassGroup">Hủy</button><button class="btn primary" id="saveClassGroup">Lưu nhóm</button>',
+            true,
+          );
+          $("#cancelClassGroup").onclick = closeModal;
+          $("#saveClassGroup").onclick = async () => {
+            const form = $("#classGroupForm");
+            if (!form.reportValidity()) return;
+            const data = Object.fromEntries(new FormData(form));
+            try {
+              await db.put("class_groups", {
+                ...group,
+                ...data,
+                school_year_id: state.yearId,
+                class_ids: $$('[data-class-group-member]:checked').map(
+                  (checkbox) => checkbox.dataset.classGroupMember,
+                ),
+                active: !!data.active,
+                order: Number(data.order || 99),
+              });
+              closeModal();
+              toast("Đã lưu nhóm lớp");
+              renderSettings();
+            } catch (error) {
+              toast(error.message, "bad");
+            }
+          };
+        }
+        async function removeClass(id) {
+          const schoolClass = await db.get("classes", id);
+          if (
+            !schoolClass ||
+            !confirm(
+              `Xóa lớp “${schoolClass.class_name}” khỏi trường? Thao tác này chỉ được phép khi lớp chưa có dữ liệu lịch sử.`,
+            )
+          )
+            return;
+          try {
+            await db.remove("classes", id);
+            toast("Đã xóa lớp khỏi trường");
+            renderSettings();
+          } catch (error) {
+            toast(error.message, "bad");
+          }
         }
         async function renderSecurityPanel(panel) {
           const timeout = Number(await setting("auto_lock_minutes")) || 10;
@@ -6360,7 +6737,7 @@
               "Kho tài liệu ngoại tuyến: lưu tệp thật, thư mục, phiên bản, tìm kiếm và thùng rác.",
               `<button class="btn" id="newFolder">＋ Thư mục</button><button class="btn primary" id="uploadDocuments">＋ Tải tệp</button>`,
             ) +
-              `<div class="toolbar"><input class="grow" id="documentSearch" value="${esc(query)}" placeholder="Tìm tên, số hiệu, thẻ…"><select id="documentTypeFilter"><option value="all">Tất cả loại tệp</option><option value="pdf">PDF</option><option value="image">Hình ảnh</option><option value="office">Word/Excel/PowerPoint</option></select><button class="btn small" id="toggleDocumentView">${state.documentView === "grid" ? "☷ Danh sách" : "▦ Dạng lưới"}</button><span class="muted">${docs.length} tài liệu</span></div><div class="document-layout"><aside class="folder-pane"><strong>Thư mục</strong><button class="folder-row ${activeFolder === "root" ? "active" : ""}" data-folder="root">▧ Tất cả tài liệu</button>${folders.map((f) => `<button class="folder-row ${activeFolder === f.id ? "active" : ""}" data-folder="${f.id}">▸ ${esc(f.name)}</button>`).join("")}<button class="folder-row ${trash ? "active" : ""}" data-folder="trash">♲ Thùng rác</button><hr style="border:0;border-top:1px solid var(--line)"><small class="muted">Dung lượng ước tính</small><div class="storage-meter mt"><span style="width:${pct}%"></span></div><small>${formatBytes(used)}${quota ? ` / ${formatBytes(quota)} (${pct}%)` : ""}</small><button class="btn small mt" id="requestPersistent">Bảo vệ lưu trữ</button></aside><section><div class="drop-zone ${trash ? "hidden" : ""}" id="documentDrop">Kéo thả nhiều tệp vào đây hoặc dán ảnh từ clipboard</div><div class="${state.documentView === "grid" ? "file-grid" : "table-wrap"} mt" id="documentItems">${renderDocumentItems(docs, attachMap, trash)}</div></section></div>`,
+               `<div class="toolbar"><input class="grow" id="documentSearch" value="${esc(query)}" placeholder="Tìm tên, số hiệu, thẻ…"><select id="documentTypeFilter"><option value="all">Tất cả loại tệp</option><option value="pdf">PDF</option><option value="image">Hình ảnh</option><option value="office">Word/Excel/PowerPoint</option></select><button class="btn small" id="toggleDocumentView">${state.documentView === "grid" ? "☷ Danh sách" : "▦ Dạng lưới"}</button><span class="muted">${docs.length} tài liệu</span></div><div class="document-layout"><aside class="folder-pane"><strong>Thư mục</strong><button class="folder-row ${activeFolder === "root" ? "active" : ""}" data-folder="root">▧ Tất cả tài liệu</button>${folders.map((f) => `<button class="folder-row ${activeFolder === f.id ? "active" : ""}" data-folder="${f.id}">▸ ${esc(f.name)}</button>`).join("")}<button class="folder-row ${trash ? "active" : ""}" data-folder="trash">♲ Thùng rác</button><hr style="border:0;border-top:1px solid var(--line)"><small class="muted">Dung lượng ước tính</small><div class="storage-meter mt"><span style="width:${pct}%"></span></div><small>${formatBytes(used)}${quota ? ` / ${formatBytes(quota)} (${pct}%)` : ""}</small><button class="btn small mt" id="requestPersistent">Bảo vệ lưu trữ</button></aside><section><div class="drop-zone ${trash ? "hidden" : ""}" id="documentDrop">Kéo thả nhiều tệp vào đây hoặc dán ảnh từ bộ nhớ tạm</div><div class="${state.documentView === "grid" ? "file-grid" : "table-wrap"} mt" id="documentItems">${renderDocumentItems(docs, attachMap, trash)}</div></section></div>`,
           );
           $("#documentSearch").oninput = debounce(() => {
             state.documentSearch = $("#documentSearch").value;
@@ -6540,7 +6917,7 @@
             if (
               dup &&
               !confirm(
-                `${clean} trùng nội dung với tệp đã lưu. Chọn OK để giữ thêm một bản.`,
+                `${clean} trùng nội dung với tệp đã lưu. Chọn Đồng ý để giữ thêm một bản.`,
               )
             )
               continue;
@@ -6813,184 +7190,6 @@
             renderDocuments();
           };
         }
-        function formatBytes(n) {
-          if (!n) return "0 B";
-          const units = ["B", "KB", "MB", "GB"],
-            i = Math.min(3, Math.floor(Math.log(n) / Math.log(1024)));
-          return `${(n / 1024 ** i).toLocaleString("vi-VN", { maximumFractionDigits: 1 })} ${units[i]}`;
-        }
-        function fileIcon(ext = "") {
-          return /^(png|jpg|jpeg|webp)$/.test(ext)
-            ? "▣"
-            : ext === "pdf"
-              ? "▤"
-              : /^(doc|docx)$/.test(ext)
-                ? "W"
-                : /^(xls|xlsx|csv)$/.test(ext)
-                  ? "X"
-                  : /^(ppt|pptx)$/.test(ext)
-                    ? "P"
-                    : ext === "zip"
-                      ? "▥"
-                      : "▧";
-        }
-
-        const CONFIG_DEFINITIONS = [
-          [
-            "plan_type",
-            "Loại kế hoạch",
-            ["Năm học", "Học kỳ", "Tháng", "Tuần", "Chuyên đề"],
-          ],
-          [
-            "plan_level",
-            "Cấp kế hoạch",
-            ["Toàn trường", "Liên đội", "Chi đội", "Cơ sở"],
-          ],
-          [
-            "plan_status",
-            "Trạng thái kế hoạch",
-            ["Dự thảo", "Đang thực hiện", "Đã kết thúc"],
-          ],
-          [
-            "activity_type",
-            "Loại hoạt động",
-            [
-              "Giáo dục truyền thống – đạo đức",
-              "Học tập – sáng tạo",
-              "Kỹ năng sống – an toàn",
-              "Văn nghệ – thể thao",
-              "Môi trường",
-              "Tình nguyện – nhân đạo",
-              "Rèn luyện đội viên",
-              "Xây dựng tổ chức Đội",
-              "Hoạt động theo chủ điểm",
-              "Hoạt động phối hợp",
-            ],
-          ],
-          [
-            "task_group",
-            "Nhóm công việc",
-            ["Tuần", "Tháng", "Học kỳ", "Năm học", "Đột xuất"],
-          ],
-          [
-            "task_status",
-            "Trạng thái công việc",
-            [
-              "Chưa làm",
-              "Đang làm",
-              "Chờ phối hợp",
-              "Chờ duyệt",
-              "Hoàn thành",
-              "Tạm dừng",
-            ],
-          ],
-          ["priority", "Mức ưu tiên", ["Thấp", "Bình thường", "Cao", "Khẩn"]],
-          [
-            "calendar_type",
-            "Loại sự kiện lịch",
-            ["Hoạt động Đội", "Họp", "Tập huấn", "Hạn hồ sơ", "Thi đua"],
-          ],
-          [
-            "document_type",
-            "Loại hồ sơ",
-            [
-              "Kế hoạch",
-              "Hoạt động",
-              "Thi đua",
-              "Tổ chức Đội",
-              "Rèn luyện",
-              "Khen thưởng",
-              "Báo cáo",
-              "Thiết bị",
-            ],
-          ],
-          [
-            "document_status",
-            "Trạng thái hồ sơ",
-            ["Bản nháp", "Đã xác nhận", "Lưu trữ"],
-          ],
-          [
-            "team_group",
-            "Nhóm tổ chức/đội/ban",
-            [
-              "Ban Chỉ huy Liên đội",
-              "Ban Chỉ huy Chi đội",
-              "Đội nghi lễ",
-              "Phát thanh măng non",
-              "Đội tự quản",
-              "Câu lạc bộ",
-            ],
-          ],
-          [
-            "team_position",
-            "Chức vụ",
-            [
-              "Liên đội trưởng",
-              "Liên đội phó",
-              "Chi đội trưởng",
-              "Chi đội phó",
-              "Ủy viên",
-            ],
-          ],
-          [
-            "program_type",
-            "Loại chương trình rèn luyện",
-            [
-              "Rèn luyện đội viên",
-              "Chuyên hiệu",
-              "Công trình măng non",
-              "Việc tốt",
-            ],
-          ],
-          [
-            "specialty",
-            "Chuyên hiệu",
-            [
-              "An toàn giao thông",
-              "Chăm học",
-              "Nghệ sĩ nhỏ tuổi",
-              "Nhà sinh học nhỏ tuổi",
-            ],
-          ],
-          [
-            "award_type",
-            "Loại khen thưởng",
-            ["Giấy khen", "Tuyên dương", "Chứng nhận", "Phần thưởng"],
-          ],
-          [
-            "award_level",
-            "Cấp khen thưởng",
-            ["Chi đội", "Liên đội", "Nhà trường", "Cấp trên"],
-          ],
-          [
-            "equipment_group",
-            "Nhóm thiết bị",
-            ["Nghi lễ", "Âm thanh", "Trang trí", "Thể thao", "Văn phòng"],
-          ],
-          [
-            "equipment_condition",
-            "Tình trạng thiết bị",
-            ["Tốt", "Cần sửa", "Hỏng", "Đang mượn"],
-          ],
-          ["unit", "Đơn vị tính", ["Cái", "Bộ", "Chiếc", "Hộp", "Cuộn"]],
-          [
-            "report_type",
-            "Loại báo cáo",
-            [
-              "Công tác tuần",
-              "Thi đua tuần",
-              "Công việc",
-              "Hoạt động",
-              "Thiết bị",
-              "Hồ sơ",
-            ],
-          ],
-          [
-            "report_template",
-            "Mẫu báo cáo",
-            ["Mẫu ngắn", "Mẫu đầy đủ", "Bảng tổng hợp"],
-          ],
-        ];
         async function migrateEnhancedData() {
           if (await setting("migration_9_completed")) return;
           const operation = await startOperation("schema_migration", {
@@ -7108,7 +7307,7 @@
                 to_schema: APP.schema,
                 status: "success",
                 normalized_records: normalizedCount,
-                summary: `Chuẩn hóa ${normalizedCount} bản ghi với hồ sơ trường, năm học, revision và nguồn; giữ nguyên ID.`,
+                summary: `Chuẩn hóa ${normalizedCount} bản ghi với hồ sơ trường, năm học, phiên bản sửa đổi và nguồn; giữ nguyên ID.`,
               },
               { audit: false },
             );
@@ -7173,25 +7372,6 @@
           } catch (_) {}
         }
 
-        const stableJSON = (value) => {
-          if (Array.isArray(value))
-            return `[${value.map(stableJSON).join(",")}]`;
-          if (value && typeof value === "object" && !(value instanceof Blob))
-            return `{${Object.keys(value)
-              .sort()
-              .map((key) => `${JSON.stringify(key)}:${stableJSON(value[key])}`)
-              .join(",")}}`;
-          return JSON.stringify(value);
-        };
-        async function sha256Text(text) {
-          const hash = await crypto.subtle.digest(
-            "SHA-256",
-            new TextEncoder().encode(text),
-          );
-          return [...new Uint8Array(hash)]
-            .map((x) => x.toString(16).padStart(2, "0"))
-            .join("");
-        }
         async function snapshotPayload(yearId = null) {
           const data = {},
             counts = {};
@@ -7327,24 +7507,6 @@
             console.warn("Scheduled directory backup skipped:", error);
           }
         }
-        function normalizeText(value) {
-          return String(value || "")
-            .normalize("NFD")
-            .replace(/[\u0300-\u036f]/g, "")
-            .replace(/đ/g, "d")
-            .replace(/Đ/g, "D")
-            .toLowerCase();
-        }
-        function defaultConfigColor(index) {
-          return [
-            "#0b6bcb",
-            "#16845b",
-            "#b77900",
-            "#7c3aed",
-            "#c93c3c",
-            "#0f766e",
-          ][index % 6];
-        }
         async function configItems(key, includeInactive = false) {
           return (await db.all("config_items"))
             .filter(
@@ -7443,75 +7605,5 @@
             files,
           };
         }
-        async function sha256Blob(blob) {
-          if (typeof Worker !== "undefined" && blob.size > 2 * 1024 * 1024) {
-            const workerSource = `self.onmessage=async(event)=>{try{const hash=await crypto.subtle.digest("SHA-256",await event.data.arrayBuffer());const text=[...new Uint8Array(hash)].map(x=>x.toString(16).padStart(2,"0")).join("");self.postMessage({text})}catch(error){self.postMessage({error:error.message})}}`,
-              workerUrl = URL.createObjectURL(
-                new Blob([workerSource], { type: "text/javascript" }),
-              );
-            try {
-              return await new Promise((resolve, reject) => {
-                const worker = new Worker(workerUrl);
-                worker.onmessage = (event) => {
-                  worker.terminate();
-                  if (event.data?.error)
-                    reject(new Error(event.data.error));
-                  else resolve(event.data.text);
-                };
-                worker.onerror = (event) => {
-                  worker.terminate();
-                  reject(new Error(event.message || "Không thể băm tệp."));
-                };
-                worker.postMessage(blob);
-              });
-            } finally {
-              URL.revokeObjectURL(workerUrl);
-            }
-          }
-          const hash = await crypto.subtle.digest(
-            "SHA-256",
-            await blob.arrayBuffer(),
-          );
-          return [...new Uint8Array(hash)]
-            .map((x) => x.toString(16).padStart(2, "0"))
-            .join("");
-        }
-        async function blobToBase64(
-          blob,
-          signal = null,
-          onProgress = () => {},
-        ) {
-          const chunkSize = 3 * 1024 * 1024,
-            chunks = [];
-          for (let offset = 0; offset < blob.size; offset += chunkSize) {
-            if (signal?.aborted) throw new DOMException("Đã hủy", "AbortError");
-            const bytes = new Uint8Array(
-                await blob.slice(offset, offset + chunkSize).arrayBuffer(),
-              ),
-              batchSize = 32768;
-            let binary = "";
-            for (let i = 0; i < bytes.length; i += batchSize)
-              binary += String.fromCharCode(
-                ...bytes.subarray(i, i + batchSize),
-              );
-            chunks.push(btoa(binary));
-            onProgress(Math.min(1, (offset + bytes.length) / blob.size));
-            await new Promise((resolve) => setTimeout(resolve, 0));
-          }
-          return chunks.join("");
-        }
-        function base64ToBlob(data, type) {
-          const parts = [],
-            slice = 32768;
-          for (let i = 0; i < data.length; i += slice) {
-            const binary = atob(data.slice(i, i + slice)),
-              bytes = new Uint8Array(binary.length);
-            for (let j = 0; j < binary.length; j++)
-              bytes[j] = binary.charCodeAt(j);
-            parts.push(bytes);
-          }
-          return new Blob(parts, { type: type || "application/octet-stream" });
-        }
-
         boot();
       })();

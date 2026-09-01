@@ -648,6 +648,97 @@
         background: #eef1f4;
         color: #6f7b87;
       }
+      .incident-score-button {
+        width: 126px;
+        min-height: 36px;
+        border: 1px solid #9fc3e6;
+        border-radius: 6px;
+        background: var(--blue-soft);
+        color: var(--blue);
+        font-size: 11px;
+        font-weight: 750;
+        line-height: 1.25;
+        padding: 5px 7px;
+      }
+      .incident-score-button.missing {
+        border-color: #e8c76c;
+        background: #fff5d8;
+        color: #7c5a00;
+      }
+      .incident-score-button:disabled {
+        border-color: var(--line);
+        background: #eef1f4;
+        color: #6f7b87;
+      }
+      .incident-list {
+        display: grid;
+        gap: 8px;
+      }
+      .incident-row {
+        display: grid;
+        grid-template-columns: minmax(150px, 1fr) minmax(210px, 1.5fr) 72px auto;
+        gap: 8px;
+        align-items: end;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 9px;
+        background: #f8fbfe;
+      }
+      .incident-points {
+        min-height: 38px;
+        display: grid;
+        place-items: center;
+        border-radius: 6px;
+        background: #edf2f7;
+        font-weight: 850;
+      }
+      .incident-summary {
+        justify-content: space-between;
+        margin-top: 10px;
+      }
+      .positive {
+        color: #08753f;
+      }
+      .negative {
+        color: #b42318;
+      }
+      .ruleset-categories,
+      .ruleset-category {
+        display: grid;
+        gap: 10px;
+      }
+      .ruleset-category {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px;
+      }
+      .ruleset-category-head {
+        display: flex;
+        justify-content: space-between;
+        align-items: start;
+        gap: 12px;
+      }
+      .class-group-picker {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+        gap: 7px;
+        max-height: 320px;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 8px;
+        background: #f8fbfe;
+      }
+      .class-group-picker .check-row {
+        margin: 0;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: #fff;
+        padding: 8px;
+      }
+      .class-group-picker .check-row.disabled {
+        opacity: 0.58;
+      }
       .score-total {
         font-weight: 800;
         color: var(--blue);
@@ -1436,6 +1527,12 @@
         }
         .form-grid {
           grid-template-columns: 1fr;
+        }
+        .incident-row {
+          grid-template-columns: 1fr;
+        }
+        .ruleset-category-head {
+          flex-direction: column;
         }
         .field.full {
           grid-column: auto;

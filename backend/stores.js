@@ -7,6 +7,7 @@ export const STORES = [
   "school_weeks",
   "grades",
   "classes",
+  "class_groups",
   "homeroom_teachers",
   "plans",
   "plan_targets",
