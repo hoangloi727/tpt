@@ -1104,7 +1104,7 @@
         }
         function setContent(html) {
           $("#content").innerHTML =
-            `<section class="page active">${tabCoordinator.readOnly ? '<div class="readonly-banner" role="status"><strong>Chế độ chỉ đọc:</strong> một thẻ khác đang có quyền ghi dữ liệu. Có thể xem và xuất sao lưu; hãy đóng thẻ ghi rồi tải lại để chỉnh sửa.</div>' : ""}${html}</section><footer class="app-footer">Phát triển bởi: Thầy Trường - Zalo: 0329203951</footer>`;
+            `<section class="page active">${tabCoordinator.readOnly ? '<div class="readonly-banner" role="status"><strong>Chế độ chỉ đọc:</strong> một thẻ khác đang có quyền ghi dữ liệu. Có thể xem và xuất sao lưu; hãy đóng thẻ ghi rồi tải lại để chỉnh sửa.</div>' : ""}${html}</section>`;
         }
         function toast(msg, type = "ok") {
           const t = document.createElement("div");
@@ -1568,6 +1568,43 @@
             toast("Đã lưu bản ghi");
             renderEntity(key);
           };
+        }
+        function confirmDialog(message, title = "Xác nhận") {
+          return new Promise((resolve) => {
+            openModal(
+              title,
+              `<p>${esc(message)}</p>`,
+              `<button class="btn" id="cancelConfirm">Hủy</button><button class="btn danger" id="doConfirm">Đồng ý</button>`,
+            );
+            $("#cancelConfirm").onclick = () => {
+              closeModal();
+              resolve(false);
+            };
+            $("#doConfirm").onclick = () => {
+              closeModal();
+              resolve(true);
+            };
+          });
+        }
+        function promptDialog(message, title = "Nhập liệu", initialValue = "") {
+          return new Promise((resolve) => {
+            openModal(
+              title,
+              `<p>${esc(message)}</p><input id="promptInput" type="text" class="input" style="width:100%;margin-top:.5rem" value="${esc(initialValue)}">`,
+              `<button class="btn" id="cancelPrompt">Hủy</button><button class="btn primary" id="doPrompt">OK</button>`,
+            );
+            $("#promptInput").focus();
+            $("#promptInput").select();
+            $("#cancelPrompt").onclick = () => {
+              closeModal();
+              resolve(null);
+            };
+            $("#doPrompt").onclick = () => {
+              const val = $("#promptInput").value.trim();
+              closeModal();
+              resolve(val);
+            };
+          });
         }
         async function confirmDelete(store, id, after) {
           const row = await db.get(store, id);
@@ -4726,7 +4763,7 @@
           try {
             let obj = JSON.parse(await file.text());
             if (obj.format === "TPT-ENCRYPTED-1") {
-              const password = prompt("Nhập mật khẩu tệp sao lưu:");
+              const password = await promptDialog("Nhập mật khẩu tệp sao lưu:");
               if (password === null) return;
               obj = JSON.parse(await decryptText(obj, password));
             }
@@ -4972,7 +5009,7 @@
           $("#addUser").onclick = () => openUserForm();
           if ($("#addSchool"))
             $("#addSchool").onclick = async () => {
-              const name = prompt("Tên trường mới:")?.trim();
+              const name = await promptDialog("Tên trường mới:");
               if (!name) return;
               try {
                 const school = await db.createSchool(name);
@@ -4992,7 +5029,8 @@
             (button) =>
               (button.onclick = async () => {
                 const user = users.find((item) => item.id === button.dataset.deleteUser);
-                if (!confirm(`Xóa tài khoản ${user?.username}?`)) return;
+                const confirmed = await confirmDialog(`Xóa tài khoản ${user?.username}?`);
+                if (!confirmed) return;
                 await db.deleteUser(button.dataset.deleteUser);
                 toast("Đã xóa tài khoản");
                 renderUserManagement();
@@ -5746,7 +5784,8 @@
                 const group = sortedGroups.find(
                   (item) => item.id === button.dataset.deleteClassGroup,
                 );
-                if (!confirm(`Xóa nhóm lớp “${group?.name || ""}”?`)) return;
+                const confirmed = await confirmDialog(`Xóa nhóm lớp “${group?.name || ""}”?`);
+                if (!confirmed) return;
                 try {
                   await db.remove("class_groups", group.id);
                   toast("Đã xóa nhóm lớp");
@@ -5811,15 +5850,15 @@
             }
           };
         }
-        async function removeClass(id) {
-          const schoolClass = await db.get("classes", id);
-          if (
-            !schoolClass ||
-            !confirm(
-              `Xóa lớp “${schoolClass.class_name}” khỏi trường? Thao tác này chỉ được phép khi lớp chưa có dữ liệu lịch sử.`,
-            )
-          )
-            return;
+async function removeClass(id) {
+           const schoolClass = await db.get("classes", id);
+           if (
+             !schoolClass ||
+             !(await confirmDialog(
+               `Xóa lớp “${schoolClass.class_name}” khỏi trường? Thao tác này chỉ được phép khi lớp chưa có dữ liệu lịch sử.`,
+             ))
+           )
+             return;
           try {
             await db.remove("classes", id);
             toast("Đã xóa lớp khỏi trường");
@@ -6179,12 +6218,11 @@
           $$("[data-doc-purge]").forEach(
             (b) =>
               (b.onclick = async () => {
-                if (
-                  !confirm(
+                const confirmed = await confirmDialog(
                     "Xóa vĩnh viễn tài liệu và các tệp liên quan khỏi máy chủ?",
-                  )
-                )
-                  return;
+                    "Xác nhận xóa vĩnh viễn",
+                  );
+                if (!confirmed) return;
                 const id = b.dataset.docPurge,
                   related = (
                     await db.allIncludingDeleted("attachments")
@@ -6239,9 +6277,10 @@
               );
             if (
               dup &&
-              !confirm(
+              !(await confirmDialog(
                 `${clean} trùng nội dung với tệp đã lưu. Chọn Đồng ý để giữ thêm một bản.`,
-              )
+                "Phát hiện tệp trùng",
+              ))
             )
               continue;
             const ext = clean.split(".").pop().toLowerCase(),

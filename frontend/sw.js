@@ -1,4 +1,4 @@
-const CACHE = "tpt-shell-v22";
+const CACHE = "tpt-shell-v23";
 const SHELL = [
   "./",
   "./index.html",
