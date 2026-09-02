@@ -72,9 +72,8 @@ Tài liệu này mô tả phiên bản website hiện có. Phần tiếng Việt
 
 ---
 ## Tiếng Việt
+
 <a id="vi-01"></a>
-
-
 ## 1. Giới thiệu và phạm vi
 
 Website hỗ trợ quản lý công tác Đội, công việc, thi đua lớp, hồ sơ và báo cáo cho một hoặc nhiều trường. Mỗi phiên đăng nhập gắn với một trường đang chọn; các bộ chọn năm học, học kỳ, tuần và cơ sở tiếp tục thu hẹp dữ liệu hiển thị.
@@ -602,7 +601,7 @@ Giới hạn tệp tài liệu mặc định là 25 MB/tệp và có thể đổ
 10. Giữ năm cũ chỉ đọc; chỉ mở sửa có lý do và đóng quyền ngay sau hiệu chỉnh.
 
 ---
-### English
+## English
 
 <a id="en-01"></a>
 ## 1. Introduction and scope
