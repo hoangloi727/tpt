@@ -71,8 +71,10 @@ Tài liệu này mô tả phiên bản website hiện có. Phần tiếng Việt
 30. [Daily, weekly, and year-end operating checklists](#en-30)
 
 ---
-
+### Tiếng Việt
 <a id="vi-01"></a>
+
+
 ## 1. Giới thiệu và phạm vi
 
 Website hỗ trợ quản lý công tác Đội, công việc, thi đua lớp, hồ sơ và báo cáo cho một hoặc nhiều trường. Mỗi phiên đăng nhập gắn với một trường đang chọn; các bộ chọn năm học, học kỳ, tuần và cơ sở tiếp tục thu hẹp dữ liệu hiển thị.
@@ -600,9 +602,10 @@ Giới hạn tệp tài liệu mặc định là 25 MB/tệp và có thể đổ
 10. Giữ năm cũ chỉ đọc; chỉ mở sửa có lý do và đóng quyền ngay sau hiệu chỉnh.
 
 ---
+### English
 
 <a id="en-01"></a>
-## 31. Introduction and scope
+## 1. Introduction and scope
 
 The website manages youth-team work, tasks, class competition, documents, and reports for one or more schools. Each login session is tied to a selected school; the academic year, semester, week, and campus selectors further narrow the displayed data.
 
@@ -612,10 +615,10 @@ Important principles:
 2. The server stores business data and accounts in `data/database.sqlite` by default.
 3. The API checks permissions, revisions, school scope, and business locks. Hiding a UI page is not a substitute for server authorization.
 4. The PWA caches only the application shell. There is no remote synchronization provider.
-5. Backup files, backup directories, restore points, and finalized reports serve different purposes; see [section 53](#en-23).
+5. Backup files, backup directories, restore points, and finalized reports serve different purposes; see [section 23](#en-23).
 
 <a id="en-02"></a>
-## 32. Requirements and startup
+## 2. Requirements and startup
 
 Node.js 20 or newer is required.
 
@@ -629,7 +632,7 @@ Do not open `frontend/index.html` directly. Doing so bypasses the authenticated 
 The server listens on `127.0.0.1:3000` by default. A deployment administrator can override this with `HOST` and `PORT`, and can move SQLite with `SQLITE_FILE`. `DATA_FILE` and `AUTH_FILE` are legacy JSON import sources used only when initializing an empty SQLite database.
 
 <a id="en-03"></a>
-## 33. First run and the root account
+## 3. First run and the root account
 
 When SQLite contains no existing or imported account, the first screen requires root setup.
 
@@ -644,7 +647,7 @@ Root is the protected global `superadmin` account. There is no default or source
 Onboarding actually applies the school name/code/address and campus names. Its academic-year/date choices and keep-criteria option are not fully applied; verify and configure them under **Settings > Campus - academic year - semester - week** and **Competition configuration**.
 
 <a id="en-04"></a>
-## 34. Login, session lock, and logout
+## 4. Login, session lock, and logout
 
 1. Select a school on the login screen.
 2. Enter the username and password.
@@ -663,7 +666,7 @@ Automatic lock occurs after 5, 10, 15, or 30 inactive minutes as configured unde
 Changing a password ends all sessions for that account and requires a new login.
 
 <a id="en-05"></a>
-## 35. Roles and permissions
+## 5. Roles and permissions
 
 | Role | Implemented scope |
 | --- | --- |
@@ -679,7 +682,7 @@ Changing a password ends all sessions for that account and requires a new login.
 A page permission alone does not guarantee API read/write permission. Data import/export uses `data:import` and `data:export`. `Admin` and `Superadmin` have full role-based access. **My account** is always available after login. An assigned `User` can open **Class competition** and score only assigned classes; `Admin`/`Superadmin` manage all classes.
 
 <a id="en-06"></a>
-## 36. Data scope and navigation
+## 6. Data scope and navigation
 
 The sidebar contains 19 pages for Admin/Superadmin; a User sees only granted pages. Use the menu icon to collapse or expand it. On small screens, the context button opens the scope selectors.
 
@@ -698,7 +701,7 @@ The current page is stored in the URL hash, so browser Back/Forward can change p
 Data carrying `school_year_id`, `semester_id`, or `campus_id` is filtered by that scope. A record with `campus_id: all` appears for every campus. Always check the selectors before assuming data is missing.
 
 <a id="en-07"></a>
-## 37. Search, quick add, and shortcuts
+## 7. Search, quick add, and shortcuts
 
 **Global search** begins at two characters. It returns up to five results from each of tasks, classes, activities, plans, and documents in the current scope. A result opens the relevant page, not the record form directly.
 
@@ -714,7 +717,7 @@ Data carrying `school_year_id`, `semester_id`, or `campus_id` is filtered by tha
 Other keys: `Escape` closes a dialog; `Tab` and `Shift+Tab` remain trapped inside an open dialog; in the score grid, `Enter` moves down the same column and `Shift+Enter` moves up.
 
 <a id="en-08"></a>
-## 38. Shared CRUD, drafts, revisions, and read-only behavior
+## 8. Shared CRUD, drafts, revisions, and read-only behavior
 
 Plans, Activities, Organization, Programs, Commendations, and Equipment use a shared CRUD workflow:
 
@@ -730,7 +733,7 @@ The API owns metadata, operation/audit journals, and revisions. If a record chan
 Only one browser tab receives write access. A second tab is read-only and displays a banner; it can view data and export a backup but cannot write. Close the writer tab and reload the read-only tab to acquire write access. An archived academic year is also read-only unless an administrator enables a reasoned edit override for the current session/tab.
 
 <a id="en-09"></a>
-## 39. Dashboard
+## 9. Dashboard
 
 The **Dashboard** shows the current scope:
 
@@ -743,7 +746,7 @@ The **Dashboard** shows the current scope:
 Select a KPI to open the related page. `Admin`/`Superadmin` also see report, task, and backup actions. Dashboard rankings are internal-only when the sheet is not approved.
 
 <a id="en-10"></a>
-## 40. Today
+## 10. Today
 
 **Today** combines incomplete tasks due by today or starting today, today's calendar, a duty checklist, waiting-task count, and quick notes.
 
@@ -755,7 +758,7 @@ Select a KPI to open the related page. `Admin`/`Superadmin` also see report, tas
 The three duty-checklist boxes on this page are temporary UI controls and are not persisted as business records. For a persistent checklist, add checklist items to a task.
 
 <a id="en-11"></a>
-## 41. Plans
+## 11. Plans
 
 **Plans** manages year, semester, month, and week plans. Records include code, name, level, dates, objectives, measurable targets, basis, coordination, resources, risks, status, and progress.
 
@@ -768,7 +771,7 @@ The three duty-checklist boxes on this page are temporary UI controls and are no
 Available statuses are draft, active, and finished. The page does not automatically create tasks from a plan.
 
 <a id="en-12"></a>
-## 42. Tasks and checklist
+## 12. Tasks and checklist
 
 This page has list and Kanban views, search, status/priority filters, 100-task list pages, and a maximum of 50 visible cards per Kanban column.
 
@@ -785,7 +788,7 @@ A task cannot be completed while a mandatory checklist item remains unfinished. 
 Recurring tasks are generated when an `Admin`/`Superadmin` opens the application, not by a background scheduler. Template checklist items are copied as incomplete. The **Shared task templates** option in the new-year dialog is currently not processed and does not copy templates.
 
 <a id="en-13"></a>
-## 43. Calendar
+## 13. Calendar
 
 The calendar shows a Monday-to-Sunday month grid.
 
@@ -797,7 +800,7 @@ The calendar shows a Monday-to-Sunday month grid.
 If location, leader, or safety checklist is missing, the event is saved with a warning. Reminder hours are stored, but no background notification is currently scheduled from that field.
 
 <a id="en-14"></a>
-## 44. Scoring and independent group rankings
+## 14. Scoring and independent group rankings
 
 ### Preparation
 
@@ -831,7 +834,7 @@ Each class group has an independent ranking. Ungrouped classes compete only in *
 Limitation: criteria can be marked **Evidence required**, and anomaly checking can warn, but the score entry screen has no score-evidence upload action. Store files in **Documents and evidence** and manage links outside the score screen; do not treat a file as attached to a score cell.
 
 <a id="en-15"></a>
-## 45. Activities
+## 15. Activities
 
 This page manages activity name, category, theme, date, location, leader, participants/scale, objectives, safety/backup plans, result, and status.
 
@@ -842,7 +845,7 @@ This page manages activity name, category, theme, date, location, leader, partic
 Activities and Calendar events are separate stores; creating an activity does not automatically create a calendar event.
 
 <a id="en-16"></a>
-## 46. Organization
+## 16. Organization
 
 This page stores members of youth-team command boards, ceremonial teams, school radio, self-management teams, and clubs.
 
@@ -853,7 +856,7 @@ This page stores members of youth-team command boards, ceremonial teams, school 
 Unit/team categories can be managed under **Settings > Organization and programs**. Disabling a category does not rename historical data.
 
 <a id="en-17"></a>
-## 47. Programs
+## 17. Programs
 
 This page tracks programs, specialties, projects, and good deeds.
 
@@ -865,7 +868,7 @@ This page tracks programs, specialties, projects, and good deeds.
 The evidence field here is text/notes; it does not upload a file to Documents automatically.
 
 <a id="en-18"></a>
-## 48. Commendations
+## 18. Commendations
 
 This page stores collective or individual commendation records: award type, level, recipient, achievement, date, related item, approval status, decision, and notes.
 
@@ -876,7 +879,7 @@ This page stores collective or individual commendation records: award type, leve
 Award type/level categories are configured under **Settings > Commendations**. A status change does not generate a decision file automatically.
 
 <a id="en-19"></a>
-## 49. Documents and evidence
+## 19. Documents and evidence
 
 This is a server-backed document library containing metadata and file data through the API. It provides folders, grid/list views, search, pinning, module links, versions, and Trash.
 
@@ -894,7 +897,7 @@ Deleting moves the document and related files to Trash. **Restore** returns them
 The **File type** selector (PDF/Image/Office) has no active handler, so document type filtering is not currently functional. Name, number, tag, and description search works. **Protect storage** only requests the browser's persistence policy; primary file data remains on the server.
 
 <a id="en-20"></a>
-## 50. Equipment
+## 20. Equipment
 
 This page inventories name, code, group, quantity, unit, condition, location, inventory date, current activity, and damage/restocking notes.
 
@@ -906,7 +909,7 @@ This page inventories name, code, group, quantity, unit, condition, location, in
 The page stores inventory status; it does not implement a separate loan transaction ledger or automatically decrement quantity.
 
 <a id="en-21"></a>
-## 51. Reports
+## 21. Reports
 
 Preview types are weekly work, class competition, task progress, activities, and equipment.
 
@@ -921,7 +924,7 @@ Preview types are weekly work, class competition, task progress, activities, and
 Official rankings appear only when the weekly sheet is approved or locked. **Export CSV** produces ranking-specific data only for the score report; every non-score report currently exports the task table rather than its corresponding preview. For activity, equipment, or weekly output, use Print/Save PDF or the source page's CSV.
 
 <a id="en-22"></a>
-## 52. Assistant
+## 22. Assistant
 
 The assistant is a local rules-based query layer over saved data, not a remote AI service. It does not modify or invent data.
 
@@ -933,7 +936,7 @@ The assistant is a local rules-based query layer over saved data, not a remote A
 Queries outside recognized keywords may return an unrecognized-question response. “Create weekly report draft” only displays a summary and report link; it does not save a report record automatically.
 
 <a id="en-23"></a>
-## 53. Backup and restore
+## 23. Backup and restore
 
 ### Protection types
 
@@ -966,7 +969,7 @@ Restore a file:
 Restoring an internal snapshot preserves current attachments because the snapshot has no blobs. Directory backup requires a browser with `showDirectoryPicker`; the directory handle/permission cannot be persisted through the API because `FileSystemHandle` is stripped during serialization. It may need to be selected/authorized again after reload or on another browser/device. Scheduled directory backup and periodic snapshots are checked only while the app is open and an administrator has entered the application; they do not run reliably in the background after the PWA closes.
 
 <a id="en-24"></a>
-## 54. My account
+## 24. My account
 
 Every role can access this page.
 
@@ -977,7 +980,7 @@ Every role can access this page.
 5. Select **Logout** to end the current session.
 
 <a id="en-25"></a>
-## 55. User management
+## 25. User management
 
 This page is for `Admin` and `Superadmin`.
 
@@ -990,7 +993,7 @@ This page is for `Admin` and `Superadmin`.
 Root cannot change role or be deleted; the UI only permits name/password changes. An `Admin` cannot manage a `Superadmin`. Password changes or account disabling revoke sessions; changing a user away from `User` or disabling them also clears score assignments.
 
 <a id="en-26"></a>
-## 56. Settings
+## 26. Settings
 
 The **Configuration center** has 14 tabs:
 
@@ -1012,7 +1015,7 @@ The **Configuration center** has 14 tabs:
 Configuration categories support search, add, edit, clone, reorder, disable/enable, and restore defaults. Disabled items disappear from new forms while historical names remain. Configuration can be exported/imported as JSON; back up before importing.
 
 <a id="en-27"></a>
-## 57. Academic-year lifecycle
+## 27. Academic-year lifecycle
 
 Create a new academic year:
 
@@ -1035,7 +1038,7 @@ Close an academic year:
 To correct an archived year, select **Enable reasoned editing** and enter at least 10 characters. The override exists only in the current tab/session and is journaled; disable it after correction.
 
 <a id="en-28"></a>
-## 58. PWA and offline use
+## 28. PWA and offline use
 
 The service worker caches the shell: HTML, CSS, JavaScript, logo, and manifest. For non-`/api/` resources it tries the network first, then cache on network failure. `/api/` requests are never cached.
 
@@ -1046,7 +1049,7 @@ The service worker caches the shell: HTML, CSS, JavaScript, logo, and manifest. 
 Offline support is **shell-only offline**: the shell may open from cache, but login, CRUD reads/writes, files, and most content require the API/server. The Offline indicator says reconnection is needed to read/write. The manifest currently has no `icons` declaration, so installation may use a generic icon or may not be promoted by some platforms. There is no remote data synchronization.
 
 <a id="en-29"></a>
-## 59. Supported files, known limitations, and troubleshooting
+## 29. Supported files, known limitations, and troubleshooting
 
 ### Supported files
 
@@ -1091,7 +1094,7 @@ The default document limit is 25 MB per file and can be configured from 1 to 250
 10. **Ranking empty:** select the correct week/set, initialize the sheet, and enter data; official rankings require approved/locked status.
 
 <a id="en-30"></a>
-## 60. Daily, weekly, and year-end operating checklists
+## 30. Daily, weekly, and year-end operating checklists
 
 ### Daily
 
