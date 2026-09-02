@@ -11,9 +11,13 @@
 - Quản lý năm học, tuần học, cơ sở, khối, lớp, nhóm lớp, kế hoạch, công việc, hoạt động, hồ sơ Đội, tài liệu, thiết bị và báo cáo.
 - Bộ quy tắc thi đua động theo phiên bản, gồm danh mục và hạng mục con cộng/trừ điểm. Có thể ghi nhận sự việc theo từng ngày từ thứ Hai đến thứ Sáu kèm minh chứng.
 - Điểm tuần áp dụng điểm chuẩn một lần rồi cộng các điều chỉnh hằng ngày (hoặc dùng công thức tổng theo cấu hình). Phiếu tuần là ranh giới duyệt và khóa dữ liệu.
-- Mỗi nhóm lớp có bảng xếp hạng độc lập; lớp chưa phân nhóm được xếp trong nhóm riêng “Chưa phân nhóm”.
+- Mỗi nhóm lớp có bảng xếp hạng độc lập; lớp chưa phân nhóm được xếp trong nhóm riêng "Chưa phân nhóm".
 - Xuất/nhập tệp cục bộ, điểm khôi phục nội bộ, sao lưu thư mục theo lịch và gói báo cáo; không có nhà cung cấp đồng bộ từ xa.
 - PWA lưu bộ nhớ đệm cho phần vỏ giao diện. Dữ liệu CRUD chính vẫn đi qua API có xác thực và được lưu trên máy chủ.
+
+### Hướng dẫn sử dụng
+
+- [`manual.md`](manual.md): hướng dẫn sử dụng website đầy đủ bằng tiếng Việt và tiếng Anh.
 
 ### Yêu cầu và khởi chạy
 
@@ -49,9 +53,6 @@ Tất cả đều tùy chọn:
 
 ### Cấu trúc dự án
 
-- [`manual.md`](manual.md): hướng dẫn sử dụng website đầy đủ bằng tiếng Việt và tiếng Anh.
-- [`api.md`](api.md): mô tả kỹ thuật và hướng dẫn tích hợp API nội bộ bằng tiếng Việt và tiếng Anh.
-
 - `backend/server.js`: khởi tạo cơ sở dữ liệu, API và máy chủ tệp tĩnh.
 - `backend/api.js`: tuyến API, phiên, cookie và phân quyền.
 - `backend/auth.js`: tài khoản, băm mật khẩu và quản lý phiên.
@@ -74,6 +75,10 @@ npm run check
 
 Lệnh này kiểm tra cú pháp các tệp JavaScript chính; dự án hiện chưa có bộ kiểm thử hành vi tự động.
 
+### Mô tả API
+
+- [`api.md`](api.md): mô tả kỹ thuật và hướng dẫn tích hợp API nội bộ bằng tiếng Việt và tiếng Anh.
+
 ## English
 
 A school youth-team administration and competition application with a PWA frontend and a Node.js server that provides an authenticated API, static assets, and SQLite persistence.
@@ -85,9 +90,13 @@ A school youth-team administration and competition application with a PWA fronte
 - Management of academic years, school weeks, campuses, grades, classes, class groups, plans, tasks, activities, team records, documents, equipment, and reports.
 - Versioned dynamic competition rulesets with scoring categories and subcategories. Incidents can be recorded for each Monday-through-Friday school day with supporting evidence.
 - Weekly scores apply the base score once and then add daily adjustments (or use the configured sum formula). The weekly sheet is the approval and locking boundary.
-- Each class group has an independent ranking; ungrouped classes compete in a separate “Ungrouped” group.
+- Each class group has an independent ranking; ungrouped classes compete in a separate "Ungrouped" group.
 - Local file export/import, internal restore points, scheduled directory backups, and report packages; there is no remote synchronization provider.
 - The PWA caches the application shell. Primary CRUD data still uses the authenticated API and server-side persistence.
+
+### Manual
+
+- [`manual.md`](manual.md): complete Vietnamese and English website user manual.
 
 ### Requirements and startup
 
@@ -123,9 +132,6 @@ All variables are optional:
 
 ### Project structure
 
-- [`manual.md`](manual.md): complete Vietnamese and English website user manual.
-- [`api.md`](api.md): technical specification and integration guide for the private API, in Vietnamese and English.
-
 - `backend/server.js`: initializes the database, API, and static-file server.
 - `backend/api.js`: API routes, sessions, cookies, and authorization.
 - `backend/auth.js`: accounts, password hashing, and session management.
@@ -147,3 +153,7 @@ npm run check
 ```
 
 This command syntax-checks the main JavaScript files; the project does not currently include an automated behavior test suite.
+
+### API documentation
+
+- [`api.md`](api.md): technical specification and integration guide for the private API, in Vietnamese and English.
