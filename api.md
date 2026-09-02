@@ -4,7 +4,7 @@
 
 ### 1. Phạm vi và mục đích
 
-Đây là hợp đồng client an toàn cho API nội bộ của ứng dụng. API phục vụ frontend được cung cấp từ cùng một nguồn (origin) bởi máy chủ ứng dụng; đây không phải là API công khai, không có cam kết tương thích cho tích hợp bên thứ ba và không hỗ trợ CORS. Không gọi trực tiếp API này từ một website có origin khác.
+Đây là tài liệu chi tiết cho API giao tiếp nội bộ của ứng dụng. API phục vụ frontend được cung cấp từ cùng một nguồn (origin) bởi máy chủ ứng dụng; đây không phải là API công khai, không có cam kết tương thích cho tích hợp bên thứ ba và không hỗ trợ CORS. Không gọi trực tiếp API này từ một website có origin khác.
 
 Tài liệu này chỉ dựa trên `backend/api.js`, `backend/auth.js`, `backend/repository.js`, `backend/stores.js` và `frontend/scripts/api-data-provider.js`. Đây không phải là đặc tả OpenAPI và không mô tả endpoint nào ngoài các route có trong những tệp đó.
 
@@ -37,7 +37,7 @@ Máy chủ chấp nhận hai cách truyền token phiên:
 1. Cookie `tpt_session`, là cơ chế tiêu chuẩn cho frontend cùng origin.
 2. Header `Authorization: Bearer <session-token>`.
 
-Nếu cả hai cùng có mặt, Bearer được ưu tiên. Các endpoint đăng nhập và khởi tạo chỉ trả về `{ "user": ... }` trong JSON và đặt token bằng cookie; không có endpoint nào trong hợp đồng này cấp token Bearer trong body. Vì vậy, client trình duyệt thông thường phải dùng cookie. Không đọc cookie bằng JavaScript và không tạo cơ chế trích xuất token riêng.
+Nếu cả hai cùng có mặt, Bearer được ưu tiên. Các endpoint đăng nhập và khởi tạo chỉ trả về `{ "user": ... }` trong JSON và đặt token bằng cookie; không có endpoint nào trong tài liệu này cấp token Bearer trong body. Vì vậy, client trình duyệt thông thường phải dùng cookie. Không đọc cookie bằng JavaScript và không tạo cơ chế trích xuất token riêng.
 
 Thuộc tính cookie:
 
@@ -715,7 +715,7 @@ Với Blob, ưu tiên `window.ApiDataProvider` vì `request()` của provider n�
 - Bearer token có quyền tương đương cookie phiên. Nếu một thành phần đáng tin cậy sử dụng Bearer, không đưa token vào URL, localStorage, log hoặc mã nguồn.
 - Import replace, hard delete và clear có thể hủy dữ liệu. Hãy hạn chế quyền, tạo backup trước và yêu cầu xác nhận trên UI.
 - Phiên trong bộ nhớ không được chia sẻ giữa các process và sẽ mất khi restart. Không triển khai nhiều instance như thể chúng dùng chung session nếu chưa có thay đổi kiến trúc rõ ràng.
-- `/api/auth/status` công khai danh sách tên/ID trường, còn `/api/health` yêu cầu xác thực. Không mở rộng thông tin công khai ngoài hợp đồng này.
+- `/api/auth/status` công khai danh sách tên/ID trường, còn `/api/health` yêu cầu xác thực. Không mở rộng thông tin công khai ngoài tài liệu này.
 - Không gửi các điều khiển nội bộ `audit`, `journal`, `allowArchivedYear`, `preserveMetadata`, `resolveConflict`; không dựa vào các trường metadata do client cung cấp để vượt qua quyền sở hữu của máy chủ.
 
 ---
@@ -724,7 +724,7 @@ Với Blob, ưu tiên `window.ApiDataProvider` vì `request()` của provider n�
 
 ### 1. Scope and purpose
 
-This is the safe client contract for the application's private API. The API serves the frontend delivered from the same origin by the application server; it is not a public API, carries no third-party integration compatibility commitment, and has no CORS support. Do not call it directly from a website on another origin.
+This is the detailed documentation for the application's private internal API. The API serves the frontend delivered from the same origin by the application server; it is not a public API, carries no third-party integration compatibility commitment, and has no CORS support. Do not call it directly from a website on another origin.
 
 This document is based only on `backend/api.js`, `backend/auth.js`, `backend/repository.js`, `backend/stores.js`, and `frontend/scripts/api-data-provider.js`. It is not an OpenAPI specification and does not describe endpoints beyond the routes in those files.
 
@@ -757,7 +757,7 @@ The server accepts a session token in either form:
 1. The `tpt_session` cookie, which is the standard same-origin frontend mechanism.
 2. An `Authorization: Bearer <session-token>` header.
 
-Bearer takes precedence when both are present. Login and setup return only `{ "user": ... }` in JSON and set the token as a cookie; no endpoint in this contract issues a Bearer token in its body. Normal browser clients must therefore use the cookie. Do not read the cookie from JavaScript or create a separate token-extraction mechanism.
+Bearer takes precedence when both are present. Login and setup return only `{ "user": ... }` in JSON and set the token as a cookie; no endpoint in this documentation issues a Bearer token in its body. Normal browser clients must therefore use the cookie. Do not read the cookie from JavaScript or create a separate token-extraction mechanism.
 
 Cookie attributes:
 
@@ -1435,5 +1435,5 @@ For Blobs, prefer `window.ApiDataProvider`: its `request()` decodes Blob envelop
 - A Bearer token has the same authority as the session cookie. If a trusted component uses Bearer, never put it in URLs, localStorage, logs, or source code.
 - Replace import, hard delete, and clear can destroy data. Restrict permissions, make a backup first, and require UI confirmation.
 - In-memory sessions are not shared between processes and disappear on restart. Do not deploy multiple instances as though they share sessions without an explicit architectural change.
-- `/api/auth/status` publicly lists school names/IDs, while `/api/health` is authenticated. Do not expand public information beyond this contract.
+- `/api/auth/status` publicly lists school names/IDs, while `/api/health` is authenticated. Do not expand public information beyond this documentation.
 - Do not send the internal controls `audit`, `journal`, `allowArchivedYear`, `preserveMetadata`, or `resolveConflict`; do not rely on client-supplied metadata to bypass server ownership.
