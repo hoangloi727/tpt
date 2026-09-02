@@ -154,7 +154,7 @@ Một quyền trang không tự động bảo đảm quyền đọc/ghi API. Quy
 
 Thanh bên chứa 19 trang đối với Admin/Superadmin; User chỉ thấy các trang được cấp quyền. Chọn biểu tượng menu để thu gọn/mở rộng thanh bên. Trên màn hình nhỏ, nút phạm vi mở hộp chọn ngữ cảnh.
 
-Trang **API nội bộ** chỉ hiển thị cho Admin và Superadmin. Trang này là tài liệu tham chiếu chỉ đọc, có bộ lọc endpoint và chuyển đổi tiếng Việt/English; trang không gửi thử request để tránh thao tác ghi hoặc xóa ngoài ý muốn. Tài liệu đầy đủ nằm trong `api.md` của mã nguồn.
+Trang **API nội bộ** chỉ hiển thị cho Admin và Superadmin. Trang này là tài liệu tham chiếu chỉ đọc, có bộ lọc endpoint và chuyển đổi tiếng Việt/English; trang không gửi thử request để tránh thao tác ghi hoặc xóa ngoài ý muốn. Tài liệu đầy đủ nằm trong [`api.md`](api.md) của mã nguồn.
 
 Thiết lập phạm vi trước khi nhập dữ liệu:
 
@@ -683,7 +683,7 @@ A page permission alone does not guarantee API read/write permission. Data impor
 
 The sidebar contains 19 pages for Admin/Superadmin; a User sees only granted pages. Use the menu icon to collapse or expand it. On small screens, the context button opens the scope selectors.
 
-The **Private API** page is visible only to Admin and Superadmin. It is a read-only reference with endpoint filters and a Vietnamese/English toggle; it intentionally has no request executor, preventing accidental writes or deletion. The complete reference is available in the source repository as `api.md`.
+The **Private API** page is visible only to Admin and Superadmin. It is a read-only reference with endpoint filters and a Vietnamese/English toggle; it intentionally has no request executor, preventing accidental writes or deletion. The complete reference is available in the source repository as [`api.md`](api.md).
 
 Set scope before entering data:
 

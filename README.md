@@ -49,8 +49,8 @@ Tất cả đều tùy chọn:
 
 ### Cấu trúc dự án
 
-- `manual.md`: hướng dẫn sử dụng website đầy đủ bằng tiếng Việt và tiếng Anh.
-- `api.md`: hợp đồng sử dụng API nội bộ an toàn bằng tiếng Việt và tiếng Anh.
+- [`manual.md`](manual.md): hướng dẫn sử dụng website đầy đủ bằng tiếng Việt và tiếng Anh.
+- [`api.md`](api.md): mô tả kỹ thuật và hướng dẫn tích hợp API nội bộ bằng tiếng Việt và tiếng Anh.
 
 - `backend/server.js`: khởi tạo cơ sở dữ liệu, API và máy chủ tệp tĩnh.
 - `backend/api.js`: tuyến API, phiên, cookie và phân quyền.
@@ -123,8 +123,8 @@ All variables are optional:
 
 ### Project structure
 
-- `manual.md`: complete Vietnamese and English website user manual.
-- `api.md`: safe private-API contract in Vietnamese and English.
+- [`manual.md`](manual.md): complete Vietnamese and English website user manual.
+- [`api.md`](api.md): technical specification and integration guide for the private API, in Vietnamese and English.
 
 - `backend/server.js`: initializes the database, API, and static-file server.
 - `backend/api.js`: API routes, sessions, cookies, and authorization.
