@@ -25,6 +25,27 @@ const MANAGER_WRITE_STORES = new Set([
   "criteria_groups",
   "criteria",
 ]);
+const NO_AUTOMATIC_AUDIT_STORES = new Set([
+  "audit_logs",
+  "operation_journal",
+  "internal_snapshots",
+  "form_drafts",
+  "restore_staging",
+  "backup_handles",
+  "backup_records",
+  "migration_logs",
+]);
+const NO_OPERATION_JOURNAL_STORES = new Set([
+  "operation_journal",
+  "form_drafts",
+]);
+const RESERVED_WRITE_OPTIONS = new Set([
+  "audit",
+  "journal",
+  "allowArchivedYear",
+  "preserveMetadata",
+  "resolveConflict",
+]);
 
 const sendJson = (response, status, value, headers = {}) => {
   response.writeHead(status, {
@@ -128,6 +149,46 @@ const canWriteStore = (user, store) =>
   hasPermission(user, `store:${store}:write`);
 
 const isManager = (user) => ["superadmin", "admin"].includes(user.role);
+
+const assertSafeWriteBody = (body) => {
+  if (
+    body?.options &&
+    Object.keys(body.options).some((key) => RESERVED_WRITE_OPTIONS.has(key))
+  ) {
+    const error = new Error(
+      "Tùy chọn ghi dành riêng cho quy trình nội bộ và không được phép trong yêu cầu này.",
+    );
+    error.status = 400;
+    throw error;
+  }
+};
+
+const archivedWriteOptions = (body, user, store) => {
+  const reason = String(body?.archivedYearReason || "").trim();
+  if (!reason)
+    return {
+      schoolId: user.selectedSchoolId,
+      audit: !NO_AUTOMATIC_AUDIT_STORES.has(store),
+      journal: !NO_OPERATION_JOURNAL_STORES.has(store),
+    };
+  if (!isManager(user)) {
+    const error = new Error("Chỉ Admin hoặc Superadmin được hiệu chỉnh năm học đã đóng.");
+    error.status = 403;
+    throw error;
+  }
+  if (reason.length < 10) {
+    const error = new Error("Lý do hiệu chỉnh năm học đã đóng cần ít nhất 10 ký tự.");
+    error.status = 400;
+    throw error;
+  }
+  return {
+    schoolId: user.selectedSchoolId,
+    audit: !NO_AUTOMATIC_AUDIT_STORES.has(store),
+    journal: !NO_OPERATION_JOURNAL_STORES.has(store),
+    allowArchivedYear: true,
+    reason,
+  };
+};
 
 const graderAssignments = (repository, user) =>
   repository
@@ -386,13 +447,37 @@ export const createApiHandler = ({ repository, sessions, users }) =>
       if (request.method === "POST" && url.pathname === "/api/import/replace") {
         if (!hasPermission(user, "data:import")) return forbidden(response);
         const body = await readJson(request);
+        assertSafeWriteBody(body);
         return sendJson(
           response,
           200,
           await repository.replaceAll(body.payload, {
-            ...body.options,
             schoolId: user.selectedSchoolId,
           }),
+        );
+      }
+      if (request.method === "POST" && url.pathname === "/api/import/merge") {
+        if (!hasPermission(user, "data:import")) return forbidden(response);
+        const body = await readJson(request);
+        assertSafeWriteBody(body);
+        return sendJson(
+          response,
+          200,
+          await repository.mergeAll(body.payload, {
+            schoolId: user.selectedSchoolId,
+          }),
+        );
+      }
+      if (
+        request.method === "POST" &&
+        url.pathname === "/api/migrations/enhanced-data"
+      ) {
+        if (!isManager(user)) return forbidden(response);
+        await readJson(request);
+        return sendJson(
+          response,
+          200,
+          { normalized: await repository.normalizeEnhancedData(user.selectedSchoolId) },
         );
       }
 
@@ -465,6 +550,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
       }
       if (request.method === "POST" && id === "bulk") {
         const body = await readJson(request);
+        assertSafeWriteBody(body);
         if (
           store === "score_grader_assignments" &&
           (body.rows || []).some((row) => {
@@ -491,14 +577,16 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         return sendJson(
           response,
           200,
-          await repository.bulkPut(store, body.rows || [], {
-            ...body.options,
-            schoolId: user.selectedSchoolId,
-          }),
+          await repository.bulkPut(
+            store,
+            body.rows || [],
+            archivedWriteOptions(body, user, store),
+          ),
         );
       }
       if (request.method === "POST" && !id) {
         const body = await readJson(request);
+        assertSafeWriteBody(body);
         if (store === "score_grader_assignments") {
           const target = users.get(body.row?.user_id);
           if (
@@ -519,13 +607,16 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         return sendJson(
           response,
           200,
-          await repository.put(store, body.row || {}, {
-            ...body.options,
-            schoolId: user.selectedSchoolId,
-          }),
+          await repository.put(
+            store,
+            body.row || {},
+            archivedWriteOptions(body, user, store),
+          ),
         );
       }
       if (request.method === "DELETE" && id) {
+        if (url.searchParams.get("hard") === "1" && !isManager(user))
+          return forbidden(response);
         if (
           store === "score_entries" &&
           !canGrade(
@@ -547,8 +638,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         );
       }
       if (request.method === "DELETE" && !id) {
-        if (store === "score_entries" && !isManager(user))
-          return forbidden(response);
+        if (!isManager(user)) return forbidden(response);
         return sendJson(
           response,
           200,

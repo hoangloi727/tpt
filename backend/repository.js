@@ -869,6 +869,7 @@ export class SqliteRepository {
             entity: store,
             entity_id: record.id,
             summary: record.name || record.title || record.code || record.class_name || "",
+            reason: options.reason || undefined,
           },
           null,
           { preserveMetadata: true, schoolId: record.school_profile_id },
@@ -886,6 +887,7 @@ export class SqliteRepository {
             entity_id: record.id,
             status: "committed",
             committed_at: now(),
+            reason: options.reason || undefined,
           },
           null,
           { preserveMetadata: true, schoolId: record.school_profile_id },
@@ -925,6 +927,7 @@ export class SqliteRepository {
             item_count: rows.length,
             status: "committed",
             committed_at: now(),
+            reason: options.reason || undefined,
           },
           null,
           {
@@ -1207,6 +1210,125 @@ export class SqliteRepository {
           : incoming;
       }
       return true;
+    });
+  }
+
+  mergeAll(payload, options = {}) {
+    if (!payload?.data || !Number.isInteger(payload.schema) || payload.schema > this.schema) {
+      const error = new Error("Tệp sai định dạng hoặc dùng phiên bản dữ liệu mới hơn ứng dụng.");
+      error.status = 400;
+      throw error;
+    }
+    return this.mutate((draft) => {
+      const schoolId = options.schoolId || null,
+        stats = { inserted: 0, updated: 0, kept_current: 0, stores: {} },
+        legacyScoreStores = new Set([
+          "score_entries",
+          "score_evidence",
+          "weekly_score_sheets",
+          "ranking_snapshots",
+        ]);
+      for (const store of STORES) {
+        if (
+          EXTERNAL_BACKUP_EXCLUDED_STORES.has(store) ||
+          !Array.isArray(payload.data[store]) ||
+          (payload.schema < 10 && legacyScoreStores.has(store))
+        )
+          continue;
+        const current = new Map(
+            draft.stores[store]
+              .filter((row) => !schoolId || row.school_profile_id === schoolId)
+              .map((row) => [row.id, row]),
+          ),
+          local = { inserted: 0, updated: 0, kept_current: 0 };
+        for (const incoming of payload.data[store]) {
+          const existing = current.get(incoming.id),
+            newer =
+              !existing ||
+              Number(incoming.revision || 0) > Number(existing.revision || 0) ||
+              (Number(incoming.revision || 0) === Number(existing.revision || 0) &&
+                Date.parse(incoming.updated_at || 0) >
+                  Date.parse(existing.updated_at || 0));
+          if (!newer) {
+            local.kept_current++;
+            stats.kept_current++;
+            continue;
+          }
+          this.putInto(draft, store, incoming, {
+            schoolId,
+            preserveMetadata: true,
+            allowArchivedYear: true,
+            audit: false,
+            journal: false,
+          });
+          const key = existing ? "updated" : "inserted";
+          local[key]++;
+          stats[key]++;
+        }
+        stats.stores[store] = local;
+      }
+      draft.stores.operation_journal.push(
+        this.normalize(
+          {
+            id: randomUUID(),
+            operation_id: randomUUID(),
+            operation: "merge_import",
+            entity: "external_backup",
+            item_count: stats.inserted + stats.updated,
+            status: "committed",
+            committed_at: now(),
+          },
+          null,
+          { preserveMetadata: true, schoolId },
+        ),
+      );
+      return stats;
+    });
+  }
+
+  normalizeEnhancedData(schoolId) {
+    return this.mutate((draft) => {
+      let count = 0;
+      const excluded = new Set([
+        "internal_snapshots",
+        "operation_journal",
+        "form_drafts",
+        "restore_staging",
+      ]);
+      for (const store of STORES) {
+        if (excluded.has(store)) continue;
+        for (let index = 0; index < draft.stores[store].length; index++) {
+          const row = draft.stores[store][index];
+          if (schoolId && row.school_profile_id !== schoolId) continue;
+          const yearId = row.school_year_id || row.academic_year_id;
+          if (
+            row.school_profile_id &&
+            (!yearId || (row.school_year_id && row.academic_year_id)) &&
+            row.created_at &&
+            row.updated_at &&
+            Number(row.revision) &&
+            row.device_id
+          )
+            continue;
+          draft.stores[store][index] = this.normalize(
+            {
+              ...row,
+              school_profile_id: row.school_profile_id || schoolId,
+              ...(yearId
+                ? { school_year_id: yearId, academic_year_id: yearId }
+                : {}),
+              created_at: row.created_at || row.updated_at || now(),
+              updated_at: row.updated_at || row.created_at || now(),
+              revision: Number(row.revision || 1),
+              source: row.source || "migration-v8",
+            },
+            row,
+            { preserveMetadata: true, schoolId },
+          );
+          count++;
+        }
+      }
+      return count;
     });
   }
 }

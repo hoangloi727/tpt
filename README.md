@@ -49,13 +49,19 @@ Tất cả đều tùy chọn:
 
 ### Cấu trúc dự án
 
+- `manual.md`: hướng dẫn sử dụng website đầy đủ bằng tiếng Việt và tiếng Anh.
+- `api.md`: hợp đồng sử dụng API nội bộ an toàn bằng tiếng Việt và tiếng Anh.
+
 - `backend/server.js`: khởi tạo cơ sở dữ liệu, API và máy chủ tệp tĩnh.
 - `backend/api.js`: tuyến API, phiên, cookie và phân quyền.
 - `backend/auth.js`: tài khoản, băm mật khẩu và quản lý phiên.
 - `backend/repository.js`, `backend/sqlite-database.js`, `backend/stores.js`: kho dữ liệu, SQLite và danh sách store.
 - `frontend/index.html`: phần vỏ HTML tĩnh.
 - `frontend/styles/app.css`: kiểu giao diện ứng dụng.
-- `frontend/scripts/app.js`: logic trình duyệt và tính năng nghiệp vụ.
+- `frontend/scripts/app.js`: composition root, điều hướng và điều phối tính năng trình duyệt.
+- `frontend/scripts/app-schema.js`, `browser-runtime.js`, `form-drafts.js`, `custom-fields.js`: cấu hình, tích hợp trình duyệt và biểu mẫu.
+- `frontend/scripts/score-engine.js`, `report-formatters.js`, `backup-codec.js`, `backup-service.js`: tính điểm, báo cáo và sao lưu.
+- `frontend/scripts/api-reference.js`, `pwa-runtime.js`: trang tham chiếu API nội bộ và vòng đời PWA.
 - `frontend/scripts/api-data-provider.js`: bộ chuyển đổi CRUD qua HTTP (`window.ApiDataProvider`).
 - `frontend/manifest.webmanifest`, `frontend/sw.js`: manifest và service worker của PWA.
 - `data/`: dữ liệu chạy cục bộ, bị loại khỏi Git.
@@ -117,13 +123,19 @@ All variables are optional:
 
 ### Project structure
 
+- `manual.md`: complete Vietnamese and English website user manual.
+- `api.md`: safe private-API contract in Vietnamese and English.
+
 - `backend/server.js`: initializes the database, API, and static-file server.
 - `backend/api.js`: API routes, sessions, cookies, and authorization.
 - `backend/auth.js`: accounts, password hashing, and session management.
 - `backend/repository.js`, `backend/sqlite-database.js`, `backend/stores.js`: repository, SQLite layer, and store registry.
 - `frontend/index.html`: static HTML shell.
 - `frontend/styles/app.css`: application styles.
-- `frontend/scripts/app.js`: browser and domain logic.
+- `frontend/scripts/app.js`: browser composition root, routing, and feature orchestration.
+- `frontend/scripts/app-schema.js`, `browser-runtime.js`, `form-drafts.js`, `custom-fields.js`: configuration, browser integration, and forms.
+- `frontend/scripts/score-engine.js`, `report-formatters.js`, `backup-codec.js`, `backup-service.js`: scoring, reports, and backups.
+- `frontend/scripts/api-reference.js`, `pwa-runtime.js`: private API reference page and PWA lifecycle.
 - `frontend/scripts/api-data-provider.js`: HTTP CRUD adapter (`window.ApiDataProvider`).
 - `frontend/manifest.webmanifest`, `frontend/sw.js`: PWA manifest and service worker.
 - `data/`: local runtime data, excluded from Git.

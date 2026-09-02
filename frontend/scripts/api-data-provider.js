@@ -51,7 +51,8 @@
       this.schema = options.schema;
       this.stores = options.stores;
       this.beforeWrite = options.beforeWrite;
-      this.allowArchivedYear = options.allowArchivedYear;
+      this.archivedYearEditReason =
+        options.archivedYearEditReason || (() => "");
       this.onSave = options.onSave;
       this.onChange = options.onChange;
       this.baseUrl = "/api";
@@ -234,15 +235,10 @@
     }
 
     put(store, row, options = {}) {
+      const archivedYearReason = this.archivedYearEditReason(row);
       return this.write(
         `/stores/${encodeURIComponent(store)}`,
-        {
-          row,
-          options: {
-            ...options,
-            allowArchivedYear: this.allowArchivedYear(row),
-          },
-        },
+        { row, ...(archivedYearReason ? { archivedYearReason } : {}) },
         {
           silent: options.silent,
           change: { store, id: row.id || "new" },
@@ -251,15 +247,14 @@
     }
 
     bulkPut(store, rows, options = {}) {
+      const reasons = [
+        ...new Set(rows.map((row) => this.archivedYearEditReason(row)).filter(Boolean)),
+      ];
+      if (reasons.length > 1)
+        throw new Error("Một lô ghi không thể hiệu chỉnh nhiều năm học với các lý do khác nhau.");
       return this.write(
         `/stores/${encodeURIComponent(store)}/bulk`,
-        {
-          rows,
-          options: {
-            ...options,
-            allowArchivedYear: rows.every((row) => this.allowArchivedYear(row)),
-          },
-        },
+        { rows, ...(reasons[0] ? { archivedYearReason: reasons[0] } : {}) },
         {
           silent: options.silent,
           change: { store, id: "bulk" },
@@ -295,51 +290,16 @@
       return this.request("/export");
     }
 
-    replaceAll(payload, options = {}) {
-      return this.write("/import/replace", { payload, options }, { silent: true });
+    replaceAll(payload) {
+      return this.write("/import/replace", { payload }, { silent: true });
     }
 
-    async mergeAll(payload) {
-      this.beforeWrite();
-      const stats = { inserted: 0, updated: 0, kept_current: 0, stores: {} },
-        legacyScoreStores = new Set([
-          "score_entries",
-          "score_evidence",
-          "weekly_score_sheets",
-          "ranking_snapshots",
-        ]);
-      for (const store of this.stores) {
-        if (!Array.isArray(payload.data?.[store])) continue;
-        if (Number(payload.schema || 0) < 10 && legacyScoreStores.has(store))
-          continue;
-        const current = new Map(
-          (await this.allIncludingDeleted(store)).map((row) => [row.id, row]),
-        );
-        const changes = [];
-        const local = { inserted: 0, updated: 0, kept_current: 0 };
-        for (const incoming of payload.data[store]) {
-          const existing = current.get(incoming.id);
-          const newer =
-            !existing ||
-            Number(incoming.revision || 0) > Number(existing.revision || 0) ||
-            (Number(incoming.revision || 0) === Number(existing.revision || 0) &&
-              Date.parse(incoming.updated_at || 0) > Date.parse(existing.updated_at || 0));
-          if (newer) {
-            changes.push(incoming);
-            const key = existing ? "updated" : "inserted";
-            local[key]++;
-            stats[key]++;
-          } else {
-            local.kept_current++;
-            stats.kept_current++;
-          }
-        }
-        if (changes.length) {
-          await this.bulkPut(store, changes, { preserveMetadata: true, silent: true });
-        }
-        stats.stores[store] = local;
-      }
-      return stats;
+    mergeAll(payload) {
+      return this.write("/import/merge", { payload }, { silent: true });
+    }
+
+    normalizeEnhancedData() {
+      return this.write("/migrations/enhanced-data", {}, { silent: true });
     }
   }
 

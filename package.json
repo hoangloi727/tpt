@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node backend/server.js",
-    "check": "node --check backend/server.js && node --check backend/api.js && node --check backend/auth.js && node --check backend/repository.js && node --check backend/sqlite-database.js && node --check backend/static.js && node --check frontend/scripts/api-data-provider.js && node --check frontend/scripts/app-utils.js && node --check frontend/scripts/app-catalog.js && node --check frontend/scripts/score-engine.js && node --check frontend/scripts/backup-codec.js && node --check frontend/scripts/app.js && node --check frontend/sw.js"
+    "check": "node --check backend/server.js && node --check backend/api.js && node --check backend/auth.js && node --check backend/repository.js && node --check backend/sqlite-database.js && node --check backend/static.js && node --check frontend/scripts/api-data-provider.js && node --check frontend/scripts/app-utils.js && node --check frontend/scripts/app-catalog.js && node --check frontend/scripts/app-schema.js && node --check frontend/scripts/browser-runtime.js && node --check frontend/scripts/score-engine.js && node --check frontend/scripts/backup-codec.js && node --check frontend/scripts/form-drafts.js && node --check frontend/scripts/custom-fields.js && node --check frontend/scripts/pwa-runtime.js && node --check frontend/scripts/report-formatters.js && node --check frontend/scripts/backup-service.js && node --check frontend/scripts/api-reference.js && node --check frontend/scripts/app.js && node --check frontend/sw.js"
   },
   "engines": {
     "node": ">=20"

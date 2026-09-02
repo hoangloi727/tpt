@@ -1,122 +1,35 @@
       "use strict";
       (() => {
-        const PUBLIC_CONFIG = Object.freeze(window.TPT_APP_CONFIG || {});
-        const APP = {
-          name: "Trợ lý Tổng phụ trách Đội",
-          version: PUBLIC_CONFIG.APP_VERSION || "3.1.0-rc.1",
-          schema: Number(PUBLIC_CONFIG.SCHEMA_VERSION || 15),
-          dbName: PUBLIC_CONFIG.DB_NAME || "TPT_DOI_DB",
-          appId:
-            PUBLIC_CONFIG.APP_ID || "vn.giaoducso40.tpt.thcs.standard",
-          schoolProfileId:
-            PUBLIC_CONFIG.SCHOOL_PROFILE_ID || "thcs-local-profile-001",
-          defaultSchoolProfileId:
-            PUBLIC_CONFIG.SCHOOL_PROFILE_ID || "thcs-local-profile-001",
-          schoolName: PUBLIC_CONFIG.SCHOOL_NAME || "TRƯỜNG",
-          schoolLevel: PUBLIC_CONFIG.SCHOOL_LEVEL || "TH-THCS",
-          repositoryName: String(PUBLIC_CONFIG.REPOSITORY_NAME || "").trim(),
-          basePath: String(PUBLIC_CONFIG.BASE_PATH || "./").trim() || "./",
-          backupFormat: "TPT-BACKUP-3",
-          buildId: PUBLIC_CONFIG.BUILD_ID || "20260831-api",
-        };
-        const STORES = [
-          "profiles",
-          "schools",
-          "campuses",
-          "school_years",
-          "semesters",
-          "school_weeks",
-          "grades",
-          "classes",
-          "class_groups",
-          "homeroom_teachers",
-          "plans",
-          "plan_targets",
-          "tasks",
-          "task_check_items",
-          "task_dependencies",
-          "calendar_events",
-          "activity_categories",
-          "activities",
-          "activity_classes",
-          "activity_check_items",
-          "criteria_sets",
-          "criteria_groups",
-          "criteria",
-          "weekly_score_sheets",
-          "score_grader_assignments",
-          "score_entries",
-          "score_evidence",
-          "ranking_snapshots",
-          "team_units",
-          "team_positions",
-          "team_members",
-          "training_records",
-          "programs",
-          "program_results",
-          "commendations",
-          "documents",
-          "attachments",
-          "equipment",
-          "equipment_transactions",
-          "report_templates",
-          "generated_reports",
-          "audit_logs",
-          "app_settings",
-          "config_categories",
-          "config_items",
-          "custom_field_definitions",
-          "document_folders",
-          "document_links",
-          "file_versions",
-          "migration_logs",
-          "task_templates",
-          "score_component_versions",
-          "license_events",
-          "operation_journal",
-          "internal_snapshots",
-          "form_drafts",
-          "restore_staging",
-          "backup_handles",
-          "backup_records",
-          "year_transition_logs",
-          "report_packages",
-        ];
-        const SYSTEM_STORES = new Set([
-          "operation_journal",
-          "internal_snapshots",
-          "form_drafts",
-          "restore_staging",
-          "backup_handles",
-          "backup_records",
-          "migration_logs",
-          "audit_logs",
-          "license_events",
-        ]);
-        const SNAPSHOT_EXCLUDED_STORES = new Set([
-          ...SYSTEM_STORES,
-          "attachments",
-          "file_versions",
-        ]);
-        const EXTERNAL_BACKUP_EXCLUDED_STORES = new Set([
-          "operation_journal",
-          "internal_snapshots",
-          "form_drafts",
-          "restore_staging",
-          "backup_handles",
-        ]);
-        const $ = (s) => document.querySelector(s),
-          $$ = (s) => [...document.querySelectorAll(s)];
         const MODULES = window.TPTAppModules;
         if (
+          !MODULES?.schema ||
+          !MODULES?.browserRuntime ||
           !MODULES?.utils ||
           !MODULES?.catalog ||
           !MODULES?.score ||
-          !MODULES?.backupCodec
+          !MODULES?.backupCodec ||
+          !MODULES?.backupService ||
+          !MODULES?.formDrafts ||
+          !MODULES?.customFields ||
+          !MODULES?.pwaRuntime ||
+          !MODULES?.reportFormatters ||
+          !MODULES?.apiReference
         )
           throw new Error(
             "Thiếu mô-đun giao diện bắt buộc. Hãy tải lại ứng dụng.",
           );
+        const {
+            PUBLIC_CONFIG,
+            APP,
+            STORES,
+            SYSTEM_STORES,
+            SNAPSHOT_EXCLUDED_STORES,
+            EXTERNAL_BACKUP_EXCLUDED_STORES,
+          } = MODULES.schema,
+          { getDeviceId, TabCoordinator, BrowserPlatformAdapter } =
+            MODULES.browserRuntime;
+        const $ = (s) => document.querySelector(s),
+          $$ = (s) => [...document.querySelectorAll(s)];
         const {
             uid,
             now,
@@ -146,12 +59,16 @@
           { NAV, ENTITY, SETTINGS_TABS, SETTINGS_CONFIG_KEYS, CONFIG_DEFINITIONS } =
             MODULES.catalog,
           {
+            workflowLabel,
+            parseScoreInput,
             criterionScore,
             scoreWeekdays,
             scoreAdjustment,
             classScoreSummary,
             scoreEntryCriterionId,
             entryMap,
+            rankClasses,
+            scoreAnomalyItems,
           } = MODULES.score,
           {
             encryptText,
@@ -161,21 +78,16 @@
             sha256Blob,
             blobToBase64,
             base64ToBlob,
-          } = MODULES.backupCodec;
-        const getDeviceId = () => {
-          const key = `${APP.appId}:device-id`;
-          try {
-            let value = localStorage.getItem(key);
-            if (!value) {
-              value = `web-${uid()}`;
-              localStorage.setItem(key, value);
-            }
-            return value;
-          } catch (_) {
-            return `session-${uid()}`;
-          }
-        };
-        const DEVICE_ID = getDeviceId();
+          } = MODULES.backupCodec,
+          { createService: createBackupService } = MODULES.backupService,
+          { createController: createFormDraftController } = MODULES.formDrafts,
+          { createController: createCustomFieldsController } =
+            MODULES.customFields,
+          { createController: createPwaRuntimeController } = MODULES.pwaRuntime,
+          { createController: createReportFormattersController } =
+            MODULES.reportFormatters,
+          { renderApiReference } = MODULES.apiReference;
+        const DEVICE_ID = getDeviceId(APP.appId, uid);
         const withoutBinary = (record) =>
           Object.fromEntries(
             Object.entries(record || {}).filter(([, value]) => {
@@ -378,161 +290,13 @@
         }
         const sessionLock = new SessionLockManager();
 
-        class TabCoordinator {
-          constructor() {
-            this.tabId = uid();
-            this.readOnly = false;
-            this.lockHeld = false;
-            this.releaseLock = null;
-            this.leaseKey = `${APP.appId}:writer-lease`;
-            this.channel = null;
-            this.heartbeat = null;
-          }
-          async start() {
-            if (this.started) return;
-            this.started = true;
-            if (navigator.locks?.request) {
-              await new Promise((ready) => {
-                navigator.locks
-                  .request(
-                    `${APP.appId}:writer`,
-                    { mode: "exclusive", ifAvailable: true },
-                    async (lock) => {
-                      if (!lock) {
-                        this.readOnly = true;
-                        ready();
-                        return;
-                      }
-                      this.lockHeld = true;
-                      this.readOnly = false;
-                      ready();
-                      await new Promise((resolve) => {
-                        this.releaseLock = resolve;
-                      });
-                    },
-                  )
-                  .catch(() => {
-                    this.startLeaseFallback();
-                    ready();
-                  });
-              });
-            } else this.startLeaseFallback();
-            if ("BroadcastChannel" in window) {
-              this.channel = new BroadcastChannel(`${APP.appId}:tabs`);
-              this.channel.onmessage = (event) => {
-                if (event.data?.type === "data-changed" && this.readOnly)
-                  toast("Dữ liệu vừa thay đổi ở thẻ đang có quyền ghi.");
-              };
-            }
-            window.addEventListener("beforeunload", () => this.release());
-          }
-          startLeaseFallback() {
-            try {
-              const lease = JSON.parse(localStorage.getItem(this.leaseKey));
-              const active =
-                lease?.tabId !== this.tabId && lease?.expiresAt > Date.now();
-              this.readOnly = !!active;
-              if (!active) {
-                this.writeLease();
-                this.heartbeat = setInterval(() => this.writeLease(), 5000);
-              }
-            } catch (_) {
-              this.readOnly = false;
-            }
-          }
-          writeLease() {
-            try {
-              localStorage.setItem(
-                this.leaseKey,
-                JSON.stringify({
-                  tabId: this.tabId,
-                  expiresAt: Date.now() + 15000,
-                }),
-              );
-            } catch (_) {}
-          }
-          assertWritable() {
-            if (this.readOnly)
-              throw new Error(
-                "Thẻ này đang ở chế độ chỉ đọc vì một thẻ khác đang có quyền ghi.",
-              );
-          }
-          announceChange(store, id) {
-            this.channel?.postMessage({ type: "data-changed", store, id });
-          }
-          release() {
-            if (this.releaseLock) this.releaseLock();
-            clearInterval(this.heartbeat);
-            if (!this.readOnly) {
-              try {
-                const lease = JSON.parse(localStorage.getItem(this.leaseKey));
-                if (lease?.tabId === this.tabId)
-                  localStorage.removeItem(this.leaseKey);
-              } catch (_) {}
-            }
-            this.channel?.close();
-          }
-        }
-        const tabCoordinator = new TabCoordinator();
+        const tabCoordinator = new TabCoordinator(APP.appId, uid, () =>
+          toast("Dữ liệu vừa thay đổi ở thẻ đang có quyền ghi."),
+        );
 
         class AssistantProvider {
           async answer(q) {
             return buildAssistantAnswer(q);
-          }
-        }
-        class BrowserPlatformAdapter {
-          constructor() {
-            this.kind = "browser";
-            this.contractVersion = "1.0";
-          }
-          capabilities() {
-            return {
-              runtime: "browser-pwa",
-              filesystem_directory: "showDirectoryPicker" in window,
-              secure_keystore: false,
-              native_scheduler: false,
-              atomic_file_replace: false,
-            };
-          }
-          download(blob, name) {
-            const url = URL.createObjectURL(blob),
-              anchor = document.createElement("a");
-            anchor.href = url;
-            anchor.download = name;
-            document.body.append(anchor);
-            anchor.click();
-            anchor.remove();
-            setTimeout(() => URL.revokeObjectURL(url), 1000);
-          }
-          async chooseDirectory() {
-            if (!("showDirectoryPicker" in window))
-              throw new Error(
-                "Trình duyệt này không hỗ trợ chọn thư mục. Hãy dùng tệp tải xuống.",
-              );
-            return window.showDirectoryPicker({ mode: "readwrite" });
-          }
-          async permission(handle, request = false) {
-            if (!handle?.queryPermission) return false;
-            let result = await handle.queryPermission({ mode: "readwrite" });
-            if (result !== "granted" && request && handle.requestPermission)
-              result = await handle.requestPermission({ mode: "readwrite" });
-            return result === "granted";
-          }
-          async writeFile(handle, name, blob, requestPermission = false) {
-            if (!(await this.permission(handle, requestPermission)))
-              throw new Error("Chưa có quyền ghi vào thư mục sao lưu.");
-            const fileHandle = await handle.getFileHandle(name, {
-                create: true,
-              }),
-              writable = await fileHandle.createWritable();
-            try {
-              await writable.write(blob);
-              await writable.close();
-            } catch (error) {
-              await writable.abort?.();
-              throw error;
-            }
-            return true;
           }
         }
         const platform = new BrowserPlatformAdapter();
@@ -540,14 +304,68 @@
             schema: APP.schema,
             stores: STORES,
             beforeWrite: () => tabCoordinator.assertWritable(),
-            allowArchivedYear: (row) => {
+            archivedYearEditReason: (row) => {
               const yearId = row?.school_year_id || row?.academic_year_id;
-              return !!yearId && state.yearEditOverrides.has(yearId);
+              return state.yearEditOverrides.get(yearId) || "";
             },
             onSave: setSave,
             onChange: (store, id) => tabCoordinator.announceChange(store, id),
           }),
           assistant = new AssistantProvider();
+        const { clearFormDraft, setupModalDraft } =
+            createFormDraftController({
+              db,
+              state,
+              tabCoordinator,
+              $,
+              debounce,
+              normalizeText,
+              now,
+              fmtDateTime,
+              setSave,
+              toast,
+            }),
+          { customFieldDefs, renderCustomInputs, collectCustomValues } =
+            createCustomFieldsController({ db, esc }),
+          { registerPWA } = createPwaRuntimeController({ state, $, toast }),
+          { reportHTML, exportReportCSV } = createReportFormattersController({
+            esc,
+            fmtDate,
+            fmtDateTime,
+            statusLabel,
+            simpleTable,
+            csvSafe,
+            scoped,
+            campusName,
+            state,
+            now,
+            today,
+            download,
+          });
+        const {
+          snapshotPayload,
+          createInternalSnapshot,
+          pruneSnapshots,
+          ensureScheduledSnapshots,
+          ensureScheduledDirectoryBackup,
+          exportBusinessData,
+        } = createBackupService({
+          db,
+          APP,
+          STORES,
+          SNAPSHOT_EXCLUDED_STORES,
+          EXTERNAL_BACKUP_EXCLUDED_STORES,
+          DEVICE_ID,
+          tabCoordinator,
+          platform,
+          setting,
+          now,
+          today,
+          stableJSON,
+          sha256Text,
+          sha256Blob,
+          blobToBase64,
+        });
 
         async function startOperation(operation, details = {}) {
           return db.put(
@@ -559,7 +377,6 @@
               details,
               started_at: now(),
             },
-            { audit: false, journal: false },
           );
         }
         async function finishOperation(row, status, result = {}) {
@@ -573,7 +390,6 @@
               result,
               finished_at: now(),
             },
-            { audit: false, journal: false },
           );
         }
         async function recoverInterruptedOperations() {
@@ -586,6 +402,8 @@
 
         function canAccessPage(page) {
           if (page === "account") return true;
+          if (page === "api")
+            return ["superadmin", "admin"].includes(state.user?.role);
           if (["superadmin", "admin"].includes(state.user?.role)) return true;
           if (page === "scores" && state.scoreClassIds.size) return true;
           const permissions = state.user?.permissions || [];
@@ -820,65 +638,6 @@
               );
           }
           document.title = `${schoolName} - Trợ lý Tổng phụ trách Đội`;
-        }
-        function registerPWA() {
-          if (
-            !("serviceWorker" in navigator) ||
-            !/^https?:$/.test(location.protocol)
-          )
-            return;
-          navigator.serviceWorker
-            .register("./sw.js")
-            .then((registration) => {
-              registration.addEventListener("updatefound", () => {
-                const worker = registration.installing;
-                worker?.addEventListener("statechange", () => {
-                  if (
-                    worker.state === "installed" &&
-                    navigator.serviceWorker.controller
-                  )
-                    showUpdateBanner(registration);
-                });
-              });
-            })
-            .catch(() =>
-              toast(
-                "Chưa thể bật chế độ cài đặt PWA; bản HTML ngoại tuyến vẫn dùng được.",
-                "bad",
-              ),
-            );
-        }
-        function showUpdateBanner(registration) {
-          if ($("#pwaUpdateBanner")) return;
-          const banner = document.createElement("div");
-          banner.id = "pwaUpdateBanner";
-          banner.className = "update-banner";
-          banner.innerHTML = `<span>Có phiên bản PWA mới đã tải xong.</span><button class="btn small" type="button">Cập nhật khi an toàn</button>`;
-          banner.querySelector("button").onclick = async () => {
-            if (
-              state.hasPendingDraft ||
-              $("#saveState")?.dataset.state === "saving"
-            )
-              return toast(
-                "Hãy lưu hoặc đóng bản nháp đang mở trước khi cập nhật.",
-                "bad",
-              );
-            let reloaded = false;
-            navigator.serviceWorker.addEventListener(
-              "controllerchange",
-              () => {
-                if (reloaded) return;
-                reloaded = true;
-                location.reload();
-              },
-              { once: true },
-            );
-            registration.waiting?.postMessage({ type: "SKIP_WAITING" });
-            setTimeout(() => {
-              if (!reloaded) location.reload();
-            }, 2000);
-          };
-          document.body.append(banner);
         }
         function bindShell() {
           $("#toggleSidebar").onclick = () => {
@@ -1333,6 +1092,7 @@
             account: renderAccount,
             users: renderUserManagement,
             settings: renderSettings,
+            api: () => renderApiReference({ setContent, pageHead, esc }),
           };
           try {
             await renderers[page]();
@@ -1395,107 +1155,6 @@
           state.modalReturnFocus?.focus?.();
         }
 
-        function captureFormState(form) {
-          return [...form.elements]
-            .filter((el) => el.name || el.id)
-            .map((el) => ({
-              key: el.name || el.id,
-              type: el.type,
-              value: el.value,
-              checked: !!el.checked,
-              selected: el.multiple
-                ? [...el.options]
-                    .filter((option) => option.selected)
-                    .map((option) => option.value)
-                : null,
-            }));
-        }
-        function applyFormState(form, fields) {
-          for (const saved of fields || []) {
-            const elements = [
-              ...form.querySelectorAll(
-                `[name="${CSS.escape(saved.key)}"],#${CSS.escape(saved.key)}`,
-              ),
-            ];
-            for (const el of elements) {
-              if (["checkbox", "radio"].includes(el.type))
-                el.checked = saved.checked;
-              else if (el.multiple && Array.isArray(saved.selected))
-                [...el.options].forEach(
-                  (option) =>
-                    (option.selected = saved.selected.includes(option.value)),
-                );
-              else el.value = saved.value ?? "";
-            }
-          }
-        }
-        async function clearFormDraft(key) {
-          try {
-            const row = await db.get("form_drafts", key);
-            if (row) await db.hardDelete("form_drafts", key);
-          } catch (_) {}
-        }
-        function setupModalDraft(title) {
-          const form = $("#modalBody form");
-          if (!form || tabCoordinator.readOnly) return;
-          const key = `draft:${state.page}:${form.id || normalizeText(title).replace(/\s+/g, "-")}`;
-          state.modalDraftKey = key;
-          const persist = debounce(async () => {
-            if (!$("#modalLayer").classList.contains("open")) return;
-            try {
-              await db.put(
-                "form_drafts",
-                {
-                  id: key,
-                  page: state.page,
-                  form_id: form.id || "",
-                  title,
-                  fields: captureFormState(form),
-                  saved_at: now(),
-                },
-                { audit: false, journal: false },
-              );
-              state.hasPendingDraft = true;
-              setSave(
-                `Đã lưu nháp lúc ${new Date().toLocaleTimeString("vi-VN")}`,
-                "draft",
-              );
-            } catch (error) {
-              setSave("Lưu nháp thất bại – thử lại", "error");
-            }
-          }, 500);
-          form.addEventListener("input", persist);
-          form.addEventListener("change", persist);
-          db.get("form_drafts", key)
-            .then((draft) => {
-              if (
-                !draft ||
-                state.modalDraftKey !== key ||
-                Date.now() - Date.parse(draft.saved_at) > 30 * 86400000
-              )
-                return;
-              const notice = document.createElement("div");
-              notice.className = "notice warn mb";
-              notice.innerHTML = `<strong>Có bản nháp tự lưu lúc ${fmtDateTime(draft.saved_at)}.</strong> <button class="link-btn" type="button" data-draft-restore>Khôi phục nháp</button> <button class="link-btn" type="button" data-draft-discard>Bỏ nháp</button>`;
-              form.before(notice);
-              notice.querySelector("[data-draft-restore]").onclick = () => {
-                applyFormState(form, draft.fields);
-                state.hasPendingDraft = true;
-                notice.remove();
-                toast(
-                  "Đã khôi phục bản nháp vào biểu mẫu; chưa ghi vào dữ liệu chính.",
-                );
-              };
-              notice.querySelector("[data-draft-discard]").onclick =
-                async () => {
-                  await clearFormDraft(key);
-                  notice.remove();
-                  toast("Đã bỏ bản nháp cục bộ.");
-                };
-            })
-            .catch(() => {});
-        }
-
         async function scoped(store) {
           return (await db.all(store)).filter(
             (x) =>
@@ -1524,10 +1183,11 @@
             );
           state.scoreClassIds = new Set(assignment?.class_ids || []);
         }
-        const campusName = (id) =>
-          id === "all"
+        function campusName(id) {
+          return id === "all"
             ? "Toàn trường"
             : state.cache.campuses.find((x) => x.id === id)?.name || "—";
+        }
         async function renderDashboard() {
           const [tasks, events, classes, sheets, entries] = await Promise.all([
             scoped("tasks"),
@@ -2464,19 +2124,6 @@
             $("#scoreWorkflow").onclick = () => scoreWorkflow(ctx);
           $("#undoScore").onclick = undoScore;
         }
-        function workflowLabel(sheet) {
-          if (!sheet) return "Khởi tạo bảng tuần";
-          return (
-            {
-              draft: "Đánh dấu đã nhập đủ",
-              complete: "Gửi kiểm tra",
-              review: "Duyệt bảng",
-              approved: "Khóa bảng",
-              locked: "Mở khóa có lý do",
-              unlocked: "Gửi kiểm tra lại",
-            }[sheet.status] || "Quản lý trạng thái"
-          );
-        }
         async function showScoreGraderAssignments() {
           const [allUsers, assignments, allClasses, allGroups] = await Promise.all([
               db.listUsers(),
@@ -2837,7 +2484,6 @@
                   value,
                   reason: existing?.reason || "",
                 },
-                { audit: false },
               );
               await db.put("audit_logs", {
                 action: existing ? "score_update" : "score_create",
@@ -2861,17 +2507,13 @@
         }
         async function saveScoreCell(ev) {
           const i = ev.currentTarget,
-            ctx = await scoreContext(),
-            criterion = ctx.criteria.find((c) => c.id === i.dataset.criterion),
-            old = i.dataset.entry
-              ? await db.get("score_entries", i.dataset.entry)
-              : null,
-            raw = i.value.trim().toUpperCase();
-          let entry_state = "value",
-            value = null;
-          if (raw === "KAD" || raw === "N/A") entry_state = "na";
-          else if (raw === "MIỄN" || raw === "MIEN") entry_state = "exempt";
-          else if (raw === "") {
+             ctx = await scoreContext(),
+             criterion = ctx.criteria.find((c) => c.id === i.dataset.criterion),
+             old = i.dataset.entry
+               ? await db.get("score_entries", i.dataset.entry)
+               : null,
+             parsed = parseScoreInput(i.value, criterion, { mode: "direct" });
+          if (parsed.action === "clear") {
             if (old) {
               await db.remove("score_entries", old.id);
               await db.put("audit_logs", {
@@ -2888,32 +2530,18 @@
             i.classList.add("missing");
             renderScores();
             return;
-          } else {
-            if (
-              criterion.data_type === "boolean" &&
-              ["ĐẠT", "DAT", "CÓ", "CO"].includes(raw)
-            )
-              value = 1;
-            else if (
-              criterion.data_type === "boolean" &&
-              ["KHÔNG ĐẠT", "KHONG DAT", "KHÔNG", "KHONG"].includes(raw)
-            )
-              value = 0;
-            else value = Number(raw.replace(",", "."));
-            if (!Number.isFinite(value))
-              return toast(
-                "Nhập số, ĐẠT/KHÔNG ĐẠT, KAD hoặc MIỄN theo kiểu tiêu chí.",
-                "bad",
-              );
-            if (
-              value < Number(criterion.min ?? -Infinity) ||
-              value > Number(criterion.max ?? Infinity)
-            )
-              return toast(
-                `Giá trị phải trong khoảng ${criterion.min} đến ${criterion.max}.`,
-                "bad",
-              );
           }
+          if (!parsed.valid && parsed.reason === "number")
+            return toast(
+              "Nhập số, ĐẠT/KHÔNG ĐẠT, KAD hoặc MIỄN theo kiểu tiêu chí.",
+              "bad",
+            );
+          if (!parsed.valid && parsed.reason === "range")
+            return toast(
+              `Giá trị phải trong khoảng ${criterion.min} đến ${criterion.max}.`,
+              "bad",
+            );
+          const { entry_state, value } = parsed;
           const saved = await db.put(
             "score_entries",
             {
@@ -2930,7 +2558,6 @@
               value,
               reason: old?.reason || "",
             },
-            { audit: false },
           );
           await db.put("audit_logs", {
             action: old ? "score_update" : "score_create",
@@ -2976,31 +2603,10 @@
               const cl = ctx.classes[startR + r],
                 criterion = ctx.criteria[startC + c];
               if (!cl || !criterion || criterion.is_category) continue;
-              const raw = matrix[r][c].trim().toUpperCase(),
-                old = map.get(cl.id + "|" + criterion.id);
-              let entry_state = "value",
-                value = null;
-              if (raw === "KAD" || raw === "N/A") entry_state = "na";
-              else if (raw === "MIỄN" || raw === "MIEN") entry_state = "exempt";
-              else {
-                if (
-                  criterion.data_type === "boolean" &&
-                  ["ĐẠT", "DAT", "CÓ", "CO"].includes(raw)
-                )
-                  value = 1;
-                else if (
-                  criterion.data_type === "boolean" &&
-                  ["KHÔNG ĐẠT", "KHONG DAT", "KHÔNG", "KHONG"].includes(raw)
-                )
-                  value = 0;
-                else value = Number(raw.replace(",", "."));
-                if (
-                  !Number.isFinite(value) ||
-                  value < Number(criterion.min ?? -Infinity) ||
-                  value > Number(criterion.max ?? Infinity)
-                )
-                  continue;
-              }
+              const raw = matrix[r][c],
+                old = map.get(cl.id + "|" + criterion.id),
+                parsed = parseScoreInput(raw, criterion, { mode: "paste" });
+              if (!parsed.valid) continue;
               batch.push({
                 ...(old || {}),
                 id: old?.id || uid(),
@@ -3011,8 +2617,8 @@
                 criteria_id: criterion.id,
                 week_id: state.weekId,
                 entry_date: state.scoreDate,
-                entry_state,
-                value,
+                entry_state: parsed.entry_state,
+                value: parsed.value,
               });
             }
           if (batch.length) {
@@ -3039,7 +2645,7 @@
             );
           }
           if (u.type === "delete") await db.remove("score_entries", u.id);
-          else await db.put("score_entries", u.row, { audit: false });
+          else await db.put("score_entries", u.row);
           state.lastScoreUndo = null;
           await db.put("audit_logs", {
             action: "score_undo",
@@ -3201,72 +2807,7 @@
             )
               return snapshot.rows.map((row) => ({ ...row }));
           }
-          const ranked = ctx.classes
-            .map((cl) => {
-              let total =
-                  ctx.set?.formula === "base"
-                    ? Number(ctx.set.base_score || 0)
-                    : 0,
-                filled = 0;
-              const entries = ctx.entries.filter((entry) => entry.class_id === cl.id);
-              total += scoreAdjustment(entries, ctx.criteria, ctx.set);
-              filled = new Set(
-                entries.map(
-                  (entry) =>
-                    `${entry.entry_date}|${scoreEntryCriterionId(entry)}`,
-                ),
-              ).size;
-              const daily = Object.fromEntries(
-                ctx.days.map((day) => [
-                  day.date,
-                  scoreAdjustment(
-                    entries.filter((entry) => entry.entry_date === day.date),
-                    ctx.criteria,
-                    ctx.set,
-                  ),
-                ]),
-              );
-              return {
-                id: cl.id,
-                class_name: cl.class_name,
-                campus_id: cl.campus_id,
-                class_group_id: cl.class_group_id,
-                class_group_name: cl.class_group_name,
-                class_group_order: cl.class_group_order,
-                total,
-                daily,
-                filled,
-                complete: filled === ctx.criteria.length * ctx.days.length,
-              };
-            })
-            .filter((x) => x.filled > 0)
-            .sort(
-              (a, b) =>
-                a.class_group_order - b.class_group_order ||
-                a.class_group_name.localeCompare(b.class_group_name, "vi") ||
-                b.total - a.total ||
-                a.class_name.localeCompare(b.class_name, "vi", {
-                  numeric: true,
-                }) || String(a.id).localeCompare(String(b.id)),
-            );
-          const groupPositions = new Map();
-          for (const row of ranked) {
-            const position = groupPositions.get(row.class_group_id) || {
-              index: 0,
-              previousTotal: null,
-              previousRank: 0,
-            };
-            position.index += 1;
-            row.rank =
-              position.index > 1 &&
-              Math.abs(row.total - position.previousTotal) < 1e-9
-                ? position.previousRank
-                : position.index;
-            position.previousTotal = row.total;
-            position.previousRank = row.rank;
-            groupPositions.set(row.class_group_id, position);
-          }
-          return ranked;
+          return rankClasses(ctx);
         }
         async function renderScoreRanking(ctx) {
           const area = $("#scoreArea"),
@@ -3275,46 +2816,7 @@
           area.innerHTML = `${!official ? '<div class="notice warn">Bảng chưa được duyệt. Xếp hạng dưới đây là tạm thời, không dùng cho báo cáo chính thức.</div>' : ""}<div class="notice">Mỗi nhóm lớp có thứ hạng riêng. Các lớp chưa phân nhóm chỉ cạnh tranh trong nhóm “Chưa phân nhóm”.</div><div class="table-wrap"><table><thead><tr><th>Hạng trong nhóm</th><th>Lớp</th><th>Nhóm lớp</th><th>Cơ sở</th>${ctx.days.map((day) => `<th>${day.label.replace("Thứ ", "T")}</th>`).join("")}<th>Tổng tuần</th><th>Mức dữ liệu</th><th>Loại</th></tr></thead><tbody>${rank.map((r) => `<tr><td><strong>${r.rank}</strong></td><td>${esc(r.class_name)}</td><td>${esc(r.class_group_name)}</td><td>${esc(campusName(r.campus_id))}</td>${ctx.days.map((day) => `<td>${Number(r.daily[day.date] || 0).toFixed(1)}</td>`).join("")}<td><strong>${r.total.toFixed(1)}</strong></td><td>${r.complete ? '<span class="badge green">Đủ</span>' : '<span class="badge yellow">Chưa đủ</span>'}</td><td>${official ? '<span class="badge green">Chính thức</span>' : '<span class="badge yellow">Tạm thời</span>'}</td></tr>`).join("") || `<tr><td colspan="${ctx.days.length + 7}" class="empty">Chưa có dữ liệu xếp hạng.</td></tr>`}</tbody></table></div>`;
         }
         function renderScoreAnomalies(ctx) {
-          const items = [],
-            expected = ctx.criteria.length * ctx.days.length;
-          ctx.classes.forEach((cl) => {
-            const count = new Set(
-              ctx.entries
-                .filter((entry) => entry.class_id === cl.id)
-                .map(
-                  (entry) =>
-                    `${entry.entry_date}|${scoreEntryCriterionId(entry)}`,
-                ),
-            ).size;
-            if (!count)
-              items.push({
-                level: "red",
-                text: `Lớp ${cl.class_name} chưa có dữ liệu.`,
-              });
-            else if (count < expected)
-              items.push({
-                level: "yellow",
-                text: `Lớp ${cl.class_name} còn thiếu ${expected - count} ô điểm ngày.`,
-              });
-          });
-          ctx.entries.forEach((e) => {
-            const c = ctx.criteria.find(
-              (x) => x.id === scoreEntryCriterionId(e),
-            );
-            if (c?.evidence_required && !e.evidence_id)
-              items.push({
-                level: "yellow",
-                text: `Thiếu minh chứng bắt buộc ngày ${fmtDate(e.entry_date)}, lớp ${ctx.classes.find((x) => x.id === e.class_id)?.class_name}, tiêu chí ${c.code}.`,
-              });
-            if (
-              e.entry_state === "value" &&
-              (e.value < c?.min || e.value > c?.max)
-            )
-              items.push({
-                level: "red",
-                text: `Giá trị vượt giới hạn ở tiêu chí ${c?.code}.`,
-              });
-          });
+          const items = scoreAnomalyItems(ctx);
           $("#scoreArea").innerHTML =
             `<div class="notice">Cảnh báo chỉ yêu cầu kiểm tra, không tự kết luận sai phạm.</div><div class="card"><div class="card-body"><ul class="compact-list">${items.map((x) => `<li><span class="badge ${x.level}">${x.level === "red" ? "Kiểm tra" : "Lưu ý"}</span><div class="main">${esc(x.text)}</div></li>`).join("") || '<li class="muted">Chưa phát hiện bất thường theo các quy tắc đang bật.</li>'}</ul></div></div>`;
         }
@@ -3630,138 +3132,6 @@
             `Đã tạo gói ${reports.length} báo cáo chốt và ${files.length} tệp.`,
           );
         }
-        async function reportHTML(type, d) {
-          const title = {
-            week: "BÁO CÁO CÔNG TÁC TUẦN",
-            scores: "TỔNG HỢP THI ĐUA LỚP",
-            tasks: "BÁO CÁO TIẾN ĐỘ CÔNG VIỆC",
-            activities: "BÁO CÁO HOẠT ĐỘNG ĐỘI",
-            equipment: "BÁO CÁO THIẾT BỊ ĐỘI",
-          }[type];
-          let body = "";
-          if (type === "week")
-            body = `<h3>I. Kết quả thực hiện</h3><p>Đã hoàn thành <strong>${d.completed.length}</strong>/${d.tasks.length} công việc; còn <strong>${d.overdue.length}</strong> việc quá hạn.</p>${simpleTable(
-              ["Công việc", "Trạng thái", "Hạn"],
-              d.tasks.map((x) => [
-                x.title,
-                statusLabel(x.status),
-                fmtDate(x.due_date),
-              ]),
-            )}<h3>II. Hoạt động và lịch sắp tới</h3>${simpleTable(
-              ["Hoạt động", "Thời gian", "Địa điểm"],
-              d.upcoming.map((x) => [
-                x.title,
-                fmtDate(x.date),
-                x.location || "Chưa cập nhật",
-              ]),
-            )}<h3>III. Kế hoạch tuần sau</h3><p class="muted">Phần nhận xét/kế hoạch có thể bổ sung khi in; hệ thống không tự tạo số liệu ngoài dữ liệu nguồn.</p>`;
-          if (type === "scores")
-            body = !["approved", "locked"].includes(d.ctx.sheet?.status)
-              ? '<div class="notice warn">Bảng tuần chưa được duyệt nên chưa có xếp hạng chính thức.</div>'
-              : simpleTable(
-                  [
-                    "Hạng trong nhóm",
-                    "Lớp",
-                    "Nhóm lớp",
-                    "Cơ sở",
-                    ...d.ctx.days.map((day) => day.label),
-                    "Tổng tuần",
-                  ],
-                  d.rank.map((x) => [
-                    x.rank,
-                    x.class_name,
-                    x.class_group_name,
-                    campusName(x.campus_id),
-                    ...d.ctx.days.map((day) =>
-                      Number(x.daily[day.date] || 0).toFixed(1),
-                    ),
-                    x.total.toFixed(1),
-                  ]),
-                );
-          if (type === "tasks")
-            body = simpleTable(
-              ["Công việc", "Nhóm", "Cơ sở", "Hạn", "Trạng thái", "Tiến độ"],
-              d.tasks.map((x) => [
-                x.title,
-                x.group || "",
-                campusName(x.campus_id),
-                fmtDate(x.due_date),
-                statusLabel(x.status),
-                (x.progress || 0) + "%",
-              ]),
-            );
-          if (type === "activities")
-            body = simpleTable(
-              ["Hoạt động", "Nhóm", "Ngày", "Địa điểm", "Trạng thái"],
-              d.activities.map((x) => [
-                x.name,
-                x.category,
-                fmtDate(x.date),
-                x.location,
-                statusLabel(x.status),
-              ]),
-            );
-          if (type === "equipment") {
-            const eq = await scoped("equipment");
-            body = simpleTable(
-              ["Mã", "Thiết bị", "Số lượng", "Tình trạng", "Nơi lưu"],
-              eq.map((x) => [
-                x.code,
-                x.name,
-                `${x.quantity} ${x.unit || ""}`,
-                x.condition,
-                x.location,
-              ]),
-            );
-          }
-          return `<div class="center"><small>${esc(d.school?.name || "TRƯỜNG TH-THCS")}</small><h2 style="margin:8px 0">${title}</h2><p>${esc(d.week?.name || "")} • ${esc(campusName(state.campusId))}</p></div><div class="split"><small>Tạo lúc: ${fmtDateTime(now())}</small><small>Phạm vi dữ liệu: ${esc(d.week?.name || "Năm học")} / ${esc(campusName(state.campusId))}</small></div><hr style="border:0;border-top:1px solid var(--line)">${body}<div style="display:grid;grid-template-columns:1fr 1fr;text-align:center;margin-top:35px"><div><strong>Người lập báo cáo</strong></div><div><strong>Xác nhận của nhà trường</strong></div></div>`;
-        }
-        function exportReportCSV(type, d) {
-          let head = [],
-            rows = [];
-          if (type === "scores") {
-            head = [
-              "Hạng trong nhóm",
-              "Lớp",
-              "Nhóm lớp",
-              "Cơ sở",
-              ...d.ctx.days.map((day) => `${day.label} (${day.date})`),
-              "Tổng tuần",
-            ];
-            rows = d.rank.map((x) => [
-              x.rank,
-              x.class_name,
-              x.class_group_name,
-              campusName(x.campus_id),
-              ...d.ctx.days.map((day) => x.daily[day.date] || 0),
-              x.total,
-            ]);
-          } else {
-            head = [
-              "Công việc",
-              "Nhóm",
-              "Cơ sở",
-              "Hạn",
-              "Trạng thái",
-              "Tiến độ",
-            ];
-            rows = d.tasks.map((x) => [
-              x.title,
-              x.group,
-              campusName(x.campus_id),
-              x.due_date,
-              statusLabel(x.status),
-              x.progress,
-            ]);
-          }
-          download(
-            "\ufeff" +
-              [head, ...rows].map((r) => r.map(csvSafe).join(",")).join("\r\n"),
-            `bao-cao-${type}-${today()}.csv`,
-            "text/csv;charset=utf-8",
-          );
-        }
-
         async function renderAssistant() {
           setContent(
             pageHead(
@@ -5144,7 +4514,6 @@
                   handle,
                   permission_checked_at: now(),
                 },
-                { audit: false },
               );
               toast("Đã lưu quyền thư mục trong hồ sơ trình duyệt hiện tại.");
               renderBackup();
@@ -5316,7 +4685,6 @@
                   status: "completed",
                   completed_at: now(),
                 },
-                { audit: false },
               );
               await finishOperation(operation, "completed", {
                 file_name: fileName,
@@ -5470,7 +4838,6 @@
                     validated_at: now(),
                     conflicts,
                   },
-                  { audit: false },
                 );
                 let mergeStats = null;
                 if ($("#restoreMode").value === "replace")
@@ -5486,7 +4853,6 @@
                     committed_at: now(),
                     merge_stats: mergeStats,
                   },
-                  { audit: false },
                 );
                 await finishOperation(operation, "completed", {
                   mode: $("#restoreMode").value,
@@ -5688,49 +5054,6 @@
           };
         }
 
-        async function customFieldDefs(entity, includeInactive = false) {
-          return (await db.all("custom_field_definitions"))
-            .filter(
-              (x) =>
-                x.entity_type === entity &&
-                (includeInactive || x.active !== false),
-            )
-            .sort((a, b) => (a.order || 0) - (b.order || 0));
-        }
-        function renderCustomInputs(defs, values = {}) {
-          return defs
-            .map((f) => {
-              const value = values?.[f.id] ?? "",
-                name = `cf_${f.id}`,
-                options = String(f.options || "")
-                  .split("|")
-                  .filter(Boolean);
-              let input = "";
-              if (f.field_type === "long_text")
-                input = `<textarea name="${name}" ${f.required ? "required" : ""}>${esc(value)}</textarea>`;
-              else if (f.field_type === "single_choice")
-                input = `<select name="${name}" ${f.required ? "required" : ""}><option value="">— Chọn —</option>${options.map((x) => `<option ${value === x ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>`;
-              else if (f.field_type === "multi_choice")
-                input = `<select name="${name}" multiple ${f.required ? "required" : ""}>${options.map((x) => `<option ${Array.isArray(value) && value.includes(x) ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>`;
-              else if (f.field_type === "boolean")
-                input = `<select name="${name}"><option value="">— Chưa chọn —</option><option value="yes" ${value === "yes" ? "selected" : ""}>Có</option><option value="no" ${value === "no" ? "selected" : ""}>Không</option></select>`;
-              else
-                input = `<input name="${name}" type="${f.field_type === "number" ? "number" : f.field_type === "date" ? "date" : f.field_type === "link" ? "url" : f.field_type === "file" ? "text" : "text"}" value="${esc(value)}" ${f.required ? "required" : ""}>`;
-              return `<div class="field ${["long_text", "multi_choice"].includes(f.field_type) ? "full" : ""}"><label class="${f.required ? "required" : ""}">${esc(f.name)}</label>${input}${f.description ? `<small class="hint">${esc(f.description)}</small>` : ""}</div>`;
-            })
-            .join("");
-        }
-        function collectCustomValues(fd, defs) {
-          const out = {};
-          for (const f of defs) {
-            const name = `cf_${f.id}`;
-            out[f.id] =
-              f.field_type === "multi_choice"
-                ? fd.getAll(name)
-                : (fd.get(name) ?? "");
-          }
-          return out;
-        }
         async function renderCustomFieldManager(entity) {
           const defs = await customFieldDefs(entity, true),
             label = {
@@ -7209,7 +6532,6 @@
                     order:
                       CONFIG_DEFINITIONS.findIndex((x) => x[0] === key) + 1,
                   },
-                  { audit: false },
                 );
                 await db.bulkPut(
                   "config_items",
@@ -7253,53 +6575,7 @@
                 })),
               );
             }
-            let normalizedCount = 0;
-            for (const store of STORES) {
-              if (
-                [
-                  "internal_snapshots",
-                  "operation_journal",
-                  "form_drafts",
-                  "restore_staging",
-                ].includes(store)
-              )
-                continue;
-              const rows = await db.allIncludingDeleted(store),
-                changed = rows.filter(
-                  (row) =>
-                    !row.school_profile_id ||
-                    ((row.school_year_id || row.academic_year_id) &&
-                      (!row.school_year_id || !row.academic_year_id)) ||
-                    !row.created_at ||
-                    !row.updated_at ||
-                    !Number(row.revision) ||
-                    !row.device_id,
-                );
-              if (changed.length) {
-                await db.bulkPut(
-                  store,
-                  changed.map((row) => ({
-                    ...row,
-                    school_profile_id:
-                      row.school_profile_id || APP.schoolProfileId,
-                    ...(row.school_year_id || row.academic_year_id
-                      ? {
-                          school_year_id:
-                            row.school_year_id || row.academic_year_id,
-                          academic_year_id:
-                            row.academic_year_id || row.school_year_id,
-                        }
-                      : {}),
-                    created_at: row.created_at || row.updated_at || now(),
-                    updated_at: row.updated_at || row.created_at || now(),
-                    revision: Number(row.revision || 1),
-                    source: row.source || "migration-v8",
-                  })),
-                  { preserveMetadata: true },
-                );
-                normalizedCount += changed.length;
-              }
-            }
+            const { normalized: normalizedCount } = await db.normalizeEnhancedData();
             await db.put(
               "migration_logs",
               {
@@ -7309,7 +6585,6 @@
                 normalized_records: normalizedCount,
                 summary: `Chuẩn hóa ${normalizedCount} bản ghi với hồ sơ trường, năm học, phiên bản sửa đổi và nguồn; giữ nguyên ID.`,
               },
-              { audit: false },
             );
             await setting("migration_9_completed", true);
             await createInternalSnapshot("Sau nâng cấp lược đồ 9", {
@@ -7330,7 +6605,6 @@
                   status: "failed",
                   summary: error.message,
                 },
-                { audit: false },
               );
             } catch (_) {}
             await finishOperation(operation, "failed", {
@@ -7372,141 +6646,6 @@
           } catch (_) {}
         }
 
-        async function snapshotPayload(yearId = null) {
-          const data = {},
-            counts = {};
-          for (const store of STORES) {
-            if (SNAPSHOT_EXCLUDED_STORES.has(store)) continue;
-            let rows = await db.allIncludingDeleted(store);
-            if (yearId)
-              rows = rows.filter(
-                (row) => !row.school_year_id || row.school_year_id === yearId,
-              );
-            data[store] = rows.map(({ blob, ...row }) => row);
-            counts[store] = data[store].length;
-          }
-          return { data, counts };
-        }
-        async function createInternalSnapshot(
-          name,
-          {
-            tier = "manual",
-            protectedSnapshot = false,
-            reason = "manual",
-            yearId = null,
-          } = {},
-        ) {
-          tabCoordinator.assertWritable();
-          const payload = await snapshotPayload(yearId),
-            serialized = stableJSON(payload.data),
-            checksum = await sha256Text(serialized),
-            snapshot = await db.put(
-              "internal_snapshots",
-              {
-                name,
-                tier,
-                protected: protectedSnapshot,
-                reason,
-                school_year_id: yearId || null,
-                schema: APP.schema,
-                app_id: APP.appId,
-                school_profile_id: APP.schoolProfileId,
-                counts: payload.counts,
-                record_count: Object.values(payload.counts).reduce(
-                  (sum, count) => sum + count,
-                  0,
-                ),
-                checksum,
-                payload: payload.data,
-                created_at: now(),
-              },
-              { audit: false, journal: true },
-            );
-          await pruneSnapshots();
-          return snapshot;
-        }
-        async function pruneSnapshots() {
-          const retention = {
-              daily: Number(await setting("snapshot_daily")) || 7,
-              weekly: Number(await setting("snapshot_weekly")) || 4,
-              monthly: Number(await setting("snapshot_monthly")) || 12,
-            },
-            rows = (await db.all("internal_snapshots")).sort((a, b) =>
-              String(b.created_at).localeCompare(String(a.created_at)),
-            );
-          for (const tier of Object.keys(retention)) {
-            const removable = rows
-              .filter((row) => row.tier === tier && !row.protected)
-              .slice(retention[tier]);
-            for (const row of removable)
-              await db.hardDelete("internal_snapshots", row.id);
-          }
-        }
-        async function ensureScheduledSnapshots() {
-          const rows = await db.all("internal_snapshots"),
-            hasSince = (tier, days) =>
-              rows.some(
-                (row) =>
-                  row.tier === tier &&
-                  Date.now() - Date.parse(row.created_at) < days * 86400000,
-              );
-          if (!hasSince("daily", 1))
-            await createInternalSnapshot("Tự động hằng ngày", {
-              tier: "daily",
-              reason: "scheduled",
-            });
-          if (!hasSince("weekly", 7))
-            await createInternalSnapshot("Tự động hằng tuần", {
-              tier: "weekly",
-              reason: "scheduled",
-            });
-          if (!hasSince("monthly", 28))
-            await createInternalSnapshot("Tự động hằng tháng", {
-              tier: "monthly",
-              reason: "scheduled",
-            });
-        }
-        async function ensureScheduledDirectoryBackup() {
-          if (!(await setting("backup_directory_auto"))) return;
-          const [directoryRecord] = await db.all("backup_handles"),
-            last = await setting("last_directory_backup_at");
-          if (
-            !directoryRecord?.handle ||
-            (last && Date.now() - Date.parse(last) < 86400000) ||
-            !(await platform.permission(directoryRecord.handle, false))
-          )
-            return;
-          try {
-            const payload = await exportBusinessData(false),
-              text = JSON.stringify(payload),
-              blob = new Blob([text], { type: "application/json" }),
-              fileName = `tro-ly-doi-tu-dong-${today()}.json`;
-            await platform.writeFile(
-              directoryRecord.handle,
-              fileName,
-              blob,
-              false,
-            );
-            await db.put(
-              "backup_records",
-              {
-                name: fileName,
-                scope: "quick",
-                destination: "directory",
-                scheduled_while_open: true,
-                encrypted: false,
-                size: blob.size,
-                checksum: await sha256Text(text),
-                status: "completed",
-                completed_at: now(),
-              },
-              { audit: false },
-            );
-            await setting("last_directory_backup_at", now());
-          } catch (error) {
-            console.warn("Scheduled directory backup skipped:", error);
-          }
-        }
         async function configItems(key, includeInactive = false) {
           return (await db.all("config_items"))
             .filter(
@@ -7515,95 +6654,6 @@
                 (includeInactive || x.active !== false),
             )
             .sort((a, b) => (a.order || 0) - (b.order || 0));
-        }
-        async function exportBusinessData(
-          includeFiles = false,
-          yearId = null,
-          signal = null,
-          onProgress = () => {},
-        ) {
-          const data = {},
-            files = [],
-            fileMetadata = [],
-            stores = STORES.filter(
-              (store) => !EXTERNAL_BACKUP_EXCLUDED_STORES.has(store),
-            );
-          let storeIndex = 0;
-          for (const store of stores) {
-            if (signal?.aborted) throw new DOMException("Đã hủy", "AbortError");
-            let rows = await db.allIncludingDeleted(store);
-            if (yearId)
-              rows = rows.filter(
-                (row) => !row.school_year_id || row.school_year_id === yearId,
-              );
-            if (store === "attachments") {
-              data[store] = rows.map(({ blob, ...meta }) => meta);
-              if (includeFiles)
-                for (let index = 0; index < rows.length; index++) {
-                  if (signal?.aborted)
-                    throw new DOMException("Đã hủy", "AbortError");
-                  const row = rows[index];
-                  if (row.blob instanceof Blob)
-                    files.push({
-                      id: row.id,
-                      name: row.original_name || row.name,
-                      type: row.mime_type || row.blob.type,
-                      size: row.blob.size,
-                      sha256: row.sha256 || (await sha256Blob(row.blob)),
-                      data: await blobToBase64(row.blob, signal, (ratio) =>
-                        onProgress({
-                          phase: "files",
-                          ratio: rows.length
-                            ? (index + ratio) / rows.length
-                            : 1,
-                        }),
-                      ),
-                    });
-                  fileMetadata.push({
-                    id: row.id,
-                    name: row.original_name || row.name,
-                    type: row.mime_type || row.blob?.type || "",
-                    size: Number(row.size || row.blob?.size || 0),
-                    sha256: row.sha256 || "",
-                    included: includeFiles && row.blob instanceof Blob,
-                  });
-                }
-            } else data[store] = rows;
-            storeIndex++;
-            onProgress({ phase: "records", ratio: storeIndex / stores.length });
-            await new Promise((resolve) => setTimeout(resolve, 0));
-          }
-          const payloadChecksum = await sha256Text(stableJSON(data)),
-            exportedAt = now();
-          return {
-            app: APP.name,
-            app_id: APP.appId,
-            school_profile_id: APP.schoolProfileId,
-            format: APP.backupFormat,
-            scope: yearId ? "academic-year" : includeFiles ? "full" : "quick",
-            version: APP.version,
-            schema: APP.schema,
-            build_id: APP.buildId,
-            exported_at: exportedAt,
-            includes_attachments: includeFiles,
-            manifest: {
-              app_id: APP.appId,
-              school_profile_id: APP.schoolProfileId,
-              device_id: DEVICE_ID,
-              academic_year_id: yearId,
-              exported_at: exportedAt,
-              source_checksum: payloadChecksum,
-              record_count: Object.values(data).reduce(
-                (n, rows) => n + rows.length,
-                0,
-              ),
-              file_count: files.length,
-              total_file_bytes: files.reduce((n, x) => n + x.size, 0),
-              file_metadata: fileMetadata,
-            },
-            data,
-            files,
-          };
         }
         boot();
       })();
