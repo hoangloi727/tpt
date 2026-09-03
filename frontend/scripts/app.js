@@ -156,6 +156,36 @@
           updateSchoolBranding();
         }
 
+        function resetSessionState() {
+          if (state.brandLogoUrl) URL.revokeObjectURL(state.brandLogoUrl);
+          Object.assign(state, {
+            page: "dashboard",
+            yearId: "",
+            semesterId: "all",
+            weekId: "",
+            scoreDate: "",
+            campusId: "all",
+            scoreTab: "entry",
+            taskView: "list",
+            calendarDate: new Date(),
+            lastScoreUndo: null,
+            settingsTab: "school",
+            documentFolderId: "root",
+            documentView: "grid",
+            cache: {},
+            yearEditOverrides: new Map(),
+            hasPendingDraft: false,
+            modalReturnFocus: null,
+            activeBackup: null,
+            schoolId: "",
+            schoolLogo: null,
+            brandLogoUrl: "",
+            user: null,
+          });
+          state.scoreClassIds = new Set();
+          history.replaceState(null, "", "#dashboard");
+        }
+
         class SessionLockManager {
           constructor() {
             this.failedAttempts = 0;
@@ -275,7 +305,7 @@
             // An authenticated session proves root setup is complete. Never flash the setup form on logout.
             state.setupRequired = false;
             state.unlocked = false;
-            state.user = null;
+            resetSessionState();
             db?.disconnectMemory?.();
             closeModal();
             showActivation(message);
@@ -408,7 +438,11 @@
             return ["superadmin", "admin"].includes(state.user?.role);
           if (["superadmin", "admin"].includes(state.user?.role)) return true;
           if (state.user?.role === "user")
-            return page === "scores" && state.scoreClassIds.size > 0;
+            return (
+              page === "dashboard" ||
+              page === "tasks" ||
+              (page === "scores" && state.scoreClassIds.size > 0)
+            );
           if (page === "scores" && state.scoreClassIds.size) return true;
           const permissions = state.user?.permissions || [];
           return permissions.includes("*") || permissions.includes(page) || permissions.includes(`page:${page}`);
@@ -584,22 +618,28 @@
           if (state.user?.role !== "teacher") {
             await loadContext();
             await loadScoreAssignment();
-            const [activeSchool] = await db.all("schools");
-            state.schoolLogo = activeSchool?.brand_logo || null;
+            if (state.user?.role !== "user") {
+              const [activeSchool] = await db.all("schools");
+              state.schoolLogo = activeSchool?.brand_logo || null;
+            }
           }
           updateSchoolBranding();
           renderNav();
           sessionLock.setTimeoutMinutes(
             state.user?.role === "teacher"
               ? 10
-              : Number(await setting("auto_lock_minutes")) || 10,
+              : state.user?.role === "user"
+                ? 10
+                : Number(await setting("auto_lock_minutes")) || 10,
           );
           const manager = ["superadmin", "admin"].includes(state.user?.role);
           $("#quickAdd").classList.toggle("hidden", !manager);
           document.body.dataset.paper =
             state.user?.role === "teacher"
               ? "portrait"
-              : (await setting("paper_orientation")) || "landscape";
+              : state.user?.role === "user"
+                ? "landscape"
+                : (await setting("paper_orientation")) || "landscape";
           const route = location.hash.replace(/^#/, ""),
             initialPage = NAV.some(([id]) => id === route) && canAccessPage(route)
               ? route
@@ -1202,6 +1242,7 @@
             : state.cache.campuses.find((x) => x.id === id)?.name || "—";
         }
         async function renderDashboard() {
+          if (state.user?.role === "user") return renderSaoDoChecklist(true);
           const [tasks, events, classes, sheets, entries] = await Promise.all([
             scoped("tasks"),
             scoped("calendar_events"),
@@ -1712,6 +1753,7 @@
         }
 
         async function renderTasks() {
+          if (state.user?.role === "user") return renderSaoDoChecklist();
           let rows = await scoped("tasks");
           const configuredStatuses = await configItems("task_status"),
             configuredPriorities = await configItems("priority"),
@@ -1778,6 +1820,50 @@
           $("#taskStatus").onchange = apply;
           $("#taskPriority").onchange = apply;
           state.taskFilter = null;
+        }
+        async function renderSaoDoChecklist(asDashboard = false) {
+          const [tasks, checks] = await Promise.all([
+              scoped("tasks"),
+              db.all("task_check_items"),
+            ]),
+            activeTasks = tasks
+              .filter((task) => task.status !== "done" && task.status !== "paused")
+              .sort((a, b) => String(a.due_date || "").localeCompare(String(b.due_date || ""))),
+            checksByTask = new Map();
+          for (const check of checks) {
+            const list = checksByTask.get(check.task_id) || [];
+            list.push(check);
+            checksByTask.set(check.task_id, list);
+          }
+          setContent(
+            pageHead(
+              asDashboard ? "Tổng quan Sao đỏ" : "Checklist Sao đỏ",
+              asDashboard
+                ? "Các mục checklist đang thực hiện."
+                : "Đánh dấu các mục được phân công. Sao đỏ không thể sửa hoặc tạo công việc.",
+            ) +
+              `<div class="card"><div class="card-body">${activeTasks.map((task) => {
+                const items = (checksByTask.get(task.id) || []).sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
+                return `<section class="task-card"><div class="split"><div><strong>${esc(task.title)}</strong><br><small class="muted">Hạn ${fmtDate(task.due_date)} • ${esc(task.priority || "Bình thường")}</small></div><span class="badge">${items.filter((item) => item.done).length}/${items.length}</span></div>${items.length ? `<div class="mt">${items.map((item) => `<label class="check-row mt"><input type="checkbox" data-sao-do-check="${item.id}" ${item.done ? "checked" : ""}><span>${esc(item.label)}${item.required ? " <strong>(bắt buộc)</strong>" : ""}</span></label>`).join("")}</div>` : '<p class="muted mt">Công việc này chưa có mục checklist.</p>'}</section>`;
+              }).join("") || '<div class="empty">Không có checklist đang thực hiện.</div>'}</div></div>`,
+          );
+          $$('[data-sao-do-check]').forEach(
+            (input) =>
+              (input.onchange = async () => {
+                const item = checks.find((check) => check.id === input.dataset.saoDoCheck);
+                if (!item) return;
+                input.disabled = true;
+                try {
+                  await db.put("task_check_items", { ...item, done: input.checked });
+                  toast(input.checked ? "Đã hoàn thành mục checklist" : "Đã bỏ đánh dấu mục checklist");
+                  renderSaoDoChecklist();
+                } catch (error) {
+                  input.checked = !input.checked;
+                  input.disabled = false;
+                  toast(error.message, "bad");
+                }
+              }),
+          );
         }
         function renderTaskArea(rows) {
           const area = $("#taskArea");

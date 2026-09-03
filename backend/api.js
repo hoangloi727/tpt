@@ -32,6 +32,8 @@ const SAO_DO_SCORE_STORES = new Set([
   "weekly_score_sheets",
   "score_entries",
   "score_grader_assignments",
+  "tasks",
+  "task_check_items",
 ]);
 const MANAGER_WRITE_STORES = new Set([
   "class_groups",
@@ -774,8 +776,8 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         (store === "score_grader_assignments" && !isManager(user)) ||
         (store === "score_entries" && !isManager(user) && !assignedGrader) ||
         (store === "audit_logs" && !isManager(user) && !assignedGrader) ||
-        (user.role === "user" && !["score_entries", "audit_logs"].includes(store)) ||
-        (!["score_entries", "audit_logs"].includes(store) &&
+         (user.role === "user" && !["score_entries", "audit_logs", "task_check_items"].includes(store)) ||
+         (!["score_entries", "audit_logs", "task_check_items"].includes(store) &&
           !canWriteStore(user, store))
       )
         return forbidden(response);
@@ -823,6 +825,20 @@ export const createApiHandler = ({ repository, sessions, users }) =>
       if (request.method === "POST" && !id) {
         const body = await readJson(request);
         assertSafeWriteBody(body);
+        if (user.role === "user" && store === "task_check_items") {
+          const existing = repository.get(
+            store,
+            String(body.row?.id || ""),
+            user.selectedSchoolId,
+          );
+          if (
+            !existing ||
+            Object.entries(body.row || {}).some(
+              ([key, value]) => key !== "done" && key !== "updated_at" && existing[key] !== value,
+            )
+          )
+            return forbidden(response);
+        }
         if (store === "score_grader_assignments") {
           const target = users.get(body.row?.user_id);
           if (
