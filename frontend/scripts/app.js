@@ -4344,13 +4344,13 @@
         function showClassImport() {
           openModal(
             "Nhập danh sách lớp",
-            `<div class="notice">Dán dữ liệu từ Excel theo 5 cột: mã lớp, tên lớp, khối, mã cơ sở, giáo viên chủ nhiệm. Dòng tiêu đề có thể có hoặc không.</div><div class="field"><label>Dữ liệu CSV hoặc bảng dán</label><textarea id="classImportText" style="min-height:220px" placeholder="6A1\t6/1\t6\tCS1\tNguyễn Văn A"></textarea></div><div id="importPreview" class="mt"></div>`,
+            `<div class="notice">Tải mẫu CSV, mở bằng Excel để nhập thông tin, rồi tải lại tệp hoặc dán trực tiếp bảng từ Excel. Dữ liệu được thêm vào năm học đang chọn theo 5 cột: mã lớp, tên lớp, khối, mã cơ sở, giáo viên chủ nhiệm.</div><div class="toolbar mt"><button class="btn" type="button" id="downloadClassTemplate">Tải mẫu Excel (CSV)</button><label class="btn" for="classImportFile">Chọn tệp CSV</label><input id="classImportFile" type="file" accept=".csv,text/csv" hidden></div><div class="field mt"><label>Dữ liệu CSV hoặc bảng dán từ Excel</label><textarea id="classImportText" style="min-height:220px" placeholder="Mã lớp\tTên lớp\tKhối\tMã cơ sở\tGiáo viên chủ nhiệm"></textarea></div><div id="importPreview" class="mt"></div>`,
             `<button class="btn" id="cancelImport">Hủy</button><button class="btn" id="previewImport">Xem trước</button><button class="btn primary" id="commitImport" disabled>Nhập dữ liệu</button>`,
             true,
           );
           $("#cancelImport").onclick = closeModal;
           let parsed = [];
-          $("#previewImport").onclick = () => {
+          const parseClasses = () => {
             const text = $("#classImportText").value.trim();
             if (!text) return toast("Hãy dán dữ liệu.", "bad");
             const delim = text.includes("\t") ? "\t" : ",",
@@ -4358,7 +4358,7 @@
                 .split(/\r?\n/)
                 .map((line) => parseDelimited(line, delim))
                 .filter((r) => r.length >= 4);
-            if (rows[0] && /mã|ma_lop/i.test(rows[0][0])) rows.shift();
+            if (rows[0] && /mã|ma_lop|^code$/i.test(String(rows[0][0]).replace(/^\uFEFF/, ""))) rows.shift();
             parsed = rows.map((r, i) => ({
               row: i + 1,
               code: r[0]?.trim(),
@@ -4389,9 +4389,26 @@
                       ? "Lỗi"
                       : "Hợp lệ",
                   ]),
-              )}`;
+            )}`;
             $("#commitImport").disabled = !!errors.length || !parsed.length;
           };
+          $("#downloadClassTemplate").onclick = () =>
+            download(
+              "\ufeffMã lớp,Tên lớp,Khối,Mã cơ sở,Giáo viên chủ nhiệm\r\n",
+              "mau-nhap-lop-excel.csv",
+              "text/csv;charset=utf-8",
+            );
+          $("#classImportFile").onchange = async (event) => {
+            const file = event.target.files?.[0];
+            if (!file) return;
+            try {
+              $("#classImportText").value = await file.text();
+              parseClasses();
+            } catch (error) {
+              toast("Không thể đọc tệp: " + error.message, "bad");
+            }
+          };
+          $("#previewImport").onclick = parseClasses;
           $("#commitImport").onclick = async () => {
             const existing = await db.all("classes"),
               fresh = parsed
@@ -5254,7 +5271,7 @@
             pageHead(
               "Quản lý người dùng",
               `Tài khoản thuộc ${state.user?.selectedSchoolName || "trường đang chọn"}.`,
-              `${isSuperadmin ? '<button class="btn" id="addSchool">＋ Thêm trường</button>' : ""}<button class="btn primary" id="addUser">＋ Thêm người dùng</button>`,
+              `${isSuperadmin ? '<button class="btn" id="addSchool">＋ Thêm trường</button>' : ""}<button class="btn" id="importUsers">Nhập Excel/CSV</button><button class="btn primary" id="addUser">＋ Thêm người dùng</button>`,
             ) +
               `<div class="notice"><strong>Admin có toàn quyền trong trường này</strong> và có thể quản lý User/Admin, nhưng không thể tạo hoặc quản lý Superadmin. Superadmin dùng bộ chọn trường trên thanh điều hướng để đổi phạm vi.</div><div class="table-wrap"><table><thead><tr><th>Tài khoản</th><th>Tên hiển thị</th><th>Vai trò</th><th>Quyền</th><th>Trạng thái</th><th>Lần đăng nhập cuối</th><th>Thao tác</th></tr></thead><tbody>${users
                 .map(
@@ -5280,6 +5297,8 @@
                 .join("")}</tbody></table></div>`,
           );
           $("#addUser").onclick = () => openUserForm();
+          $("#importUsers").onclick = () =>
+            showUserImport().catch((error) => toast(error.message, "bad"));
           if ($("#addSchool"))
             $("#addSchool").onclick = async () => {
               const name = await promptDialog("Tên trường mới:");
@@ -5313,6 +5332,117 @@
                 );
               }),
           );
+        }
+
+        async function showUserImport() {
+          const importClasses = await db.all("classes");
+          openModal(
+            "Nhập tài khoản từ Excel/CSV",
+            `<div class="notice">Tải mẫu CSV, mở bằng Excel để nhập thông tin, rồi tải lại tệp hoặc dán trực tiếp bảng từ Excel. Cột bắt buộc: tên đăng nhập, tên hiển thị, mật khẩu (tối thiểu 10 ký tự), vai trò <code>user</code>, <code>admin</code> hoặc <code>teacher</code>. Teacher cần thêm năm học và lớp chủ nhiệm, dùng tên hoặc ID năm học và mã/tên/ID lớp.</div><div class="toolbar mt"><button class="btn" type="button" id="downloadUserTemplate">Tải mẫu Excel (CSV)</button><label class="btn" for="userImportFile">Chọn tệp CSV</label><input id="userImportFile" type="file" accept=".csv,text/csv" hidden></div><div class="field mt"><label>Dữ liệu CSV hoặc bảng dán từ Excel</label><textarea id="userImportText" style="min-height:220px" placeholder="Tên đăng nhập\tTên hiển thị\tMật khẩu\tVai trò\tNăm học chủ nhiệm\tLớp chủ nhiệm"></textarea></div><div id="userImportPreview" class="mt"></div>`,
+            '<button class="btn" id="cancelUserImport">Hủy</button><button class="btn" id="previewUserImport">Xem trước</button><button class="btn primary" id="commitUserImport" disabled>Thêm tài khoản</button>',
+            true,
+          );
+          let parsed = [];
+          const parseUsers = () => {
+            const text = $("#userImportText").value.trim();
+            if (!text) return toast("Hãy chọn tệp hoặc dán dữ liệu từ Excel.", "bad");
+            const delimiter = text.includes("\t") ? "\t" : ",",
+              rows = text
+                .split(/\r?\n/)
+                .map((line) => parseDelimited(line, delimiter))
+                .filter((row) => row.some((value) => String(value || "").trim()));
+            if (rows[0] && /username|tên đăng nhập|ten dang nhap/i.test(String(rows[0][0]).replace(/^\uFEFF/, ""))) rows.shift();
+            const existingUsernames = new Set();
+            parsed = rows.map((row, index) => {
+              const username = String(row[0] || "").trim().toLowerCase(),
+                displayName = String(row[1] || "").trim(),
+                password = String(row[2] || ""),
+                role = String(row[3] || "user").trim().toLowerCase() || "user",
+                teacherYear = String(row[4] || "").trim(),
+                teacherClass = String(row[5] || "").trim(),
+                schoolYear = state.cache.years?.find(
+                  (year) => year.id === teacherYear || year.name === teacherYear,
+                ),
+                schoolClass = importClasses.find(
+                  (item) =>
+                    item.id === teacherClass ||
+                    item.code === teacherClass ||
+                    item.class_name === teacherClass,
+                );
+              const errors = [];
+              if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(username)) errors.push("Tên đăng nhập không hợp lệ");
+              if (!displayName) errors.push("Thiếu tên hiển thị");
+              if (password.length < 10) errors.push("Mật khẩu dưới 10 ký tự");
+              if (!["user", "admin", "teacher"].includes(role)) errors.push("Vai trò phải là user, admin hoặc teacher");
+              if (role === "teacher" && !schoolYear) errors.push("Không tìm thấy năm học Teacher");
+              if (role === "teacher" && !schoolClass) errors.push("Không tìm thấy lớp chủ nhiệm");
+              if (role === "teacher" && schoolClass?.school_year_id !== schoolYear?.id)
+                errors.push("Lớp không thuộc năm học Teacher");
+              if (existingUsernames.has(username)) errors.push("Trùng tên đăng nhập trong tệp");
+              existingUsernames.add(username);
+              return {
+                row: index + 2,
+                username,
+                displayName,
+                password,
+                role,
+                teacherAssignment:
+                  role === "teacher" && schoolYear && schoolClass
+                    ? { schoolYearId: schoolYear.id, classId: schoolClass.id }
+                    : null,
+                errors,
+              };
+            });
+            const errors = parsed.filter((item) => item.errors.length);
+            $("#userImportPreview").innerHTML = `<div class="notice ${errors.length ? "danger" : ""}">${parsed.length} dòng; ${errors.length} dòng lỗi.</div>${simpleTable(["Dòng", "Tên đăng nhập", "Tên hiển thị", "Vai trò", "Lớp chủ nhiệm", "Kết quả"], parsed.slice(0, 30).map((item) => [item.row, item.username, item.displayName, item.role, item.teacherAssignment ? importClasses.find((schoolClass) => schoolClass.id === item.teacherAssignment.classId)?.class_name || "—" : "—", item.errors.join("; ") || "Hợp lệ"]))}`;
+            $("#commitUserImport").disabled = !!errors.length || !parsed.length;
+          };
+          $("#downloadUserTemplate").onclick = () =>
+            download(
+              "\ufeffTên đăng nhập,Tên hiển thị,Mật khẩu,Vai trò,Năm học chủ nhiệm,Lớp chủ nhiệm\r\n",
+              "mau-nhap-tai-khoan-excel.csv",
+              "text/csv;charset=utf-8",
+            );
+          $("#userImportFile").onchange = async (event) => {
+            const file = event.target.files?.[0];
+            if (!file) return;
+            try {
+              $("#userImportText").value = await file.text();
+              parseUsers();
+            } catch (error) {
+              toast("Không thể đọc tệp: " + error.message, "bad");
+            }
+          };
+          $("#cancelUserImport").onclick = closeModal;
+          $("#previewUserImport").onclick = parseUsers;
+          $("#commitUserImport").onclick = async () => {
+            const existing = await db.listUsers(),
+              existingUsernames = new Set(existing.map((user) => user.username));
+            const duplicates = parsed.filter((item) => existingUsernames.has(item.username));
+            if (duplicates.length)
+              return toast(`Tên đăng nhập đã tồn tại: ${duplicates.map((item) => item.username).join(", ")}`, "bad");
+            const button = $("#commitUserImport");
+            button.disabled = true;
+            try {
+              for (const item of parsed)
+                await db.createUser({
+                  username: item.username,
+                  displayName: item.displayName,
+                  password: item.password,
+                  role: item.role,
+                  permissions: ["dashboard"],
+                  ...(item.teacherAssignment
+                    ? { teacherAssignment: item.teacherAssignment }
+                    : {}),
+                });
+              closeModal();
+              toast(`Đã thêm ${parsed.length} tài khoản.`);
+              renderUserManagement();
+            } catch (error) {
+              button.disabled = false;
+              toast("Nhập tài khoản chưa hoàn tất: " + error.message, "bad");
+            }
+          };
         }
 
         async function openUserForm(user = null) {
