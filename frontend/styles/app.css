@@ -749,6 +749,31 @@
         gap: 10px;
         overflow: auto;
       }
+      .score-status-kanban {
+        grid-template-columns: repeat(3, minmax(220px, 1fr));
+        margin-top: 16px;
+      }
+      .score-status-kanban .kanban-col:nth-child(1) {
+        background: #fff1f2;
+        border: 1px solid #fecdd3;
+      }
+      .score-status-kanban .kanban-col:nth-child(1) h3 {
+        color: #be123c;
+      }
+      .score-status-kanban .kanban-col:nth-child(2) {
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+      }
+      .score-status-kanban .kanban-col:nth-child(2) h3 {
+        color: #a16207;
+      }
+      .score-status-kanban .kanban-col:nth-child(3) {
+        background: #ecfdf5;
+        border: 1px solid #a7f3d0;
+      }
+      .score-status-kanban .kanban-col:nth-child(3) h3 {
+        color: #047857;
+      }
       .kanban-col {
         background: #edf2f7;
         border-radius: 9px;

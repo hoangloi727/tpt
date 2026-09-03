@@ -114,6 +114,7 @@
           documentFolderId: "root",
           documentView: "grid",
           dailyDashboardTimer: null,
+          overdueScoreDate: "",
           cache: {},
           yearEditOverrides: new Map(),
           hasPendingDraft: false,
@@ -175,6 +176,7 @@
             documentFolderId: "root",
             documentView: "grid",
             dailyDashboardTimer: null,
+            overdueScoreDate: "",
             cache: {},
             yearEditOverrides: new Map(),
             hasPendingDraft: false,
@@ -1889,16 +1891,53 @@
                   filled,
                   status: !filled ? "todo" : filled === expected ? "done" : "doing",
                 };
-              });
+              }),
+            overdueDays =
+              currentWeek && sheet && expected
+                ? scoreWeekdays(currentWeek)
+                    .filter((day) => day.date < scoreDate)
+                    .map((day) => ({
+                      ...day,
+                      items: classProgress.flatMap((schoolClass) => {
+                        const filled = new Set(
+                          entries
+                            .filter(
+                              (entry) =>
+                                entry.sheet_id === sheet.id &&
+                                entry.class_id === schoolClass.id &&
+                                entry.entry_date === day.date &&
+                                expectedCriterionIds.has(scoreEntryCriterionId(entry)),
+                            )
+                            .map((entry) => scoreEntryCriterionId(entry)),
+                        ).size;
+                        return filled < expected
+                          ? [{ ...schoolClass, date: day.date, filled }]
+                          : [];
+                      }),
+                    }))
+                    .filter((day) => day.items.length)
+                : [];
           if (currentWeek) state.weekId = currentWeek.id;
+          if (!overdueDays.some((day) => day.date === state.overdueScoreDate))
+            state.overdueScoreDate = overdueDays.at(-1)?.date || "";
+          const selectedOverdueDay = overdueDays.find(
+            (day) => day.date === state.overdueScoreDate,
+          );
           setContent(
             pageHead(
               "Tổng quan Sao đỏ",
               `Tiến độ chấm điểm ngày ${fmtDate(scoreDate)}. Dữ liệu tự làm mới vào đầu ngày mới.`,
             ) +
-              `${!sheet ? '<div class="notice warn mb">Admin chưa khởi tạo bảng chấm điểm cho tuần này.</div>' : ""}<div class="kanban">${classColumns.map(([status, label]) => { const items = classProgress.filter((schoolClass) => schoolClass.status === status); return `<section class="kanban-col"><h3>${label} • ${items.length}</h3>${items.map((schoolClass) => `<article class="task-card"><strong>${esc(schoolClass.class_name)}</strong><small class="muted">${expected ? `${schoolClass.filled}/${expected} tiêu chí đã chấm` : "Chưa có tiêu chí áp dụng"}</small></article>`).join("") || '<div class="empty">Không có lớp.</div>'}</section>`; }).join("")}</div>`,
+              `${!sheet ? '<div class="notice warn mb">Admin chưa khởi tạo bảng chấm điểm cho tuần này.</div>' : ""}${overdueDays.length ? `<section class="card mb"><div class="card-head"><h2>Quá hạn chấm điểm • ${esc(currentWeek?.name || "Tuần đang chọn")}</h2><span class="badge red">${new Set(overdueDays.flatMap((day) => day.items.map((item) => item.id))).size} lớp cần chấm</span></div><div class="card-body"><div class="tabs">${overdueDays.map((day) => `<button data-overdue-score-date="${day.date}" class="${day.date === state.overdueScoreDate ? "active" : ""}">${esc(day.label)} ${fmtDate(day.date)} <span class="badge red">${day.items.length}</span></button>`).join("")}</div><div class="grid-3 mt">${selectedOverdueDay.items.map((item) => `<article class="task-card"><strong>${esc(item.class_name)}</strong><small class="muted">${item.filled}/${expected} tiêu chí đã chấm</small></article>`).join("")}</div></div></section>` : ""}<div class="kanban score-status-kanban">${classColumns.map(([status, label]) => { const items = classProgress.filter((schoolClass) => schoolClass.status === status); return `<section class="kanban-col"><h3>${label} • ${items.length}</h3>${items.map((schoolClass) => `<article class="task-card"><strong>${esc(schoolClass.class_name)}</strong><small class="muted">${expected ? `${schoolClass.filled}/${expected} tiêu chí đã chấm` : "Chưa có tiêu chí áp dụng"}</small></article>`).join("") || '<div class="empty">Không có lớp.</div>'}</section>`; }).join("")}</div>`,
           );
           bindCommonActions();
+          $$('[data-overdue-score-date]').forEach(
+            (button) =>
+              (button.onclick = () => {
+                state.overdueScoreDate = button.dataset.overdueScoreDate;
+                renderSaoDoScoreDashboard();
+              }),
+          );
           clearTimeout(state.dailyDashboardTimer);
           const nextDay = new Date();
           nextDay.setHours(24, 0, 1, 0);
