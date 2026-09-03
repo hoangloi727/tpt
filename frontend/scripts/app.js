@@ -3133,13 +3133,34 @@
             `<div class="notice">Cảnh báo chỉ yêu cầu kiểm tra, không tự kết luận sai phạm.</div><div class="card"><div class="card-body"><ul class="compact-list">${items.map((x) => `<li><span class="badge ${x.level}">${x.level === "red" ? "Kiểm tra" : "Lưu ý"}</span><div class="main">${esc(x.text)}</div></li>`).join("") || '<li class="muted">Chưa phát hiện bất thường theo các quy tắc đang bật.</li>'}</ul></div></div>`;
         }
         async function renderScoreHistory(ctx) {
-          const logs = (await db.all("audit_logs"))
-            .filter((x) =>
-              ["score_entries", "weekly_score_sheets"].includes(x.entity),
-            )
-            .sort((a, b) => b.created_at.localeCompare(a.created_at));
+          const [allLogs, users] = await Promise.all([
+              db.all("audit_logs"),
+              db.listUsers(),
+            ]),
+            usersById = new Map(users.map((user) => [user.id, user])),
+            logs = allLogs
+              .filter((x) =>
+                ["score_entries", "weekly_score_sheets"].includes(x.entity),
+              )
+              .sort((a, b) => b.created_at.localeCompare(a.created_at)),
+            actorFor = (log) => {
+              const legacyId = String(log.reason || "").match(
+                /Người thực hiện:\s*([^;]+)/,
+              )?.[1];
+              const actor = usersById.get(log.actor_id || legacyId);
+              return log.actor_name || actor?.displayName || actor?.username || "—";
+            },
+            reasonFor = (log) => {
+              const legacyId = String(log.reason || "").match(
+                /Người thực hiện:\s*([^;]+)/,
+              )?.[1];
+              const actor = usersById.get(log.actor_id || legacyId);
+              return legacyId && actor
+                ? String(log.reason).replace(legacyId, actor.displayName || actor.username)
+                : log.reason || "—";
+            };
           $("#scoreArea").innerHTML =
-            `<div class="table-wrap"><table><thead><tr><th>Thời gian</th><th>Hành động</th><th>Nội dung</th><th>Giá trị cũ</th><th>Giá trị mới</th><th>Lý do</th></tr></thead><tbody>${logs.map((x) => `<tr><td>${fmtDateTime(x.created_at)}</td><td>${esc({ score_clear: "Xóa điểm", score_update: "Cập nhật điểm", score_create: "Tạo điểm", score_bulk_paste: "Dán điểm hàng loạt", score_undo: "Hoàn tác điểm", sheet_status: "Đổi trạng thái bảng", sheet_unlock: "Mở khóa bảng" }[x.action] || x.action)}</td><td>${esc(x.summary)}</td><td>${esc({ value: "Có dữ liệu", na: "Không áp dụng", exempt: "Được miễn" }[x.old_value] || (x.old_value ?? "—"))}</td><td>${esc({ value: "Có dữ liệu", na: "Không áp dụng", exempt: "Được miễn" }[x.new_value] || (x.new_value ?? "—"))}</td><td class="wrap">${esc(x.reason || "—")}</td></tr>`).join("") || '<tr><td colspan="6" class="empty">Chưa có điều chỉnh.</td></tr>'}</tbody></table></div>`;
+            `<div class="table-wrap"><table><thead><tr><th>Thời gian</th><th>Người thực hiện</th><th>Hành động</th><th>Nội dung</th><th>Giá trị cũ</th><th>Giá trị mới</th><th>Lý do</th></tr></thead><tbody>${logs.map((x) => `<tr><td>${fmtDateTime(x.created_at)}</td><td>${esc(actorFor(x))}</td><td>${esc({ score_clear: "Xóa điểm", score_update: "Cập nhật điểm", score_create: "Tạo điểm", score_bulk_paste: "Dán điểm hàng loạt", score_undo: "Hoàn tác điểm", sheet_status: "Đổi trạng thái bảng", sheet_unlock: "Mở khóa bảng" }[x.action] || x.action)}</td><td>${esc(x.summary)}</td><td>${esc({ value: "Có dữ liệu", na: "Không áp dụng", exempt: "Được miễn" }[x.old_value] || (x.old_value ?? "—"))}</td><td>${esc({ value: "Có dữ liệu", na: "Không áp dụng", exempt: "Được miễn" }[x.new_value] || (x.new_value ?? "—"))}</td><td class="wrap">${esc(reasonFor(x))}</td></tr>`).join("") || '<tr><td colspan="7" class="empty">Chưa có điều chỉnh.</td></tr>'}</tbody></table></div>`;
         }
 
         async function reportData() {

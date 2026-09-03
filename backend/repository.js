@@ -851,6 +851,12 @@ export class SqliteRepository {
   putInto(draft, store, row, options = {}) {
     if (options.schoolId)
       row = { ...row, school_profile_id: options.schoolId };
+    if (store === "audit_logs" && options.actorId)
+      row = {
+        ...row,
+        actor_id: row.actor_id || options.actorId,
+        actor_name: row.actor_name || options.actorName || "",
+      };
     const current = row.id
       ? this.findIn(draft, store, row.id, options.schoolId || null)
       : null;
@@ -910,6 +916,8 @@ export class SqliteRepository {
             entity_id: record.id,
             summary: record.name || record.title || record.code || record.class_name || "",
             reason: options.reason || undefined,
+            actor_id: options.actorId || undefined,
+            actor_name: options.actorName || undefined,
           },
           null,
           { preserveMetadata: true, schoolId: record.school_profile_id },

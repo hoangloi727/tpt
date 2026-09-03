@@ -187,6 +187,8 @@ const archivedWriteOptions = (body, user, store) => {
   if (!reason)
     return {
       schoolId: user.selectedSchoolId,
+      actorId: user.id,
+      actorName: user.displayName || user.username,
       audit: !NO_AUTOMATIC_AUDIT_STORES.has(store),
       journal: !NO_OPERATION_JOURNAL_STORES.has(store),
     };
@@ -202,6 +204,8 @@ const archivedWriteOptions = (body, user, store) => {
   }
   return {
     schoolId: user.selectedSchoolId,
+    actorId: user.id,
+    actorName: user.displayName || user.username,
     audit: !NO_AUTOMATIC_AUDIT_STORES.has(store),
     journal: !NO_OPERATION_JOURNAL_STORES.has(store),
     allowArchivedYear: true,
@@ -870,7 +874,11 @@ export const createApiHandler = ({ repository, sessions, users }) =>
             store,
             id,
             url.searchParams.get("hard") === "1",
-            { schoolId: user.selectedSchoolId },
+            {
+              schoolId: user.selectedSchoolId,
+              actorId: user.id,
+              actorName: user.displayName || user.username,
+            },
           ),
         );
       }
