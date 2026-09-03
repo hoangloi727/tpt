@@ -76,7 +76,7 @@ export class UserStore {
       version: 2,
       users: users.map((user) => ({
         ...user,
-        role: ["superadmin", "admin"].includes(user.role)
+        role: ["superadmin", "admin", "teacher"].includes(user.role)
           ? user.role
           : "user",
         schoolId:
@@ -204,7 +204,7 @@ export class UserStore {
     schoolId,
   }) {
     const normalized = this.validateUsername(username);
-    const normalizedRole = ["superadmin", "admin"].includes(role)
+    const normalizedRole = ["superadmin", "admin", "teacher"].includes(role)
       ? role
       : "user";
     const credentials = await this.passwordFields(password);
@@ -252,7 +252,7 @@ export class UserStore {
         user.displayName = String(changes.displayName || user.username).trim().slice(0, 120);
       }
       if (!user.root && changes.role !== undefined) {
-        user.role = ["superadmin", "admin"].includes(changes.role)
+        user.role = ["superadmin", "admin", "teacher"].includes(changes.role)
           ? changes.role
           : "user";
         user.schoolId =

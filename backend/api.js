@@ -24,6 +24,7 @@ const MANAGER_WRITE_STORES = new Set([
   "criteria_sets",
   "criteria_groups",
   "criteria",
+  "teacher_class_assignments",
 ]);
 const NO_AUTOMATIC_AUDIT_STORES = new Set([
   "audit_logs",
@@ -139,14 +140,16 @@ const sessionUser = (user, school) => ({
 });
 
 const canReadStore = (user, store) =>
-  store === "score_grader_assignments" ||
+  user.role !== "teacher" &&
+  (store === "score_grader_assignments" ||
   ["superadmin", "admin"].includes(user.role) ||
   hasPermission(user, `store:${store}:read`) ||
-  (hasPermission(user, "dashboard") && DASHBOARD_STORES.has(store));
+  (hasPermission(user, "dashboard") && DASHBOARD_STORES.has(store)));
 
 const canWriteStore = (user, store) =>
-  ["superadmin", "admin"].includes(user.role) ||
-  hasPermission(user, `store:${store}:write`);
+  user.role !== "teacher" &&
+  (["superadmin", "admin"].includes(user.role) ||
+    hasPermission(user, `store:${store}:write`));
 
 const isManager = (user) => ["superadmin", "admin"].includes(user.role);
 
@@ -212,6 +215,55 @@ const clearGraderAssignments = async (repository, userId, schoolId) => {
     await repository.remove("score_grader_assignments", assignment.id, false, {
       schoolId,
     });
+};
+
+const clearTeacherAssignments = async (repository, userId, schoolId) => {
+  const assignments = repository
+    .all("teacher_class_assignments", false, schoolId)
+    .filter((row) => row.user_id === userId);
+  for (const assignment of assignments)
+    await repository.remove("teacher_class_assignments", assignment.id, false, {
+      schoolId,
+    });
+};
+
+const validateTeacherAssignment = (repository, assignment, schoolId) => {
+  const schoolYearId = String(assignment?.schoolYearId || "").trim(),
+    classId = String(assignment?.classId || "").trim();
+  if (!schoolYearId || !classId) {
+    const error = new Error("Tài khoản Teacher cần được phân công một lớp và năm học.");
+    error.status = 400;
+    throw error;
+  }
+  const schoolClass = repository.get("classes", classId, schoolId);
+  if (!schoolClass || (schoolClass.school_year_id || schoolClass.academic_year_id) !== schoolYearId) {
+    const error = new Error("Lớp được phân công không thuộc năm học đã chọn.");
+    error.status = 400;
+    throw error;
+  }
+  return { schoolYearId, classId };
+};
+
+const setTeacherAssignment = async (repository, user, assignment, schoolId) => {
+  if (user.role !== "teacher") return;
+  const { schoolYearId, classId } = validateTeacherAssignment(
+    repository,
+    assignment,
+    schoolId,
+  );
+  const current = repository
+    .all("teacher_class_assignments", false, schoolId)
+    .find((row) => row.user_id === user.id && row.school_year_id === schoolYearId);
+  await repository.put(
+    "teacher_class_assignments",
+    {
+      ...(current || {}),
+      user_id: user.id,
+      school_year_id: schoolYearId,
+      class_id: classId,
+    },
+    { schoolId },
+  );
 };
 
 export const createApiHandler = ({ repository, sessions, users }) =>
@@ -376,10 +428,14 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           if (user.role === "admin") {
             if (body.role === "superadmin") body.role = "admin";
           }
+          if (body.role === "teacher")
+            validateTeacherAssignment(repository, body.teacherAssignment, user.selectedSchoolId);
+          const created = await users.create({ ...body, schoolId: user.selectedSchoolId });
+          await setTeacherAssignment(repository, created, body.teacherAssignment, user.selectedSchoolId);
           return sendJson(
             response,
             201,
-            await users.create({ ...body, schoolId: user.selectedSchoolId }),
+            created,
           );
         }
       }
@@ -402,7 +458,20 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           if (user.role === "admin") {
             if (changes.role === "superadmin") changes.role = "admin";
           }
+          if ((changes.role || target.role) === "teacher")
+            validateTeacherAssignment(
+              repository,
+              changes.teacherAssignment,
+              user.selectedSchoolId,
+            );
           const updated = await users.update(id, changes);
+          await setTeacherAssignment(repository, updated, changes.teacherAssignment, user.selectedSchoolId);
+          if (updated.disabled || updated.role !== "teacher")
+            await clearTeacherAssignments(
+              repository,
+              id,
+              target.schoolId || user.selectedSchoolId,
+            );
           if (updated.disabled || updated.role !== "user")
             await clearGraderAssignments(
               repository,
@@ -435,6 +504,12 @@ export const createApiHandler = ({ repository, sessions, users }) =>
               id,
               target.schoolId || user.selectedSchoolId,
             );
+          if (removed)
+            await clearTeacherAssignments(
+              repository,
+              id,
+              target.schoolId || user.selectedSchoolId,
+            );
           sessions.revokeUser(id);
           return sendJson(response, removed ? 200 : 404, { removed });
         }
@@ -443,6 +518,53 @@ export const createApiHandler = ({ repository, sessions, users }) =>
       if (request.method === "GET" && url.pathname === "/api/export") {
         if (!hasPermission(user, "data:export")) return forbidden(response);
         return sendJson(response, 200, repository.exportAll(user.selectedSchoolId));
+      }
+      if (request.method === "GET" && url.pathname === "/api/teacher/class-week") {
+        if (user.role !== "teacher") return forbidden(response);
+        const yearId = String(url.searchParams.get("schoolYearId") || "").trim();
+        const assignments = repository.all("teacher_class_assignments", false, user.selectedSchoolId);
+        const assignment = assignments.find(
+          (row) => row.user_id === user.id && (!yearId || row.school_year_id === yearId),
+        );
+        if (!assignment) return sendJson(response, 404, { error: "Chưa được phân công lớp cho năm học này." });
+        const weeks = repository
+          .all("school_weeks", false, user.selectedSchoolId)
+          .filter((row) => row.school_year_id === assignment.school_year_id)
+          .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)));
+        const weekId = String(url.searchParams.get("weekId") || weeks.at(-1)?.id || "");
+        const sheet = repository
+          .all("weekly_score_sheets", false, user.selectedSchoolId)
+          .find((row) => row.week_id === weekId);
+        const schoolClass = repository.get("classes", assignment.class_id, user.selectedSchoolId);
+        const snapshot = sheet && ["approved", "locked"].includes(sheet.status)
+          ? repository
+              .all("ranking_snapshots", false, user.selectedSchoolId)
+              .filter((row) => row.sheet_id === sheet.id)
+              .sort((a, b) => String(b.updated_at).localeCompare(String(a.updated_at)))[0]
+          : null;
+        const ranking = snapshot?.rows?.find((row) => (row.id || row.class_id) === assignment.class_id) || null;
+        const criteria = new Map(
+          repository.all("criteria", false, user.selectedSchoolId).map((row) => [row.id, row]),
+        );
+        const incidents = repository
+          .all("score_entries", false, user.selectedSchoolId)
+          .filter((row) => row.sheet_id === sheet?.id && row.class_id === assignment.class_id)
+          .flatMap((entry) =>
+            (entry.incidents || []).map((incident) => ({
+              date: entry.entry_date,
+              person_name: incident.person_name,
+              rule: criteria.get(incident.criteria_id)?.name || incident.criteria_id,
+              points: Number(incident.points || 0),
+            })),
+          );
+        return sendJson(response, 200, {
+          assignment: { school_year_id: assignment.school_year_id, class: schoolClass },
+          weeks,
+          week: weeks.find((row) => row.id === weekId) || null,
+          ranking,
+          official: ["approved", "locked"].includes(sheet?.status),
+          incidents,
+        });
       }
       if (request.method === "POST" && url.pathname === "/api/import/replace") {
         if (!hasPermission(user, "data:import")) return forbidden(response);
@@ -478,6 +600,49 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           response,
           200,
           { normalized: await repository.normalizeEnhancedData(user.selectedSchoolId) },
+        );
+      }
+      const scoreSheetMatch = url.pathname.match(/^\/api\/score-sheets\/([^/]+)$/);
+      if (scoreSheetMatch) {
+        if (!isManager(user)) return forbidden(response);
+        if (request.method !== "DELETE")
+          return sendJson(response, 405, { error: "Phương thức không được phép." });
+        const body = await readJson(request);
+        if (body.confirmation !== "XÓA BẢNG TUẦN")
+          return sendJson(response, 400, {
+            error: "Cần nhập chính xác XÓA BẢNG TUẦN để xác nhận.",
+          });
+        return sendJson(
+          response,
+          200,
+          await repository.deleteWeeklyScoreSheet(
+            decodeURIComponent(scoreSheetMatch[1]),
+            user.selectedSchoolId,
+            user.id,
+          ),
+        );
+      }
+      const criteriaSetMatch = url.pathname.match(/^\/api\/criteria-sets\/([^/]+)$/);
+      if (criteriaSetMatch) {
+        if (!isManager(user)) return forbidden(response);
+        if (request.method !== "DELETE")
+          return sendJson(response, 405, { error: "Phương thức không được phép." });
+        const body = await readJson(request);
+        if (
+          body.confirmation !== "XÓA BỘ TIÊU CHÍ" ||
+          body.finalConfirmation !== "XÓA TOÀN BỘ DỮ LIỆU LIÊN QUAN"
+        )
+          return sendJson(response, 400, {
+            error: "Cần hoàn tất cả hai xác nhận xóa bộ tiêu chí.",
+          });
+        return sendJson(
+          response,
+          200,
+          await repository.forceDeleteCriteriaSet(
+            decodeURIComponent(criteriaSetMatch[1]),
+            user.selectedSchoolId,
+            user.id,
+          ),
         );
       }
 

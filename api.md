@@ -28,6 +28,12 @@ http://127.0.0.1:3000/api
 - Không có route `multipart/form-data`. Tệp nhị phân phải nằm trong Blob envelope JSON được mô tả bên dưới.
 - Giới hạn body JSON thô là `100 * 1024 * 1024` byte (100 MiB). Vượt giới hạn sẽ trả về `413`. Base64 và toàn bộ nội dung JSON còn lại đều được tính vào giới hạn này.
 - Không có giới hạn riêng cho từng tệp và không có giới hạn response nào được công bố trong các tệp nguồn. Không nên suy diễn rằng có thể upload một tệp 100 MiB vì base64 làm tăng kích thước.
+
+### Xóa dữ liệu thi đua
+
+- `DELETE /api/score-sheets/:id` chỉ dành cho Admin/Superadmin. Body JSON phải có `{ "confirmation": "XÓA BẢNG TUẦN" }`. Máy chủ xóa vật lý bảng tuần, mọi dòng điểm, minh chứng điểm và snapshot xếp hạng liên quan trong một transaction; nhật ký kiểm toán được giữ lại.
+- `DELETE /api/criteria-sets/:id` chỉ dành cho Admin/Superadmin. Body JSON phải có cả `{ "confirmation": "XÓA BỘ TIÊU CHÍ", "finalConfirmation": "XÓA TOÀN BỘ DỮ LIỆU LIÊN QUAN" }`. Máy chủ xóa bộ tiêu chí, nhóm/nội dung và mọi bảng tuần, điểm, minh chứng và snapshot dùng bộ đó trong một transaction.
+- `GET /api/teacher/class-week` chỉ dành cho Teacher. Kết quả giới hạn vào lớp được phân công trong năm học, xếp hạng chính thức của lớp và các ghi nhận có tên trong tuần. Endpoint không cấp quyền đọc store tổng quát.
 - ID store và ID bản ghi trong path phải được URL-encode.
 
 ### 3. Xác thực và phiên
@@ -748,6 +754,12 @@ http://127.0.0.1:3000/api
 - There is no `multipart/form-data` route. Binary files must be carried in the JSON Blob envelope described below.
 - The raw JSON body limit is `100 * 1024 * 1024` bytes (100 MiB). Exceeding it returns `413`. Base64 and all other JSON content count toward this limit.
 - The source files define no separate per-file limit and no advertised response limit. Do not infer that a 100 MiB file can be uploaded, because base64 increases its size.
+
+### Competition-data deletion
+
+- `DELETE /api/score-sheets/:id` is Admin/Superadmin-only. The JSON body must be `{ "confirmation": "XÓA BẢNG TUẦN" }`. The server physically removes the weekly sheet, every score row, score evidence, and related ranking snapshot in one transaction while retaining audit history.
+- `DELETE /api/criteria-sets/:id` is Admin/Superadmin-only. The JSON body must include both `{ "confirmation": "XÓA BỘ TIÊU CHÍ", "finalConfirmation": "XÓA TOÀN BỘ DỮ LIỆU LIÊN QUAN" }`. The server removes the criteria set, groups/rules, and every related weekly sheet, score, evidence, and snapshot in one transaction.
+- `GET /api/teacher/class-week` is Teacher-only. It is limited to the assigned class, its official ranking, and named weekly incidents. It does not grant generic store-read access.
 - Store and record IDs in paths must be URL-encoded.
 
 ### 3. Authentication and sessions

@@ -7,7 +7,7 @@
 ### Tính năng chính
 
 - Quản lý nhiều trường; mọi phiên đăng nhập và yêu cầu dữ liệu nghiệp vụ đều gắn với trường đang chọn.
-- Ba vai trò tài khoản: `superadmin` (gồm tài khoản root toàn cục), `admin` của trường và `user` với quyền chi tiết. Người dùng thường mới mặc định chỉ có quyền xem bảng điều khiển.
+- Bốn vai trò tài khoản: `superadmin` (gồm tài khoản root toàn cục), `admin` của trường, `teacher` chỉ xem lớp chủ nhiệm được giao, và `user` với quyền chi tiết. Người dùng thường mới mặc định chỉ có quyền xem bảng điều khiển.
 - Quản lý năm học, tuần học, cơ sở, khối, lớp, nhóm lớp, kế hoạch, công việc, hoạt động, hồ sơ Đội, tài liệu, thiết bị và báo cáo.
 - Bộ quy tắc thi đua động theo phiên bản, gồm danh mục và hạng mục con cộng/trừ điểm. Có thể ghi nhận sự việc theo từng ngày từ thứ Hai đến thứ Sáu kèm minh chứng.
 - Điểm tuần áp dụng điểm chuẩn một lần rồi cộng các điều chỉnh hằng ngày (hoặc dùng công thức tổng theo cấu hình). Phiếu tuần là ranh giới duyệt và khóa dữ liệu.
@@ -86,7 +86,7 @@ A school youth-team administration and competition application with a PWA fronte
 ### Key features
 
 - Multi-school management; every login session and business-data request is scoped to the selected school.
-- Three account roles: `superadmin` (including the global root account), school `admin`, and permission-based `user`. New ordinary users default to dashboard-only access.
+- Four account roles: `superadmin` (including the global root account), school `admin`, read-only `teacher` for an assigned homeroom class, and permission-based `user`. New ordinary users default to dashboard-only access.
 - Management of academic years, school weeks, campuses, grades, classes, class groups, plans, tasks, activities, team records, documents, equipment, and reports.
 - Versioned dynamic competition rulesets with scoring categories and subcategories. Incidents can be recorded for each Monday-through-Friday school day with supporting evidence.
 - Weekly scores apply the base score once and then add daily adjustments (or use the configured sum formula). The weekly sheet is the approval and locking boundary.

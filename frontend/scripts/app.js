@@ -263,7 +263,7 @@
             const el = $("#sessionChip");
             if (el)
               el.textContent = state.user
-                ? `${state.user.displayName} • ${state.user.role === "superadmin" ? "Superadmin" : state.user.role === "admin" ? "Admin" : "User"}`
+                ? `${state.user.displayName} • ${state.user.role === "superadmin" ? "Superadmin" : state.user.role === "admin" ? "Admin" : state.user.role === "teacher" ? "Giáo viên" : "User"}`
                 : `Khóa sau ${state.unlockTimeoutMinutes} phút`;
           }
           lock(message = "Ứng dụng đã khóa.") {
@@ -402,6 +402,8 @@
 
         function canAccessPage(page) {
           if (page === "account") return true;
+          if (state.user?.role === "teacher") return page === "teacher";
+          if (page === "teacher") return state.user?.role === "teacher";
           if (page === "api")
             return ["superadmin", "admin"].includes(state.user?.role);
           if (["superadmin", "admin"].includes(state.user?.role)) return true;
@@ -577,23 +579,31 @@
             await ensureScheduledSnapshots();
             await ensureScheduledDirectoryBackup();
           }
-          await loadContext();
-          await loadScoreAssignment();
-          const [activeSchool] = await db.all("schools");
-          state.schoolLogo = activeSchool?.brand_logo || null;
+          if (state.user?.role !== "teacher") {
+            await loadContext();
+            await loadScoreAssignment();
+            const [activeSchool] = await db.all("schools");
+            state.schoolLogo = activeSchool?.brand_logo || null;
+          }
           updateSchoolBranding();
           renderNav();
           sessionLock.setTimeoutMinutes(
-            Number(await setting("auto_lock_minutes")) || 10,
+            state.user?.role === "teacher"
+              ? 10
+              : Number(await setting("auto_lock_minutes")) || 10,
           );
           const manager = ["superadmin", "admin"].includes(state.user?.role);
           $("#quickAdd").classList.toggle("hidden", !manager);
           document.body.dataset.paper =
-            (await setting("paper_orientation")) || "landscape";
+            state.user?.role === "teacher"
+              ? "portrait"
+              : (await setting("paper_orientation")) || "landscape";
           const route = location.hash.replace(/^#/, ""),
             initialPage = NAV.some(([id]) => id === route) && canAccessPage(route)
               ? route
-              : "dashboard";
+              : state.user?.role === "teacher"
+                ? "teacher"
+                : "dashboard";
           if (!location.hash)
             history.replaceState(null, "", `#${initialPage}`);
           await go(initialPage, false, true);
@@ -1080,6 +1090,7 @@
             tasks: renderTasks,
             calendar: renderCalendar,
             scores: renderScores,
+            teacher: renderTeacherClass,
             activities: () => renderEntity("activities"),
             organization: () => renderEntity("organization"),
             programs: () => renderEntity("programs"),
@@ -2119,6 +2130,26 @@
           };
         }
 
+        async function renderTeacherClass() {
+          const data = await db.teacherClassWeek(state.yearId, state.weekId);
+          state.yearId = data.assignment.school_year_id;
+          state.weekId = data.week?.id || "";
+          const ranking = data.ranking,
+            schoolClass = data.assignment.class,
+            incidents = data.incidents || [];
+          setContent(
+            pageHead(
+              "Lớp chủ nhiệm",
+              "Xem xếp hạng lớp và các ghi nhận trong tuần được chọn.",
+              '<button class="btn no-print" onclick="window.print()">In/Lưu PDF</button>',
+            ) +
+              `<article class="teacher-week-report"><div class="toolbar no-print"><label>Tuần <select id="teacherWeekSelect">${data.weeks.map((week) => `<option value="${week.id}" ${week.id === data.week?.id ? "selected" : ""}>${esc(week.name)}${week.start_date ? ` (${fmtDate(week.start_date)} - ${fmtDate(week.end_date)})` : ""}</option>`).join("")}</select></label></div><div class="card"><div class="card-head"><h2>${esc(schoolClass?.class_name || "Lớp chưa xác định")}</h2><span class="meta">${esc(data.week?.name || "Chưa chọn tuần")}</span></div><div class="card-body">${data.official ? "" : '<div class="notice warn">Bảng tuần chưa duyệt hoặc chưa khóa; chưa có xếp hạng chính thức.</div>'}${ranking ? `<div class="grid-3"><div class="split"><span>Hạng trong nhóm</span><strong>#${esc(ranking.rank)}</strong></div><div class="split"><span>Nhóm lớp</span><strong>${esc(ranking.class_group_name || "Chưa phân nhóm")}</strong></div><div class="split"><span>Tổng tuần</span><strong>${Number(ranking.total || 0).toFixed(1)} điểm</strong></div></div><div class="table-wrap mt"><table><thead><tr>${Object.keys(ranking.daily || {}).map((date) => `<th>${fmtDate(date)}</th>`).join("")}</tr></thead><tbody><tr>${Object.values(ranking.daily || {}).map((value) => `<td>${Number(value || 0).toFixed(1)}</td>`).join("")}</tr></tbody></table></div>` : '<div class="empty">Chưa có xếp hạng cho lớp trong tuần này.</div>'}</div></div><div class="card mt"><div class="card-head"><h2>Ghi nhận trong tuần</h2><span class="meta">${incidents.length} dòng</span></div><div class="card-body"><div class="table-wrap"><table><thead><tr><th>Ngày</th><th>Họ và tên</th><th>Nội dung</th><th>Điểm</th></tr></thead><tbody>${incidents.map((item) => `<tr><td>${fmtDate(item.date)}</td><td>${esc(item.person_name || "—")}</td><td>${esc(item.rule || "—")}</td><td class="${Number(item.points) < 0 ? "negative" : Number(item.points) > 0 ? "positive" : ""}">${Number(item.points) > 0 ? "+" : ""}${Number(item.points || 0)}</td></tr>`).join("") || '<tr><td colspan="4" class="empty">Chưa có ghi nhận có tên trong tuần này.</td></tr>'}</tbody></table></div></div></div></article>`,
+          );
+          $("#teacherWeekSelect").onchange = (event) => {
+            state.weekId = event.target.value;
+            renderTeacherClass();
+          };
+        }
         async function renderScores() {
           const ctx = await scoreContext(),
             week = state.cache.weeks.find((x) => x.id === state.weekId),
@@ -2129,7 +2160,7 @@
             pageHead(
               "Thi đua lớp",
               "Nhập điểm từng ngày, duyệt, khóa và truy vết theo tuần.",
-              `${manager ? '<button class="btn" id="assignScoreGraders">Phân công chấm điểm</button><button class="btn" id="criteriaConfig">Bộ tiêu chí</button>' : ""}<button class="btn" id="undoScore" ${state.lastScoreUndo ? "" : "disabled"}>↶ Hoàn tác</button>${manager ? `<button class="btn primary" id="scoreWorkflow">${workflowLabel(ctx.sheet)}</button>` : ""}`,
+              `${manager ? '<button class="btn" id="assignScoreGraders">Phân công chấm điểm</button><button class="btn" id="criteriaConfig">Bộ tiêu chí</button>' : ""}<button class="btn" id="undoScore" ${state.lastScoreUndo ? "" : "disabled"}>↶ Hoàn tác</button>${manager && ctx.sheet ? '<button class="btn danger" id="deleteScoreSheet">Xóa bảng tuần</button>' : ""}${manager ? `<button class="btn primary" id="scoreWorkflow">${workflowLabel(ctx.sheet)}</button>` : ""}`,
 
 
             ) +
@@ -2159,6 +2190,8 @@
             };
           if ($("#scoreWorkflow"))
             $("#scoreWorkflow").onclick = () => scoreWorkflow(ctx);
+          if ($("#deleteScoreSheet"))
+            $("#deleteScoreSheet").onclick = () => deleteScoreSheet(ctx.sheet);
           $("#undoScore").onclick = undoScore;
         }
         async function showScoreGraderAssignments() {
@@ -2693,6 +2726,29 @@
           });
           toast("Đã hoàn tác thay đổi gần nhất");
           renderScores();
+        }
+        function deleteScoreSheet(sheet) {
+          openModal(
+            "Xóa bảng thi đua tuần",
+            `<div class="notice danger"><strong>Không thể hoàn tác.</strong> Thao tác này xóa bảng tuần, toàn bộ điểm của mọi lớp và các snapshot xếp hạng liên quan. Nhật ký kiểm toán vẫn được giữ.</div><p>Nhập chính xác <code>XÓA BẢNG TUẦN</code> để tiếp tục.</p><div class="field"><input id="deleteScoreSheetConfirmation" autocomplete="off" spellcheck="false"></div>`,
+            '<button class="btn" id="cancelDeleteScoreSheet">Hủy</button><button class="btn danger" id="confirmDeleteScoreSheet" disabled>Xóa bảng tuần</button>',
+          );
+          const input = $("#deleteScoreSheetConfirmation"),
+            confirm = $("#confirmDeleteScoreSheet");
+          input.oninput = () =>
+            (confirm.disabled = input.value.trim() !== "XÓA BẢNG TUẦN");
+          $("#cancelDeleteScoreSheet").onclick = closeModal;
+          confirm.onclick = async () => {
+            try {
+              const result = await db.deleteWeeklyScoreSheet(sheet.id, input.value.trim());
+              state.lastScoreUndo = null;
+              closeModal();
+              toast(`Đã xóa bảng tuần: ${result.entries} dòng điểm, ${result.snapshots} snapshot.`);
+              renderScores();
+            } catch (error) {
+              toast(error.message, "bad");
+            }
+          };
         }
         async function scoreWorkflow(ctx) {
           if (!ctx.sheet) {
@@ -3605,6 +3661,47 @@
           };
         }
 
+        function forceDeleteRuleset(set) {
+          openModal(
+            "Xóa bộ tiêu chí",
+            `<div class="notice danger"><strong>Xóa cưỡng bức.</strong> Bộ tiêu chí, mọi bảng tuần sử dụng bộ này, điểm và snapshot xếp hạng liên quan sẽ bị xóa vĩnh viễn.</div><p>Nhập chính xác <code>XÓA BỘ TIÊU CHÍ</code> để tiếp tục.</p><div class="field"><input id="deleteRulesetConfirmation" autocomplete="off" spellcheck="false"></div>`,
+            '<button class="btn" id="cancelDeleteRuleset">Hủy</button><button class="btn danger" id="nextDeleteRuleset" disabled>Tiếp tục</button>',
+          );
+          const input = $("#deleteRulesetConfirmation"),
+            next = $("#nextDeleteRuleset");
+          input.oninput = () =>
+            (next.disabled = input.value.trim() !== "XÓA BỘ TIÊU CHÍ");
+          $("#cancelDeleteRuleset").onclick = closeModal;
+          next.onclick = () => {
+            openModal(
+              "Xác nhận xóa cuối cùng",
+              `<div class="notice danger">Không thể hoàn tác việc xóa bộ <strong>${esc(set.name || "đã chọn")}</strong> cùng toàn bộ dữ liệu điểm liên quan.</div><p>Nhập chính xác <code>XÓA TOÀN BỘ DỮ LIỆU LIÊN QUAN</code> để xóa vĩnh viễn.</p><div class="field"><input id="deleteRulesetFinalConfirmation" autocomplete="off" spellcheck="false"></div>`,
+              '<button class="btn" id="cancelDeleteRulesetFinal">Hủy</button><button class="btn danger" id="confirmDeleteRulesetFinal" disabled>Xóa vĩnh viễn</button>',
+            );
+            const finalInput = $("#deleteRulesetFinalConfirmation"),
+              confirm = $("#confirmDeleteRulesetFinal");
+            finalInput.oninput = () =>
+              (confirm.disabled =
+                finalInput.value.trim() !== "XÓA TOÀN BỘ DỮ LIỆU LIÊN QUAN");
+            $("#cancelDeleteRulesetFinal").onclick = closeModal;
+            confirm.onclick = async () => {
+              try {
+                const result = await db.forceDeleteCriteriaSet(
+                  set.id,
+                  "XÓA BỘ TIÊU CHÍ",
+                  finalInput.value.trim(),
+                );
+                state.criteriaSetId = "";
+                state.lastScoreUndo = null;
+                closeModal();
+                toast(`Đã xóa bộ tiêu chí: ${result.sheets} bảng tuần, ${result.entries} dòng điểm.`);
+                renderScores();
+              } catch (error) {
+                toast(error.message, "bad");
+              }
+            };
+          };
+        }
         async function showRulesetConfig(selectedId = "") {
           const sets = (await scoped("criteria_sets")).sort((a, b) =>
               String(b.updated_at).localeCompare(a.updated_at),
@@ -3648,7 +3745,7 @@
           openModal(
             "Quản lý bộ quy tắc thi đua",
             `<div class="notice warn">Admin tự tạo toàn bộ bộ quy tắc, danh mục và nội dung cộng/trừ điểm. Bộ đã dùng trong bảng tuần không thể sửa; hãy nhân bản thành phiên bản mới.</div><div class="toolbar"><select id="rulesetChooser" class="grow"><option value="">— Chọn bộ quy tắc —</option>${sets.map((item) => `<option value="${item.id}" ${item.id === set?.id ? "selected" : ""}>${esc(item.name)} • v${esc(item.version || "1.0")} • ${statusLabel(item.status)}</option>`).join("")}</select><button class="btn small" id="newRuleset">＋ Bộ mới</button><button class="btn small" id="cloneRuleset" ${set ? "" : "disabled"}>Nhân bản</button><button class="btn small" id="exportRuleset" ${set ? "" : "disabled"}>Xuất JSON</button></div>${set ? `<form id="rulesetSettings"><div class="form-grid"><div class="field full"><label class="required">Tên bộ quy tắc</label><input name="name" value="${esc(set.name || "")}" required ${used ? "readonly" : ""}></div><div class="field"><label>Phiên bản</label><input name="version" value="${esc(set.version || "1.0")}" required ${used ? "readonly" : ""}></div><div class="field"><label>Cách tính</label><select name="formula" ${used ? "disabled" : ""}><option value="base" ${set.formula === "base" ? "selected" : ""}>Điểm chuẩn rồi cộng/trừ</option><option value="sum" ${set.formula === "sum" ? "selected" : ""}>Cộng các điều chỉnh</option></select></div><div class="field"><label>Điểm chuẩn</label><input type="number" step="0.01" name="base_score" value="${Number(set.base_score || 0)}" ${used ? "readonly" : ""}></div><div class="field"><label>Trạng thái</label><select name="status" ${used ? "disabled" : ""}><option value="draft" ${set.status === "draft" ? "selected" : ""}>Dự thảo</option><option value="active" ${set.status === "active" ? "selected" : ""}>Đang áp dụng</option><option value="stopped" ${set.status === "stopped" ? "selected" : ""}>Ngừng áp dụng</option></select></div><div class="field full"><label>Căn cứ / ghi chú</label><textarea name="basis" ${used ? "readonly" : ""}>${esc(set.basis || "")}</textarea></div></div></form><div class="card mt"><div class="card-head"><h3>Danh mục và nội dung chấm điểm</h3><button class="btn small" id="newScoreCategory" ${used ? "disabled" : ""}>＋ Thêm danh mục</button></div><div class="card-body ruleset-categories">${categoryHtml || '<div class="empty">Chưa có danh mục. Mã, tên và nội dung đều do Admin cấu hình.</div>'}</div></div>${legacyCriteria.length ? `<div class="card mt"><div class="card-head"><h3>Tiêu chí kiểu cũ</h3></div><div class="card-body"><div class="notice">Các tiêu chí này tiếp tục dùng ô nhập số để bảo toàn dữ liệu hiện có.</div><div class="table-wrap"><table><tbody>${legacyCriteria.map((criterion) => `<tr><td><strong>${esc(criterion.code)}</strong></td><td>${esc(criterion.name)}</td><td><button class="link-btn" data-edit-legacy-criterion="${criterion.id}" ${used ? "disabled" : ""}>Sửa</button></td></tr>`).join("")}</tbody></table></div></div></div>` : ""}` : '<div class="empty">Tạo bộ quy tắc đầu tiên để bắt đầu.</div>'}`,
-            `<button class="btn" id="closeRuleset">Đóng</button>${set && !used ? '<button class="btn primary" id="saveRuleset">Lưu bộ quy tắc</button>' : ""}`,
+            `<button class="btn" id="closeRuleset">Đóng</button>${set ? '<button class="btn danger" id="deleteRuleset">Xóa bộ tiêu chí</button>' : ""}${set && !used ? '<button class="btn primary" id="saveRuleset">Lưu bộ quy tắc</button>' : ""}`,
             true,
           );
           $("#closeRuleset").onclick = closeModal;
@@ -3672,6 +3769,8 @@
                 `bo-quy-tac-${today()}.json`,
                 "application/json",
               );
+          if ($("#deleteRuleset"))
+            $("#deleteRuleset").onclick = () => forceDeleteRuleset(set);
           if ($("#saveRuleset"))
             $("#saveRuleset").onclick = async () => {
               const form = $("#rulesetSettings");
@@ -4927,7 +5026,9 @@
                 ? "Superadmin"
                 : user?.role === "admin"
                   ? "Admin trường"
-                  : "User";
+                  : user?.role === "teacher"
+                    ? "Giáo viên chủ nhiệm"
+                    : "User";
           setContent(
             pageHead(
               "Tài khoản của tôi",
@@ -4995,7 +5096,9 @@
                           ? '<span class="badge red">Superadmin</span>'
                           : user.role === "admin"
                           ? '<span class="badge blue">Admin</span>'
-                          : '<span class="badge">User</span>',
+                          : user.role === "teacher"
+                            ? '<span class="badge green">Giáo viên</span>'
+                            : '<span class="badge">User</span>',
                       actions = user.root
                         ? `<button class="link-btn" data-edit-user="${user.id}">Đổi tên/mật khẩu</button> <span class="muted">root</span>`
                         : manageable
@@ -5038,17 +5141,38 @@
           );
         }
 
-        function openUserForm(user = null) {
-          const editing = !!user,
+        async function openUserForm(user = null) {
+          const [assignments, classes] = await Promise.all([
+              db.all("teacher_class_assignments"),
+              db.all("classes"),
+            ]),
+            assignment = assignments.find(
+              (row) => row.user_id === user?.id,
+            ),
+            editing = !!user,
             isSuperadmin = state.user?.role === "superadmin",
             roleOptions = isSuperadmin
-              ? `<option value="user" ${user?.role === "user" || !user ? "selected" : ""}>User</option><option value="admin" ${user?.role === "admin" ? "selected" : ""}>Admin trường</option><option value="superadmin" ${user?.role === "superadmin" ? "selected" : ""}>Superadmin</option>`
-              : `<option value="user" ${user?.role === "user" || !user ? "selected" : ""}>User</option><option value="admin" ${user?.role === "admin" ? "selected" : ""}>Admin trường</option>`;
+              ? `<option value="user" ${user?.role === "user" || !user ? "selected" : ""}>User</option><option value="teacher" ${user?.role === "teacher" ? "selected" : ""}>Giáo viên chủ nhiệm</option><option value="admin" ${user?.role === "admin" ? "selected" : ""}>Admin trường</option><option value="superadmin" ${user?.role === "superadmin" ? "selected" : ""}>Superadmin</option>`
+              : `<option value="user" ${user?.role === "user" || !user ? "selected" : ""}>User</option><option value="teacher" ${user?.role === "teacher" ? "selected" : ""}>Giáo viên chủ nhiệm</option><option value="admin" ${user?.role === "admin" ? "selected" : ""}>Admin trường</option>`;
           openModal(
             editing ? "Sửa tài khoản" : "Thêm người dùng",
             `<form id="userForm"><div class="form-grid"><div class="field"><label class="required">Tên đăng nhập</label><input name="username" value="${esc(user?.username || "")}" minlength="3" maxlength="32" pattern="[a-z0-9._\\-]+" autocapitalize="none" required></div><div class="field"><label class="required">Tên hiển thị</label><input name="displayName" value="${esc(user?.displayName || "")}" required></div><div class="field"><label>Vai trò</label><select name="role" ${user?.root ? "disabled" : ""}>${roleOptions}</select></div><div class="field"><label>${editing ? "Mật khẩu mới (để trống nếu giữ nguyên)" : "Mật khẩu, tối thiểu 10 ký tự"}</label><input name="password" type="password" minlength="10" autocomplete="new-password" ${editing ? "" : "required"}></div><div class="field full"><label>Khóa quyền, cách nhau bằng dấu phẩy</label><textarea name="permissions" placeholder="dashboard, page:tasks, store:tasks:read">${esc((user?.permissions || ["dashboard"]).filter((value) => value !== "*").join(", "))}</textarea><small class="hint">Admin và Superadmin có toàn quyền theo vai trò; các khóa này áp dụng cho User.</small></div>${editing && !user?.root ? `<label class="check-row field full"><input type="checkbox" name="disabled" ${user.disabled ? "checked" : ""}> Khóa tài khoản này</label>` : ""}</div></form>`,
             '<button class="btn" id="cancelUser">Hủy</button><button class="btn primary" id="saveUser">Lưu tài khoản</button>',
           );
+          $("#userForm .form-grid").insertAdjacentHTML(
+            "beforeend",
+            `<div class="field full" id="teacherAssignmentField"><label>Năm học và lớp chủ nhiệm</label><div class="split"><select name="teacherSchoolYearId">${state.cache.years.map((year) => `<option value="${year.id}" ${year.id === (assignment?.school_year_id || state.yearId) ? "selected" : ""}>${esc(year.name)}</option>`).join("")}</select><select name="teacherClassId">${classes.filter((schoolClass) => schoolClass.active !== false && schoolClass.school_year_id === (assignment?.school_year_id || state.yearId)).map((schoolClass) => `<option value="${schoolClass.id}" ${schoolClass.id === assignment?.class_id ? "selected" : ""}>${esc(schoolClass.class_name)}</option>`).join("")}</select></div><small class="hint">Teacher chỉ xem xếp hạng và ghi nhận của đúng một lớp trong năm học được giao.</small></div>`,
+          );
+          const roleSelect = $('#userForm select[name="role"]'),
+            assignmentField = $("#teacherAssignmentField"),
+            assignmentInputs = $$('[name="teacherSchoolYearId"], [name="teacherClassId"]');
+          const updateTeacherAssignment = () => {
+            const teacher = roleSelect.value === "teacher";
+            assignmentField.classList.toggle("hidden", !teacher);
+            assignmentInputs.forEach((input) => (input.required = teacher));
+          };
+          roleSelect.onchange = updateTeacherAssignment;
+          updateTeacherAssignment();
           $("#cancelUser").onclick = closeModal;
           $("#saveUser").onclick = async () => {
             const form = $("#userForm");
@@ -5059,6 +5183,14 @@
                 displayName: values.displayName,
                 role: values.role,
                 permissions: permissionList(values.permissions),
+                ...(values.role === "teacher"
+                  ? {
+                      teacherAssignment: {
+                        schoolYearId: values.teacherSchoolYearId,
+                        classId: values.teacherClassId,
+                      },
+                    }
+                  : {}),
                 ...(values.password ? { password: values.password } : {}),
                 ...(editing ? { disabled: !!values.disabled } : {}),
             };

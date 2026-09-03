@@ -187,6 +187,29 @@
       });
     }
 
+    deleteWeeklyScoreSheet(id, confirmation) {
+      this.beforeWrite();
+      return this.request(`/score-sheets/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        body: JSON.stringify({ confirmation }),
+      });
+    }
+
+    forceDeleteCriteriaSet(id, confirmation, finalConfirmation) {
+      this.beforeWrite();
+      return this.request(`/criteria-sets/${encodeURIComponent(id)}`, {
+        method: "DELETE",
+        body: JSON.stringify({ confirmation, finalConfirmation }),
+      });
+    }
+
+    teacherClassWeek(schoolYearId = "", weekId = "") {
+      const query = new URLSearchParams();
+      if (schoolYearId) query.set("schoolYearId", schoolYearId);
+      if (weekId) query.set("weekId", weekId);
+      return this.request(`/teacher/class-week?${query}`);
+    }
+
     async open() {
       const result = await this.request("/health");
       this.upgradedFrom = Number(result.previousSchema ?? result.schema ?? this.schema);

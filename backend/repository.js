@@ -1127,6 +1127,139 @@ export class SqliteRepository {
     });
   }
 
+  removeScoreSheetsFromDraft(draft, sheetIds, schoolId) {
+    const ids = new Set(sheetIds);
+    const entryIds = new Set(
+      draft.stores.score_entries
+        .filter(
+          (row) => row.school_profile_id === schoolId && ids.has(row.sheet_id),
+        )
+        .map((row) => row.id),
+    );
+    const counts = {
+      sheets: ids.size,
+      entries: entryIds.size,
+      snapshots: 0,
+      evidence: 0,
+    };
+    draft.stores.weekly_score_sheets = draft.stores.weekly_score_sheets.filter(
+      (row) => row.school_profile_id !== schoolId || !ids.has(row.id),
+    );
+    draft.stores.score_entries = draft.stores.score_entries.filter(
+      (row) => row.school_profile_id !== schoolId || !ids.has(row.sheet_id),
+    );
+    draft.stores.ranking_snapshots = draft.stores.ranking_snapshots.filter(
+      (row) => {
+        const remove = row.school_profile_id === schoolId && ids.has(row.sheet_id);
+        if (remove) counts.snapshots++;
+        return !remove;
+      },
+    );
+    draft.stores.score_evidence = draft.stores.score_evidence.filter((row) => {
+      const remove = row.school_profile_id === schoolId && entryIds.has(row.entry_id);
+      if (remove) counts.evidence++;
+      return !remove;
+    });
+    return counts;
+  }
+
+  deleteWeeklyScoreSheet(sheetId, schoolId, actorId) {
+    return this.mutate((draft) => {
+      const sheet = draft.stores.weekly_score_sheets.find(
+        (row) => row.id === sheetId && row.school_profile_id === schoolId,
+      );
+      if (!sheet) {
+        const error = new Error("Không tìm thấy bảng thi đua tuần.");
+        error.status = 404;
+        throw error;
+      }
+      const counts = this.removeScoreSheetsFromDraft(draft, [sheet.id], schoolId);
+      draft.stores.audit_logs.push(
+        this.normalize(
+          {
+            id: randomUUID(),
+            action: "score_sheet_delete",
+            entity: "weekly_score_sheets",
+            entity_id: sheet.id,
+            summary: `Xóa bảng tuần ${sheet.week_id}: ${counts.entries} dòng điểm, ${counts.snapshots} snapshot xếp hạng.`,
+            reason: `Người thực hiện: ${actorId}; trạng thái trước khi xóa: ${sheet.status || "draft"}.`,
+          },
+          null,
+          { preserveMetadata: true, schoolId },
+        ),
+      );
+      return { sheet: { id: sheet.id, week_id: sheet.week_id, status: sheet.status }, ...counts };
+    });
+  }
+
+  forceDeleteCriteriaSet(criteriaSetId, schoolId, actorId) {
+    return this.mutate((draft) => {
+      const criteriaSet = draft.stores.criteria_sets.find(
+        (row) => row.id === criteriaSetId && row.school_profile_id === schoolId,
+      );
+      if (!criteriaSet) {
+        const error = new Error("Không tìm thấy bộ tiêu chí.");
+        error.status = 404;
+        throw error;
+      }
+      const sheetIds = draft.stores.weekly_score_sheets
+        .filter(
+          (row) =>
+            row.school_profile_id === schoolId &&
+            row.criteria_set_id === criteriaSet.id,
+        )
+        .map((row) => row.id);
+      const groupIds = new Set(
+        draft.stores.criteria_groups
+          .filter(
+            (row) =>
+              row.school_profile_id === schoolId &&
+              row.criteria_set_id === criteriaSet.id,
+          )
+          .map((row) => row.id),
+      );
+      const criteriaCount = draft.stores.criteria.filter(
+        (row) =>
+          row.school_profile_id === schoolId && row.criteria_set_id === criteriaSet.id,
+      ).length;
+      const scoreCounts = this.removeScoreSheetsFromDraft(draft, sheetIds, schoolId);
+      draft.stores.criteria = draft.stores.criteria.filter(
+        (row) =>
+          row.school_profile_id !== schoolId || row.criteria_set_id !== criteriaSet.id,
+      );
+      draft.stores.criteria_groups = draft.stores.criteria_groups.filter(
+        (row) => !groupIds.has(row.id) || row.school_profile_id !== schoolId,
+      );
+      draft.stores.score_component_versions = draft.stores.score_component_versions.filter(
+        (row) =>
+          row.school_profile_id !== schoolId || row.criteria_set_id !== criteriaSet.id,
+      );
+      draft.stores.criteria_sets = draft.stores.criteria_sets.filter(
+        (row) => row.id !== criteriaSet.id || row.school_profile_id !== schoolId,
+      );
+      draft.stores.audit_logs.push(
+        this.normalize(
+          {
+            id: randomUUID(),
+            action: "criteria_set_force_delete",
+            entity: "criteria_sets",
+            entity_id: criteriaSet.id,
+            summary: `Xóa bộ tiêu chí ${criteriaSet.name || criteriaSet.id}: ${scoreCounts.sheets} bảng tuần, ${scoreCounts.entries} dòng điểm, ${scoreCounts.snapshots} snapshot.`,
+            reason: `Người thực hiện: ${actorId}; xóa cưỡng bức dữ liệu liên quan.`,
+          },
+          null,
+          { preserveMetadata: true, schoolId },
+        ),
+      );
+      return {
+        criteria_set: { id: criteriaSet.id, name: criteriaSet.name || "" },
+        criteria_groups: groupIds.size,
+        criteria: criteriaCount,
+        ...scoreCounts,
+      };
+    });
+  }
+
   exportAll(schoolId = null) {
     const data = Object.fromEntries(
       STORES.map((store) => [

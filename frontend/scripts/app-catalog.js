@@ -8,6 +8,7 @@
     ["tasks", "✓", "Công việc và checklist"],
     ["calendar", "▦", "Lịch hoạt động"],
     ["scores", "★", "Thi đua lớp"],
+    ["teacher", "▣", "Lớp chủ nhiệm"],
     ["activities", "⚑", "Hoạt động Đội"],
     ["organization", "♟", "Tổ chức Liên đội"],
     ["programs", "◇", "Rèn luyện – phong trào"],

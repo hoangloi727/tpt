@@ -600,6 +600,12 @@ Giới hạn tệp tài liệu mặc định là 25 MB/tệp và có thể đổ
 9. Không dựa vào tùy chọn sao chép mẫu công việc; thêm lại mẫu từ Thư viện mẫu khi cần.
 10. Giữ năm cũ chỉ đọc; chỉ mở sửa có lý do và đóng quyền ngay sau hiệu chỉnh.
 
+### Xóa dữ liệu thi đua
+
+Chỉ Admin/Superadmin có thể xóa dữ liệu thi đua. **Xóa bảng tuần** yêu cầu nhập `XÓA BẢNG TUẦN`, sau đó xóa toàn bộ điểm và snapshot xếp hạng của tuần đang chọn cho mọi lớp. **Xóa bộ tiêu chí** có hai lần xác nhận: `XÓA BỘ TIÊU CHÍ` và `XÓA TOÀN BỘ DỮ LIỆU LIÊN QUAN`; thao tác này xóa cả lịch sử bảng tuần dùng bộ đó. Nhật ký kiểm toán vẫn được giữ.
+
+Tài khoản **Teacher** chỉ mở trang **Lớp chủ nhiệm** và **Tài khoản của tôi**. Teacher xem xếp hạng chính thức và các ghi nhận có tên của lớp được giao theo tuần, rồi chọn **In/Lưu PDF** để tạo bản in dễ đọc.
+
 ---
 ## English
 
@@ -1129,3 +1135,9 @@ The default document limit is 25 MB per file and can be configured from 1 to 250
 8. Create the new year and verify 40 weeks, semesters, copied classes/groups, and criteria.
 9. Do not rely on copy task templates; add templates again from the Template library when needed.
 10. Keep the old year read-only; enable reasoned edits only when necessary and disable the override immediately afterward.
+
+### Competition-data deletion
+
+Only Admin/Superadmin can delete competition data. **Delete weekly sheet** requires `XÓA BẢNG TUẦN` and removes every class score and ranking snapshot for the selected week. **Delete criteria set** requires two confirmations: `XÓA BỘ TIÊU CHÍ` and `XÓA TOÀN BỘ DỮ LIỆU LIÊN QUAN`; it also removes the history of every weekly sheet using that set. Audit history remains.
+
+A **Teacher** account can open only **Homeroom class** and **My account**. It shows the official ranking and named incidents for the assigned class and selected week; choose **Print/Save PDF** for a readable report.

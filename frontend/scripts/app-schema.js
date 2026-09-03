@@ -45,6 +45,7 @@
     "criteria",
     "weekly_score_sheets",
     "score_grader_assignments",
+    "teacher_class_assignments",
     "score_entries",
     "score_evidence",
     "ranking_snapshots",
