@@ -113,6 +113,7 @@
           settingsTab: "school",
           documentFolderId: "root",
           documentView: "grid",
+          dailyDashboardTimer: null,
           cache: {},
           yearEditOverrides: new Map(),
           hasPendingDraft: false,
@@ -157,6 +158,7 @@
         }
 
         function resetSessionState() {
+          clearTimeout(state.dailyDashboardTimer);
           if (state.brandLogoUrl) URL.revokeObjectURL(state.brandLogoUrl);
           Object.assign(state, {
             page: "dashboard",
@@ -172,6 +174,7 @@
             settingsTab: "school",
             documentFolderId: "root",
             documentView: "grid",
+            dailyDashboardTimer: null,
             cache: {},
             yearEditOverrides: new Map(),
             hasPendingDraft: false,
@@ -440,7 +443,6 @@
           if (state.user?.role === "user")
             return (
               page === "dashboard" ||
-              page === "tasks" ||
               (page === "scores" && state.scoreClassIds.size > 0)
             );
           if (page === "scores" && state.scoreClassIds.size) return true;
@@ -1242,7 +1244,7 @@
             : state.cache.campuses.find((x) => x.id === id)?.name || "—";
         }
         async function renderDashboard() {
-          if (state.user?.role === "user") return renderSaoDoChecklist(true);
+          if (state.user?.role === "user") return renderSaoDoScoreDashboard();
           const [tasks, events, classes, sheets, entries] = await Promise.all([
             scoped("tasks"),
             scoped("calendar_events"),
@@ -1753,7 +1755,6 @@
         }
 
         async function renderTasks() {
-          if (state.user?.role === "user") return renderSaoDoChecklist();
           let rows = await scoped("tasks");
           const configuredStatuses = await configItems("task_status"),
             configuredPriorities = await configItems("priority"),
@@ -1821,49 +1822,91 @@
           $("#taskPriority").onchange = apply;
           state.taskFilter = null;
         }
-        async function renderSaoDoChecklist(asDashboard = false) {
-          const [tasks, checks] = await Promise.all([
-              scoped("tasks"),
-              db.all("task_check_items"),
+        async function renderSaoDoScoreDashboard() {
+          const [classes, weeks, sheets, entries, criteria, groups] = await Promise.all([
+              db.all("classes"),
+              db.all("school_weeks"),
+              db.all("weekly_score_sheets"),
+              db.all("score_entries"),
+              db.all("criteria"),
+              db.all("criteria_groups"),
             ]),
-            activeTasks = tasks
-              .filter((task) => task.status !== "done" && task.status !== "paused")
-              .sort((a, b) => String(a.due_date || "").localeCompare(String(b.due_date || ""))),
-            checksByTask = new Map();
-          for (const check of checks) {
-            const list = checksByTask.get(check.task_id) || [];
-            list.push(check);
-            checksByTask.set(check.task_id, list);
-          }
+            scoreDate = today(),
+            currentWeek = weeks.find(
+              (week) =>
+                week.school_year_id === state.yearId &&
+                scoreDate >= week.start_date &&
+                scoreDate <= week.end_date,
+            ),
+            activeWeekId = currentWeek?.id || state.weekId,
+            sheet = sheets.find((item) => item.week_id === activeWeekId),
+            expectedCriterionIds = new Set(
+              sheet
+                ? [
+                    ...groups
+                      .filter(
+                        (group) =>
+                          group.criteria_set_id === sheet.criteria_set_id &&
+                          group.active !== false,
+                      )
+                      .map((group) => group.id),
+                    ...criteria
+                      .filter(
+                        (criterion) =>
+                          criterion.criteria_set_id === sheet.criteria_set_id &&
+                          criterion.active !== false &&
+                          !criterion.criteria_group_id,
+                      )
+                      .map((criterion) => criterion.id),
+                  ]
+                : [],
+            ),
+            expected = expectedCriterionIds.size,
+            classColumns = [
+              ["todo", "Chưa chấm"],
+              ["doing", "Đang chấm"],
+              ["done", "Hoàn thành"],
+            ],
+            classProgress = classes
+              .filter(
+                (schoolClass) =>
+                  schoolClass.active !== false && state.scoreClassIds.has(schoolClass.id),
+              )
+              .map((schoolClass) => {
+                const filled = new Set(
+                  entries
+                    .filter(
+                      (entry) =>
+                        entry.sheet_id === sheet?.id &&
+                        entry.class_id === schoolClass.id &&
+                        entry.entry_date === scoreDate &&
+                        expectedCriterionIds.has(scoreEntryCriterionId(entry)),
+                    )
+                    .map((entry) => scoreEntryCriterionId(entry)),
+                ).size;
+                return {
+                  ...schoolClass,
+                  filled,
+                  status: !filled ? "todo" : filled === expected ? "done" : "doing",
+                };
+              });
+          if (currentWeek) state.weekId = currentWeek.id;
           setContent(
             pageHead(
-              asDashboard ? "Tổng quan Sao đỏ" : "Checklist Sao đỏ",
-              asDashboard
-                ? "Các mục checklist đang thực hiện."
-                : "Đánh dấu các mục được phân công. Sao đỏ không thể sửa hoặc tạo công việc.",
+              "Tổng quan Sao đỏ",
+              `Tiến độ chấm điểm ngày ${fmtDate(scoreDate)}. Dữ liệu tự làm mới vào đầu ngày mới.`,
             ) +
-              `<div class="card"><div class="card-body">${activeTasks.map((task) => {
-                const items = (checksByTask.get(task.id) || []).sort((a, b) => Number(a.order || 0) - Number(b.order || 0));
-                return `<section class="task-card"><div class="split"><div><strong>${esc(task.title)}</strong><br><small class="muted">Hạn ${fmtDate(task.due_date)} • ${esc(task.priority || "Bình thường")}</small></div><span class="badge">${items.filter((item) => item.done).length}/${items.length}</span></div>${items.length ? `<div class="mt">${items.map((item) => `<label class="check-row mt"><input type="checkbox" data-sao-do-check="${item.id}" ${item.done ? "checked" : ""}><span>${esc(item.label)}${item.required ? " <strong>(bắt buộc)</strong>" : ""}</span></label>`).join("")}</div>` : '<p class="muted mt">Công việc này chưa có mục checklist.</p>'}</section>`;
-              }).join("") || '<div class="empty">Không có checklist đang thực hiện.</div>'}</div></div>`,
+              `${!sheet ? '<div class="notice warn mb">Admin chưa khởi tạo bảng chấm điểm cho tuần này.</div>' : ""}<div class="kanban">${classColumns.map(([status, label]) => { const items = classProgress.filter((schoolClass) => schoolClass.status === status); return `<section class="kanban-col"><h3>${label} • ${items.length}</h3>${items.map((schoolClass) => `<article class="task-card"><strong>${esc(schoolClass.class_name)}</strong><small class="muted">${expected ? `${schoolClass.filled}/${expected} tiêu chí đã chấm` : "Chưa có tiêu chí áp dụng"}</small></article>`).join("") || '<div class="empty">Không có lớp.</div>'}</section>`; }).join("")}</div>`,
           );
-          $$('[data-sao-do-check]').forEach(
-            (input) =>
-              (input.onchange = async () => {
-                const item = checks.find((check) => check.id === input.dataset.saoDoCheck);
-                if (!item) return;
-                input.disabled = true;
-                try {
-                  await db.put("task_check_items", { ...item, done: input.checked });
-                  toast(input.checked ? "Đã hoàn thành mục checklist" : "Đã bỏ đánh dấu mục checklist");
-                  renderSaoDoChecklist();
-                } catch (error) {
-                  input.checked = !input.checked;
-                  input.disabled = false;
-                  toast(error.message, "bad");
-                }
-              }),
-          );
+          bindCommonActions();
+          clearTimeout(state.dailyDashboardTimer);
+          const nextDay = new Date();
+          nextDay.setHours(24, 0, 1, 0);
+          state.dailyDashboardTimer = setTimeout(() => {
+            state.dailyDashboardTimer = null;
+            if (state.unlocked && state.user?.role === "user" && state.page === "dashboard")
+              renderSaoDoScoreDashboard();
+          }, Math.max(1000, nextDay.getTime() - Date.now()));
         }
         function renderTaskArea(rows) {
           const area = $("#taskArea");
