@@ -263,7 +263,7 @@
             const el = $("#sessionChip");
             if (el)
               el.textContent = state.user
-                ? `${state.user.displayName} • ${state.user.role === "superadmin" ? "Superadmin" : state.user.role === "admin" ? "Admin" : state.user.role === "teacher" ? "Giáo viên" : "User"}`
+                ? `${state.user.displayName} • ${state.user.role === "superadmin" ? "Superadmin" : state.user.role === "admin" ? "Admin" : state.user.role === "teacher" ? "Giáo viên" : "Sao đỏ"}`
                 : `Khóa sau ${state.unlockTimeoutMinutes} phút`;
           }
           lock(message = "Ứng dụng đã khóa.") {
@@ -407,6 +407,8 @@
           if (page === "api")
             return ["superadmin", "admin"].includes(state.user?.role);
           if (["superadmin", "admin"].includes(state.user?.role)) return true;
+          if (state.user?.role === "user")
+            return page === "scores" && state.scoreClassIds.size > 0;
           if (page === "scores" && state.scoreClassIds.size) return true;
           const permissions = state.user?.permissions || [];
           return permissions.includes("*") || permissions.includes(page) || permissions.includes(`page:${page}`);
@@ -1617,20 +1619,47 @@
             };
           });
         }
+        function confirmDestructive(message, action, title = "Xác nhận xóa", button = "Xóa", content = "") {
+          openModal(
+            title,
+            `<div class="notice danger">${esc(message)}</div>${content}<p>Nhập chính xác <code>YES</code> và mật khẩu hiện tại để tiếp tục.</p><div class="field"><label>Xác nhận</label><input id="destructiveConfirmation" autocomplete="off" spellcheck="false" placeholder="YES"></div><div class="field mt"><label>Mật khẩu hiện tại</label><input id="destructivePassword" type="password" autocomplete="current-password"></div>`,
+            `<button class="btn" id="cancelDestructive">Hủy</button><button class="btn danger" id="doDestructive" disabled>${esc(button)}</button>`,
+          );
+          const confirmation = $("#destructiveConfirmation"),
+            password = $("#destructivePassword"),
+            submit = $("#doDestructive"),
+            update = () => (submit.disabled = confirmation.value.trim() !== "YES" || !password.value);
+          confirmation.oninput = update;
+          password.oninput = update;
+          password.onkeydown = (event) => {
+            if (event.key === "Enter" && !submit.disabled) submit.click();
+          };
+          $("#cancelDestructive").onclick = closeModal;
+          confirmation.focus();
+          submit.onclick = async () => {
+            submit.disabled = true;
+            try {
+              await db.authorizeDestructive(password.value);
+              await action();
+              db.clearDestructiveAuthorization();
+              closeModal();
+            } catch (error) {
+              db.clearDestructiveAuthorization();
+              update();
+              toast(error.message, "bad");
+            }
+          };
+        }
         async function confirmDelete(store, id, after) {
           const row = await db.get(store, id);
-          openModal(
-            "Xác nhận xóa",
-            `<div class="notice danger">Bản ghi sẽ được xóa mềm và vẫn còn trong nhật ký. Không thể hoàn tác trực tiếp trên màn hình này.</div><p><strong>${esc(row?.name || row?.title || row?.recipient || row?.code || "Bản ghi đã chọn")}</strong></p>`,
-            `<button class="btn" id="cancelDelete">Hủy</button><button class="btn danger" id="doDelete">Xóa</button>`,
-          );
-          $("#cancelDelete").onclick = closeModal;
-          $("#doDelete").onclick = async () => {
+          confirmDestructive(
+            `Bản ghi “${row?.name || row?.title || row?.recipient || row?.code || "đã chọn"}” sẽ bị xóa mềm và không thể hoàn tác trực tiếp trên màn hình này.`,
+            async () => {
             await db.remove(store, id);
-            closeModal();
             toast("Đã xóa bản ghi");
             after?.();
-          };
+            },
+          );
         }
         function exportEntityCSV(key, rows) {
           const cols = entityColumns(key),
@@ -2154,20 +2183,19 @@
           const ctx = await scoreContext(),
             week = state.cache.weeks.find((x) => x.id === state.weekId),
             manager = canManageScores();
-          if (!manager && !["entry", "ranking"].includes(state.scoreTab))
-            state.scoreTab = "entry";
+          if (!manager) state.scoreTab = "entry";
           setContent(
             pageHead(
               "Thi đua lớp",
               "Nhập điểm từng ngày, duyệt, khóa và truy vết theo tuần.",
-              `${manager ? '<button class="btn" id="assignScoreGraders">Phân công chấm điểm</button><button class="btn" id="criteriaConfig">Bộ tiêu chí</button>' : ""}<button class="btn" id="undoScore" ${state.lastScoreUndo ? "" : "disabled"}>↶ Hoàn tác</button>${manager && ctx.sheet ? '<button class="btn danger" id="deleteScoreSheet">Xóa bảng tuần</button>' : ""}${manager ? `<button class="btn primary" id="scoreWorkflow">${workflowLabel(ctx.sheet)}</button>` : ""}`,
+              `${manager ? '<button class="btn" id="assignScoreGraders">Phân công Sao đỏ</button><button class="btn" id="criteriaConfig">Bộ tiêu chí</button>' : ""}<button class="btn" id="undoScore" ${state.lastScoreUndo ? "" : "disabled"}>↶ Hoàn tác</button>${manager && ctx.sheet ? '<button class="btn danger" id="replaceScoreCriteria">Thay bộ tiêu chí</button><button class="btn danger" id="deleteScoreSheet">Xóa bảng tuần</button>' : ""}${manager ? `<button class="btn primary" id="scoreWorkflow">${workflowLabel(ctx.sheet)}</button>` : ""}`,
 
 
             ) +
               `
       <div class="notice warn"><strong>${esc(ctx.set?.name || "Chưa có bộ tiêu chí")}</strong><br>${esc(ctx.set?.basis || "Cần tạo bộ tiêu chí trước khi nhập điểm.")} ${ctx.set ? `Công thức: ${ctx.set.formula === "base" ? `Điểm chuẩn ${ctx.set.base_score || 0}, sau đó cộng/trừ` : "Cộng điểm từng nhóm"}.` : ""}</div>
-      <div class="toolbar"><strong>${esc(week?.name || "Chưa chọn tuần")}</strong><span>${week ? `${fmtDate(week.start_date)} – ${fmtDate(week.end_date)}` : ""}</span><label class="muted">Bộ tiêu chí <select id="scoreSetSelect">${ctx.sets.map((s) => `<option value="${s.id}" ${s.id === ctx.set?.id ? "selected" : ""}>${esc(s.name)} • v${esc(s.version || "1.0")}</option>`).join("")}</select></label><span style="margin-left:auto">Trạng thái: ${statusBadge(ctx.sheet?.status || "Chưa tạo")}</span></div>
-      <div class="tabs"><button data-score-tab="entry" class="${state.scoreTab === "entry" ? "active" : ""}">Nhập điểm</button><button data-score-tab="ranking" class="${state.scoreTab === "ranking" ? "active" : ""}">Xếp hạng</button>${manager ? `<button data-score-tab="anomaly" class="${state.scoreTab === "anomaly" ? "active" : ""}">Kiểm tra bất thường</button><button data-score-tab="history" class="${state.scoreTab === "history" ? "active" : ""}">Nhật ký điều chỉnh</button>` : ""}</div><div id="scoreArea"></div>`,
+      <div class="toolbar"><strong>${esc(week?.name || "Chưa chọn tuần")}</strong><span>${week ? `${fmtDate(week.start_date)} – ${fmtDate(week.end_date)}` : ""}</span><label class="muted">Bộ tiêu chí ${ctx.sheet ? `<strong>${esc(ctx.set?.name || "—")} • v${esc(ctx.set?.version || "1.0")}</strong>` : manager ? `<select id="scoreSetSelect">${ctx.sets.filter((s) => s.status !== "stopped" && s.active !== false).map((s) => `<option value="${s.id}" ${s.id === ctx.set?.id ? "selected" : ""}>${esc(s.name)} • v${esc(s.version || "1.0")}</option>`).join("")}</select>` : `<strong>${esc(ctx.set?.name || "Chưa có bộ tiêu chí")}</strong>`}</label><span style="margin-left:auto">Trạng thái: ${statusBadge(ctx.sheet?.status || "Chưa tạo")}</span></div>
+      <div class="tabs"><button data-score-tab="entry" class="${state.scoreTab === "entry" ? "active" : ""}">Nhập điểm</button>${manager ? `<button data-score-tab="ranking" class="${state.scoreTab === "ranking" ? "active" : ""}">Xếp hạng</button><button data-score-tab="anomaly" class="${state.scoreTab === "anomaly" ? "active" : ""}">Kiểm tra bất thường</button><button data-score-tab="history" class="${state.scoreTab === "history" ? "active" : ""}">Nhật ký điều chỉnh</button>` : ""}</div><div id="scoreArea"></div>`,
           );
           if (state.scoreTab === "entry") renderScoreEntry(ctx);
           if (state.scoreTab === "ranking") renderScoreRanking(ctx);
@@ -2183,7 +2211,7 @@
           if ($("#assignScoreGraders"))
             $("#assignScoreGraders").onclick = showScoreGraderAssignments;
           if ($("#criteriaConfig")) $("#criteriaConfig").onclick = showRulesetConfig;
-          if ($("#scoreSetSelect"))
+          if ($("#scoreSetSelect") && manager && !ctx.sheet)
             $("#scoreSetSelect").onchange = (e) => {
               state.criteriaSetId = e.target.value;
               renderScores();
@@ -2192,6 +2220,8 @@
             $("#scoreWorkflow").onclick = () => scoreWorkflow(ctx);
           if ($("#deleteScoreSheet"))
             $("#deleteScoreSheet").onclick = () => deleteScoreSheet(ctx.sheet);
+          if ($("#replaceScoreCriteria"))
+            $("#replaceScoreCriteria").onclick = () => replaceScoreCriteria(ctx);
           $("#undoScore").onclick = undoScore;
         }
         async function showScoreGraderAssignments() {
@@ -2225,12 +2255,12 @@
             );
           if (!users.length)
             return toast(
-              "Chưa có tài khoản User đang hoạt động để phân công.",
+                "Chưa có tài khoản Sao đỏ đang hoạt động để phân công.",
               "bad",
             );
           openModal(
             "Phân công chấm điểm theo lớp",
-            `<div class="notice">Mỗi lớp chỉ giao cho một User trong năm học đang chọn. Admin và Superadmin luôn có thể quản lý tất cả lớp.</div><div class="field mt"><label>Người chấm điểm</label><select id="scoreGraderUser">${users.map((user) => `<option value="${user.id}">${esc(user.displayName)} (${esc(user.username)})</option>`).join("")}</select></div><div class="toolbar mt"><button class="btn small" id="selectAllGraderClasses" type="button">Chọn lớp còn trống</button><button class="btn small" id="clearGraderClasses" type="button">Bỏ chọn tất cả</button>${classGroups.length ? `<label class="muted">Chọn nhanh nhóm <select id="graderClassGroup"><option value="">— Chọn nhóm —</option>${classGroups.map((group) => `<option value="${group.id}">${esc(group.name)}</option>`).join("")}</select></label>` : ""}</div><div class="form-grid" id="scoreGraderClasses"></div>`,
+            `<div class="notice">Mỗi lớp chỉ giao cho một Sao đỏ trong năm học đang chọn. Admin và Superadmin luôn có thể quản lý tất cả lớp.</div><div class="field mt"><label>Sao đỏ chấm điểm</label><select id="scoreGraderUser">${users.map((user) => `<option value="${user.id}">${esc(user.displayName)} (${esc(user.username)})</option>`).join("")}</select></div><div class="toolbar mt"><button class="btn small" id="selectAllGraderClasses" type="button">Chọn lớp còn trống</button><button class="btn small" id="clearGraderClasses" type="button">Bỏ chọn tất cả</button>${classGroups.length ? `<label class="muted">Chọn nhanh nhóm <select id="graderClassGroup"><option value="">— Chọn nhóm —</option>${classGroups.map((group) => `<option value="${group.id}">${esc(group.name)}</option>`).join("")}</select></label>` : ""}</div><div class="form-grid" id="scoreGraderClasses"></div>`,
             '<button class="btn" id="cancelScoreGrader">Hủy</button><button class="btn primary" id="saveScoreGrader">Lưu phân công</button>',
             true,
           );
@@ -2254,7 +2284,7 @@
               for (const classId of assignment.class_ids || [])
                 assignedToOthers.set(
                   classId,
-                  owner?.displayName || owner?.username || "User khác",
+                  owner?.displayName || owner?.username || "Sao đỏ khác",
                 );
             }
             $("#scoreGraderClasses").innerHTML = classes.length
@@ -2485,20 +2515,21 @@
           $("#cancelIncidentEntry").onclick = closeModal;
           if ($("#deleteIncidentEntry"))
             $("#deleteIncidentEntry").onclick = async () => {
-              await db.remove("score_entries", existing.id);
-              await db.put("audit_logs", {
-                action: "score_clear",
-                entity: "score_entries",
-                entity_id: existing.id,
-                summary: `${state.scoreDate}|${schoolClass.id}|${category.id}`,
-                old_value: existing.value,
-                new_value: null,
-                reason: "Xóa ghi nhận theo danh mục",
-              });
-              state.lastScoreUndo = { type: "restore", row: existing };
-              closeModal();
-              toast("Đã xóa dữ liệu ghi nhận");
-              renderScores();
+              confirmDestructive("Ghi nhận này sẽ bị xóa.", async () => {
+                await db.remove("score_entries", existing.id);
+                await db.put("audit_logs", {
+                  action: "score_clear",
+                  entity: "score_entries",
+                  entity_id: existing.id,
+                  summary: `${state.scoreDate}|${schoolClass.id}|${category.id}`,
+                  old_value: existing.value,
+                  new_value: null,
+                  reason: "Xóa ghi nhận theo danh mục",
+                });
+                state.lastScoreUndo = { type: "restore", row: existing };
+                toast("Đã xóa dữ liệu ghi nhận");
+                renderScores();
+              }, "Xóa ghi nhận");
             };
           $("#saveIncidentEntry").onclick = async () => {
             if (entryState === "value") {
@@ -2585,17 +2616,21 @@
              parsed = parseScoreInput(i.value, criterion, { mode: "direct" });
           if (parsed.action === "clear") {
             if (old) {
-              await db.remove("score_entries", old.id);
-              await db.put("audit_logs", {
-                action: "score_clear",
-                entity: "score_entries",
-                entity_id: old.id,
-                summary: `Xóa giá trị ${old.value}`,
-                old_value: old.value,
-                new_value: null,
-                reason: "Người dùng xóa ô",
-              });
-              state.lastScoreUndo = { type: "restore", row: old };
+              confirmDestructive(`Xóa giá trị điểm ${old.value}?`, async () => {
+                await db.remove("score_entries", old.id);
+                await db.put("audit_logs", {
+                  action: "score_clear",
+                  entity: "score_entries",
+                  entity_id: old.id,
+                  summary: `Xóa giá trị ${old.value}`,
+                  old_value: old.value,
+                  new_value: null,
+                  reason: "Người dùng xóa ô",
+                });
+                state.lastScoreUndo = { type: "restore", row: old };
+                renderScores();
+              }, "Xóa điểm");
+              return;
             }
             i.classList.add("missing");
             renderScores();
@@ -2728,27 +2763,43 @@
           renderScores();
         }
         function deleteScoreSheet(sheet) {
-          openModal(
-            "Xóa bảng thi đua tuần",
-            `<div class="notice danger"><strong>Không thể hoàn tác.</strong> Thao tác này xóa bảng tuần, toàn bộ điểm của mọi lớp và các snapshot xếp hạng liên quan. Nhật ký kiểm toán vẫn được giữ.</div><p>Nhập chính xác <code>XÓA BẢNG TUẦN</code> để tiếp tục.</p><div class="field"><input id="deleteScoreSheetConfirmation" autocomplete="off" spellcheck="false"></div>`,
-            '<button class="btn" id="cancelDeleteScoreSheet">Hủy</button><button class="btn danger" id="confirmDeleteScoreSheet" disabled>Xóa bảng tuần</button>',
-          );
-          const input = $("#deleteScoreSheetConfirmation"),
-            confirm = $("#confirmDeleteScoreSheet");
-          input.oninput = () =>
-            (confirm.disabled = input.value.trim() !== "XÓA BẢNG TUẦN");
-          $("#cancelDeleteScoreSheet").onclick = closeModal;
-          confirm.onclick = async () => {
-            try {
-              const result = await db.deleteWeeklyScoreSheet(sheet.id, input.value.trim());
+          confirmDestructive(
+            "Không thể hoàn tác. Thao tác này xóa bảng tuần, toàn bộ điểm của mọi lớp và các snapshot xếp hạng liên quan. Nhật ký kiểm toán vẫn được giữ.",
+            async () => {
+              const result = await db.deleteWeeklyScoreSheet(sheet.id);
               state.lastScoreUndo = null;
-              closeModal();
               toast(`Đã xóa bảng tuần: ${result.entries} dòng điểm, ${result.snapshots} snapshot.`);
               renderScores();
-            } catch (error) {
-              toast(error.message, "bad");
-            }
-          };
+            },
+            "Xóa bảng thi đua tuần",
+            "Xóa bảng tuần",
+          );
+        }
+        function replaceScoreCriteria(ctx) {
+          const alternatives = ctx.sets.filter(
+            (set) =>
+              set.id !== ctx.sheet.criteria_set_id &&
+              set.status !== "stopped" &&
+              set.active !== false,
+          );
+          if (!alternatives.length)
+            return toast("Cần có một bộ tiêu chí khác đang hoạt động để thay thế.", "bad");
+          confirmDestructive(
+            "Toàn bộ điểm, minh chứng và snapshot xếp hạng của tuần sẽ bị xóa. Bảng tuần giữ lại nhưng được đặt về trạng thái draft với bộ tiêu chí mới.",
+            async () => {
+              const result = await db.replaceWeeklyScoreSheetCriteria(
+                ctx.sheet.id,
+                $("#replacementCriteriaSet").value,
+              );
+              state.criteriaSetId = result.sheet.criteria_set_id;
+              state.lastScoreUndo = null;
+              toast(`Đã thay bộ tiêu chí và xóa ${result.entries} dòng điểm.`);
+              renderScores();
+            },
+            "Thay bộ tiêu chí của tuần",
+            "Thay bộ tiêu chí",
+            `<div class="field mt"><label>Bộ tiêu chí mới</label><select id="replacementCriteriaSet">${alternatives.map((set) => `<option value="${set.id}">${esc(set.name)} • v${esc(set.version || "1.0")}</option>`).join("")}</select></div>`,
+          );
         }
         async function scoreWorkflow(ctx) {
           if (!ctx.sheet) {
@@ -3343,18 +3394,12 @@
         }
 
         async function scoreContext() {
-          const allSets = (await scoped("criteria_sets")).filter(
-              (x) => x.status !== "stopped",
-            ),
+          const allSets = await scoped("criteria_sets"),
             sheets = await scoped("weekly_score_sheets"),
-            weekSheet = sheets.find(
-              (x) =>
-                x.week_id === state.weekId &&
-                ["locked", "approved"].includes(x.status),
-            ),
+            weekSheet = sheets.find((x) => x.week_id === state.weekId),
             set =
-              allSets.find((x) => x.id === state.criteriaSetId) ||
               allSets.find((x) => x.id === weekSheet?.criteria_set_id) ||
+              allSets.find((x) => x.id === state.criteriaSetId) ||
               allSets.find(
                 (x) =>
                   x.status === "active" &&
@@ -3662,45 +3707,18 @@
         }
 
         function forceDeleteRuleset(set) {
-          openModal(
+          confirmDestructive(
+            `Không thể hoàn tác. Bộ tiêu chí “${set.name || "đã chọn"}”, mọi bảng tuần dùng bộ này, điểm và snapshot xếp hạng liên quan sẽ bị xóa vĩnh viễn.`,
+            async () => {
+              const result = await db.forceDeleteCriteriaSet(set.id);
+              state.criteriaSetId = "";
+              state.lastScoreUndo = null;
+              toast(`Đã xóa bộ tiêu chí: ${result.sheets} bảng tuần, ${result.entries} dòng điểm.`);
+              renderScores();
+            },
             "Xóa bộ tiêu chí",
-            `<div class="notice danger"><strong>Xóa cưỡng bức.</strong> Bộ tiêu chí, mọi bảng tuần sử dụng bộ này, điểm và snapshot xếp hạng liên quan sẽ bị xóa vĩnh viễn.</div><p>Nhập chính xác <code>XÓA BỘ TIÊU CHÍ</code> để tiếp tục.</p><div class="field"><input id="deleteRulesetConfirmation" autocomplete="off" spellcheck="false"></div>`,
-            '<button class="btn" id="cancelDeleteRuleset">Hủy</button><button class="btn danger" id="nextDeleteRuleset" disabled>Tiếp tục</button>',
+            "Xóa vĩnh viễn",
           );
-          const input = $("#deleteRulesetConfirmation"),
-            next = $("#nextDeleteRuleset");
-          input.oninput = () =>
-            (next.disabled = input.value.trim() !== "XÓA BỘ TIÊU CHÍ");
-          $("#cancelDeleteRuleset").onclick = closeModal;
-          next.onclick = () => {
-            openModal(
-              "Xác nhận xóa cuối cùng",
-              `<div class="notice danger">Không thể hoàn tác việc xóa bộ <strong>${esc(set.name || "đã chọn")}</strong> cùng toàn bộ dữ liệu điểm liên quan.</div><p>Nhập chính xác <code>XÓA TOÀN BỘ DỮ LIỆU LIÊN QUAN</code> để xóa vĩnh viễn.</p><div class="field"><input id="deleteRulesetFinalConfirmation" autocomplete="off" spellcheck="false"></div>`,
-              '<button class="btn" id="cancelDeleteRulesetFinal">Hủy</button><button class="btn danger" id="confirmDeleteRulesetFinal" disabled>Xóa vĩnh viễn</button>',
-            );
-            const finalInput = $("#deleteRulesetFinalConfirmation"),
-              confirm = $("#confirmDeleteRulesetFinal");
-            finalInput.oninput = () =>
-              (confirm.disabled =
-                finalInput.value.trim() !== "XÓA TOÀN BỘ DỮ LIỆU LIÊN QUAN");
-            $("#cancelDeleteRulesetFinal").onclick = closeModal;
-            confirm.onclick = async () => {
-              try {
-                const result = await db.forceDeleteCriteriaSet(
-                  set.id,
-                  "XÓA BỘ TIÊU CHÍ",
-                  finalInput.value.trim(),
-                );
-                state.criteriaSetId = "";
-                state.lastScoreUndo = null;
-                closeModal();
-                toast(`Đã xóa bộ tiêu chí: ${result.sheets} bảng tuần, ${result.entries} dòng điểm.`);
-                renderScores();
-              } catch (error) {
-                toast(error.message, "bad");
-              }
-            };
-          };
         }
         async function showRulesetConfig(selectedId = "") {
           const sets = (await scoped("criteria_sets")).sort((a, b) =>
@@ -4064,27 +4082,18 @@
             $("#editUsedCampus").onclick = () => campusForm(id);
             return;
           }
-          openModal(
-            "Xóa cơ sở chưa sử dụng",
-            `<p>Xóa <strong>${esc(campus.name)}</strong> (${esc(campus.code || "không có mã")})?</p><div class="notice warn">Thao tác được lưu vào nhật ký. Cơ sở đã có dữ liệu liên quan sẽ không được phép xóa.</div>`,
-            `<button class="btn" id="cancelDeleteCampus">Hủy</button><button class="btn danger" id="confirmDeleteCampus">Xóa cơ sở</button>`,
-          );
-          $("#cancelDeleteCampus").onclick = closeModal;
-          $("#confirmDeleteCampus").onclick = async () => {
-            const button = $("#confirmDeleteCampus");
-            button.disabled = true;
-            try {
+          confirmDestructive(
+            `Xóa ${campus.name} (${campus.code || "không có mã"})? Cơ sở đã có dữ liệu liên quan sẽ không được phép xóa.`,
+            async () => {
               await db.remove("campuses", id);
               if (state.campusId === id) state.campusId = "all";
-              closeModal();
               await loadContext();
               toast("Đã xóa cơ sở chưa sử dụng");
               await renderSettingsPanel("context");
-            } catch (error) {
-              button.disabled = false;
-              toast("Không thể xóa cơ sở: " + error.message, "bad");
-            }
-          };
+            },
+            "Xóa cơ sở chưa sử dụng",
+            "Xóa cơ sở",
+          );
         }
         function yearForm() {
           openModal(
@@ -4260,13 +4269,9 @@
           };
         }
         async function deleteSampleData() {
-          openModal(
-            "Xóa dữ liệu mẫu",
-            `<div class="notice danger">Chỉ các bản ghi mang nhãn dữ liệu mẫu bị xóa. Dữ liệu thầy đã tạo được giữ nguyên.</div>`,
-            `<button class="btn" id="cancelSample">Hủy</button><button class="btn danger" id="confirmSample">Xóa dữ liệu mẫu</button>`,
-          );
-          $("#cancelSample").onclick = closeModal;
-          $("#confirmSample").onclick = async () => {
+          confirmDestructive(
+            "Chỉ các bản ghi mang nhãn dữ liệu mẫu bị xóa. Dữ liệu đã tạo được giữ nguyên.",
+            async () => {
             await createInternalSnapshot("Trước xóa dữ liệu mẫu", {
               tier: "protected",
               protectedSnapshot: true,
@@ -4282,22 +4287,17 @@
                 }
             }
             await setting("sample_deleted", true);
-            closeModal();
             toast(`Đã xóa ${n} bản ghi mẫu`);
             await loadContext();
             renderSettings();
-          };
+            },
+            "Xóa dữ liệu mẫu",
+          );
         }
         function wipeLocalData() {
-          openModal(
-            "Xóa toàn bộ dữ liệu trên máy chủ",
-            `<div class="notice danger"><strong>Không thể hoàn tác nếu chưa sao lưu.</strong></div><div class="field"><label>Nhập chính xác: XÓA TOÀN BỘ</label><input id="wipeConfirm" autocomplete="off"></div>`,
-            `<button class="btn" id="cancelWipe">Hủy</button><button class="btn danger" id="confirmWipe">Xóa vĩnh viễn trên máy chủ</button>`,
-          );
-          $("#cancelWipe").onclick = closeModal;
-          $("#confirmWipe").onclick = async () => {
-            if ($("#wipeConfirm").value !== "XÓA TOÀN BỘ")
-              return toast("Câu xác nhận chưa chính xác.", "bad");
+          confirmDestructive(
+            "Không thể hoàn tác nếu chưa sao lưu. Một bản sao an toàn sẽ được tải xuống trước khi xóa toàn bộ dữ liệu trên máy chủ.",
+            async () => {
             await createInternalSnapshot("Trước xóa toàn bộ dữ liệu", {
               tier: "protected",
               protectedSnapshot: true,
@@ -4322,9 +4322,11 @@
             for (const s of STORES)
               if (s !== "schools" && !dependentStores.includes(s))
                 await db.hardClear(s);
-            closeModal();
             location.reload();
-          };
+            },
+            "Xóa toàn bộ dữ liệu trên máy chủ",
+            "Xóa vĩnh viễn trên máy chủ",
+          );
         }
 
         async function legacyGlobalSearch() {
@@ -5028,7 +5030,7 @@
                   ? "Admin trường"
                   : user?.role === "teacher"
                     ? "Giáo viên chủ nhiệm"
-                    : "User";
+                    : "Sao đỏ";
           setContent(
             pageHead(
               "Tài khoản của tôi",
@@ -5098,7 +5100,7 @@
                           ? '<span class="badge blue">Admin</span>'
                           : user.role === "teacher"
                             ? '<span class="badge green">Giáo viên</span>'
-                            : '<span class="badge">User</span>',
+                            : '<span class="badge">Sao đỏ</span>',
                       actions = user.root
                         ? `<button class="link-btn" data-edit-user="${user.id}">Đổi tên/mật khẩu</button> <span class="muted">root</span>`
                         : manageable
@@ -5132,11 +5134,15 @@
             (button) =>
               (button.onclick = async () => {
                 const user = users.find((item) => item.id === button.dataset.deleteUser);
-                const confirmed = await confirmDialog(`Xóa tài khoản ${user?.username}?`);
-                if (!confirmed) return;
-                await db.deleteUser(button.dataset.deleteUser);
-                toast("Đã xóa tài khoản");
-                renderUserManagement();
+                confirmDestructive(
+                  `Tài khoản ${user?.username} sẽ bị xóa và các phân công liên quan sẽ được dọn dẹp.`,
+                  async () => {
+                    await db.deleteUser(button.dataset.deleteUser);
+                    toast("Đã xóa tài khoản");
+                    renderUserManagement();
+                  },
+                  "Xóa tài khoản",
+                );
               }),
           );
         }
@@ -5152,8 +5158,8 @@
             editing = !!user,
             isSuperadmin = state.user?.role === "superadmin",
             roleOptions = isSuperadmin
-              ? `<option value="user" ${user?.role === "user" || !user ? "selected" : ""}>User</option><option value="teacher" ${user?.role === "teacher" ? "selected" : ""}>Giáo viên chủ nhiệm</option><option value="admin" ${user?.role === "admin" ? "selected" : ""}>Admin trường</option><option value="superadmin" ${user?.role === "superadmin" ? "selected" : ""}>Superadmin</option>`
-              : `<option value="user" ${user?.role === "user" || !user ? "selected" : ""}>User</option><option value="teacher" ${user?.role === "teacher" ? "selected" : ""}>Giáo viên chủ nhiệm</option><option value="admin" ${user?.role === "admin" ? "selected" : ""}>Admin trường</option>`;
+              ? `<option value="user" ${user?.role === "user" || !user ? "selected" : ""}>Sao đỏ</option><option value="teacher" ${user?.role === "teacher" ? "selected" : ""}>Giáo viên chủ nhiệm</option><option value="admin" ${user?.role === "admin" ? "selected" : ""}>Admin trường</option><option value="superadmin" ${user?.role === "superadmin" ? "selected" : ""}>Superadmin</option>`
+              : `<option value="user" ${user?.role === "user" || !user ? "selected" : ""}>Sao đỏ</option><option value="teacher" ${user?.role === "teacher" ? "selected" : ""}>Giáo viên chủ nhiệm</option><option value="admin" ${user?.role === "admin" ? "selected" : ""}>Admin trường</option>`;
           openModal(
             editing ? "Sửa tài khoản" : "Thêm người dùng",
             `<form id="userForm"><div class="form-grid"><div class="field"><label class="required">Tên đăng nhập</label><input name="username" value="${esc(user?.username || "")}" minlength="3" maxlength="32" pattern="[a-z0-9._\\-]+" autocapitalize="none" required></div><div class="field"><label class="required">Tên hiển thị</label><input name="displayName" value="${esc(user?.displayName || "")}" required></div><div class="field"><label>Vai trò</label><select name="role" ${user?.root ? "disabled" : ""}>${roleOptions}</select></div><div class="field"><label>${editing ? "Mật khẩu mới (để trống nếu giữ nguyên)" : "Mật khẩu, tối thiểu 10 ký tự"}</label><input name="password" type="password" minlength="10" autocomplete="new-password" ${editing ? "" : "required"}></div><div class="field full"><label>Khóa quyền, cách nhau bằng dấu phẩy</label><textarea name="permissions" placeholder="dashboard, page:tasks, store:tasks:read">${esc((user?.permissions || ["dashboard"]).filter((value) => value !== "*").join(", "))}</textarea><small class="hint">Admin và Superadmin có toàn quyền theo vai trò; các khóa này áp dụng cho User.</small></div>${editing && !user?.root ? `<label class="check-row field full"><input type="checkbox" name="disabled" ${user.disabled ? "checked" : ""}> Khóa tài khoản này</label>` : ""}</div></form>`,
@@ -5916,15 +5922,15 @@
                 const group = sortedGroups.find(
                   (item) => item.id === button.dataset.deleteClassGroup,
                 );
-                const confirmed = await confirmDialog(`Xóa nhóm lớp “${group?.name || ""}”?`);
-                if (!confirmed) return;
-                try {
+                confirmDestructive(
+                  `Nhóm lớp “${group?.name || ""}” sẽ bị xóa.`,
+                  async () => {
                   await db.remove("class_groups", group.id);
                   toast("Đã xóa nhóm lớp");
                   renderClassGroupPanel(panel);
-                } catch (error) {
-                  toast(error.message, "bad");
-                }
+                  },
+                  "Xóa nhóm lớp",
+                );
               }),
           );
         }
@@ -5984,20 +5990,16 @@
         }
 async function removeClass(id) {
            const schoolClass = await db.get("classes", id);
-           if (
-             !schoolClass ||
-             !(await confirmDialog(
-               `Xóa lớp “${schoolClass.class_name}” khỏi trường? Thao tác này chỉ được phép khi lớp chưa có dữ liệu lịch sử.`,
-             ))
-           )
-             return;
-          try {
-            await db.remove("classes", id);
-            toast("Đã xóa lớp khỏi trường");
-            renderSettings();
-          } catch (error) {
-            toast(error.message, "bad");
-          }
+            if (!schoolClass) return;
+            confirmDestructive(
+              `Xóa lớp “${schoolClass.class_name}” khỏi trường? Thao tác này chỉ được phép khi lớp chưa có dữ liệu lịch sử.`,
+              async () => {
+             await db.remove("classes", id);
+             toast("Đã xóa lớp khỏi trường");
+             renderSettings();
+              },
+              "Xóa lớp",
+            );
         }
         async function renderSecurityPanel(panel) {
           const timeout = Number(await setting("auto_lock_minutes")) || 10;
@@ -6324,13 +6326,19 @@ async function removeClass(id) {
           $$("[data-doc-delete]").forEach(
             (b) =>
               (b.onclick = async () => {
-                await db.remove("documents", b.dataset.docDelete);
-                const related = (
-                  await db.allIncludingDeleted("attachments")
-                ).filter((x) => x.document_id === b.dataset.docDelete);
-                for (const a of related) await db.remove("attachments", a.id);
-                toast("Đã chuyển vào Thùng rác");
-                renderDocuments();
+                confirmDestructive(
+                  "Tài liệu và các tệp liên quan sẽ được chuyển vào Thùng rác.",
+                  async () => {
+                    await db.remove("documents", b.dataset.docDelete);
+                    const related = (
+                      await db.allIncludingDeleted("attachments")
+                    ).filter((x) => x.document_id === b.dataset.docDelete);
+                    for (const a of related) await db.remove("attachments", a.id);
+                    toast("Đã chuyển vào Thùng rác");
+                    renderDocuments();
+                  },
+                  "Xóa tài liệu",
+                );
               }),
           );
           $$("[data-doc-restore]").forEach(
@@ -6350,29 +6358,31 @@ async function removeClass(id) {
           $$("[data-doc-purge]").forEach(
             (b) =>
               (b.onclick = async () => {
-                const confirmed = await confirmDialog(
-                    "Xóa vĩnh viễn tài liệu và các tệp liên quan khỏi máy chủ?",
-                    "Xác nhận xóa vĩnh viễn",
-                  );
-                if (!confirmed) return;
-                const id = b.dataset.docPurge,
-                  related = (
-                    await db.allIncludingDeleted("attachments")
-                  ).filter((x) => x.document_id === id),
-                  links = (
-                    await db.allIncludingDeleted("document_links")
-                  ).filter((x) => x.document_id === id),
-                  versions = (
-                    await db.allIncludingDeleted("file_versions")
-                  ).filter((x) => x.document_id === id);
-                await hardDelete("documents", id);
-                for (const a of related) await hardDelete("attachments", a.id);
-                for (const link of links)
-                  await hardDelete("document_links", link.id);
-                for (const version of versions)
-                  await hardDelete("file_versions", version.id);
-                toast("Đã xóa tài liệu và các tệp liên quan.");
-                renderDocuments();
+                confirmDestructive(
+                  "Tài liệu và các tệp liên quan sẽ bị xóa vĩnh viễn khỏi máy chủ.",
+                  async () => {
+                    const id = b.dataset.docPurge,
+                      related = (
+                        await db.allIncludingDeleted("attachments")
+                      ).filter((x) => x.document_id === id),
+                      links = (
+                        await db.allIncludingDeleted("document_links")
+                      ).filter((x) => x.document_id === id),
+                      versions = (
+                        await db.allIncludingDeleted("file_versions")
+                      ).filter((x) => x.document_id === id);
+                    await hardDelete("documents", id);
+                    for (const a of related) await hardDelete("attachments", a.id);
+                    for (const link of links)
+                      await hardDelete("document_links", link.id);
+                    for (const version of versions)
+                      await hardDelete("file_versions", version.id);
+                    toast("Đã xóa tài liệu và các tệp liên quan.");
+                    renderDocuments();
+                  },
+                  "Xác nhận xóa vĩnh viễn",
+                  "Xóa vĩnh viễn",
+                );
               }),
           );
         }

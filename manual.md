@@ -602,9 +602,11 @@ Giới hạn tệp tài liệu mặc định là 25 MB/tệp và có thể đổ
 
 ### Xóa dữ liệu thi đua
 
-Chỉ Admin/Superadmin có thể xóa dữ liệu thi đua. **Xóa bảng tuần** yêu cầu nhập `XÓA BẢNG TUẦN`, sau đó xóa toàn bộ điểm và snapshot xếp hạng của tuần đang chọn cho mọi lớp. **Xóa bộ tiêu chí** có hai lần xác nhận: `XÓA BỘ TIÊU CHÍ` và `XÓA TOÀN BỘ DỮ LIỆU LIÊN QUAN`; thao tác này xóa cả lịch sử bảng tuần dùng bộ đó. Nhật ký kiểm toán vẫn được giữ.
+Mọi thao tác xóa yêu cầu nhập `YES` và mật khẩu hiện tại. Chỉ Admin/Superadmin có thể xóa dữ liệu thi đua. **Xóa bảng tuần** xóa toàn bộ điểm và snapshot xếp hạng của tuần đang chọn cho mọi lớp. **Xóa bộ tiêu chí** chỉ hỏi một lần rồi xóa cả lịch sử bảng tuần dùng bộ đó. Nhật ký kiểm toán vẫn được giữ.
 
 Tài khoản **Teacher** chỉ mở trang **Lớp chủ nhiệm** và **Tài khoản của tôi**. Teacher xem xếp hạng chính thức và các ghi nhận có tên của lớp được giao theo tuần, rồi chọn **In/Lưu PDF** để tạo bản in dễ đọc.
+
+Mỗi tuần chỉ dùng một bộ tiêu chí cho toàn bộ lớp. Chỉ Admin/Superadmin được chọn bộ tiêu chí trước khi khởi tạo bảng tuần. Sao đỏ chỉ nhập/chấm điểm cho lớp được giao và không thể chọn hay sửa bộ tiêu chí. Nếu phải thay bộ tiêu chí sau khi đã tạo bảng, Admin/Superadmin xác nhận bằng `YES` và mật khẩu hiện tại; hệ thống xóa toàn bộ điểm, minh chứng và snapshot xếp hạng của tuần rồi đặt bảng về `draft`.
 
 ---
 ## English
@@ -1138,6 +1140,8 @@ The default document limit is 25 MB per file and can be configured from 1 to 250
 
 ### Competition-data deletion
 
-Only Admin/Superadmin can delete competition data. **Delete weekly sheet** requires `XÓA BẢNG TUẦN` and removes every class score and ranking snapshot for the selected week. **Delete criteria set** requires two confirmations: `XÓA BỘ TIÊU CHÍ` and `XÓA TOÀN BỘ DỮ LIỆU LIÊN QUAN`; it also removes the history of every weekly sheet using that set. Audit history remains.
+Every deletion requires `YES` and the current password. Only Admin/Superadmin can delete competition data. **Delete weekly sheet** removes every class score and ranking snapshot for the selected week. **Delete criteria set** asks once and also removes the history of every weekly sheet using that set. Audit history remains.
 
 A **Teacher** account can open only **Homeroom class** and **My account**. It shows the official ranking and named incidents for the assigned class and selected week; choose **Print/Save PDF** for a readable report.
+
+Each week uses one criteria set for all classes. Only Admin/Superadmin selects the criteria set before initializing a weekly sheet. Sao đỏ only enters/scores assigned classes and cannot select or edit criteria. To replace criteria after a sheet exists, Admin/Superadmin confirms with `YES` and the current password; the system deletes all weekly scores, evidence, and ranking snapshots, then resets the sheet to `draft`.

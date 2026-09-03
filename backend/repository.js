@@ -751,6 +751,44 @@ export class SqliteRepository {
     }
   }
 
+  assertWeeklyScoreSheet(draft, row, existing = null) {
+    const yearId = row.school_year_id || row.academic_year_id,
+      week = this.findIn(draft, "school_weeks", row.week_id, row.school_profile_id),
+      criteriaSet = this.findIn(
+        draft,
+        "criteria_sets",
+        row.criteria_set_id,
+        row.school_profile_id,
+      );
+    if (!yearId || !week || (week.school_year_id || week.academic_year_id) !== yearId) {
+      const error = new Error("Bảng thi đua phải thuộc một tuần trong cùng năm học.");
+      error.status = 400;
+      throw error;
+    }
+    if (!criteriaSet || criteriaSet.deleted_at || criteriaSet.active === false || criteriaSet.status === "stopped") {
+      const error = new Error("Bảng thi đua phải dùng một bộ tiêu chí đang hoạt động.");
+      error.status = 400;
+      throw error;
+    }
+    if (existing && row.criteria_set_id !== existing.criteria_set_id) {
+      const error = new Error("Không thể đổi bộ tiêu chí bằng thao tác ghi thông thường.");
+      error.status = 409;
+      throw error;
+    }
+    const duplicate = draft.stores.weekly_score_sheets.find(
+      (sheet) =>
+        sheet.id !== row.id &&
+        !sheet.deleted_at &&
+        sheet.school_profile_id === row.school_profile_id &&
+        sheet.week_id === row.week_id,
+    );
+    if (duplicate) {
+      const error = new Error("Mỗi tuần chỉ được dùng một bộ tiêu chí và một bảng thi đua.");
+      error.status = 409;
+      throw error;
+    }
+  }
+
   assertScoreGraderAssignment(draft, row) {
     if (
       !row.user_id ||
@@ -830,6 +868,8 @@ export class SqliteRepository {
     this.assertWritable(draft, store, row, options);
     this.assertDynamicCriterion(draft, store, row, current);
     if (store === "class_groups") this.assertClassGroup(draft, row);
+    if (store === "weekly_score_sheets")
+      this.assertWeeklyScoreSheet(draft, row, current);
     if (store === "score_grader_assignments")
       this.assertScoreGraderAssignment(draft, row);
     if (store === "score_entries") this.assertDailyScoreEntry(draft, row);
@@ -1189,6 +1229,84 @@ export class SqliteRepository {
         ),
       );
       return { sheet: { id: sheet.id, week_id: sheet.week_id, status: sheet.status }, ...counts };
+    });
+  }
+
+  replaceWeeklyScoreSheetCriteria(sheetId, criteriaSetId, schoolId, actorId) {
+    return this.mutate((draft) => {
+      const sheet = draft.stores.weekly_score_sheets.find(
+        (row) => row.id === sheetId && row.school_profile_id === schoolId,
+      );
+      if (!sheet) {
+        const error = new Error("Không tìm thấy bảng thi đua tuần.");
+        error.status = 404;
+        throw error;
+      }
+      const criteriaSet = this.findIn(draft, "criteria_sets", criteriaSetId, schoolId);
+      if (!criteriaSet || criteriaSet.deleted_at || criteriaSet.active === false || criteriaSet.status === "stopped") {
+        const error = new Error("Bộ tiêu chí mới không hợp lệ hoặc đã ngừng sử dụng.");
+        error.status = 400;
+        throw error;
+      }
+      if (sheet.criteria_set_id === criteriaSet.id) {
+        const error = new Error("Bảng tuần đang dùng bộ tiêu chí này.");
+        error.status = 409;
+        throw error;
+      }
+      const previousCriteriaSetId = sheet.criteria_set_id,
+        counts = { sheets: 0, entries: 0, snapshots: 0, evidence: 0 },
+        entryIds = new Set(
+          draft.stores.score_entries
+            .filter((row) => row.school_profile_id === schoolId && row.sheet_id === sheet.id)
+            .map((row) => row.id),
+        );
+      counts.entries = entryIds.size;
+      counts.snapshots = draft.stores.ranking_snapshots.filter(
+        (row) => row.school_profile_id === schoolId && row.sheet_id === sheet.id,
+      ).length;
+      counts.evidence = draft.stores.score_evidence.filter(
+        (row) => row.school_profile_id === schoolId && entryIds.has(row.entry_id),
+      ).length;
+      draft.stores.score_entries = draft.stores.score_entries.filter(
+        (row) => row.school_profile_id !== schoolId || row.sheet_id !== sheet.id,
+      );
+      draft.stores.score_evidence = draft.stores.score_evidence.filter(
+        (row) => row.school_profile_id !== schoolId || !entryIds.has(row.entry_id),
+      );
+      draft.stores.ranking_snapshots = draft.stores.ranking_snapshots.filter(
+        (row) => row.school_profile_id !== schoolId || row.sheet_id !== sheet.id,
+      );
+      const index = draft.stores.weekly_score_sheets.findIndex((row) => row.id === sheet.id);
+      draft.stores.weekly_score_sheets[index] = this.normalize(
+        {
+          ...sheet,
+          criteria_set_id: criteriaSet.id,
+          status: "draft",
+          approved_at: null,
+          locked_at: null,
+          criteria_snapshot: null,
+          unlock_reason: null,
+          unlocked_at: null,
+          reports_stale: true,
+        },
+        sheet,
+        { schoolId },
+      );
+      draft.stores.audit_logs.push(
+        this.normalize(
+          {
+            id: randomUUID(),
+            action: "score_sheet_criteria_replace",
+            entity: "weekly_score_sheets",
+            entity_id: sheet.id,
+            summary: `Đổi bộ tiêu chí ${previousCriteriaSetId} thành ${criteriaSet.id}; xóa ${counts.entries} dòng điểm và ${counts.snapshots} snapshot.`,
+            reason: `Người thực hiện: ${actorId}; bảng tuần được đặt lại về draft.`,
+          },
+          null,
+          { preserveMetadata: true, schoolId },
+        ),
+      );
+      return { sheet: draft.stores.weekly_score_sheets[index], ...counts };
     });
   }
 

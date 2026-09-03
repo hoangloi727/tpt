@@ -31,9 +31,11 @@ http://127.0.0.1:3000/api
 
 ### Xóa dữ liệu thi đua
 
-- `DELETE /api/score-sheets/:id` chỉ dành cho Admin/Superadmin. Body JSON phải có `{ "confirmation": "XÓA BẢNG TUẦN" }`. Máy chủ xóa vật lý bảng tuần, mọi dòng điểm, minh chứng điểm và snapshot xếp hạng liên quan trong một transaction; nhật ký kiểm toán được giữ lại.
-- `DELETE /api/criteria-sets/:id` chỉ dành cho Admin/Superadmin. Body JSON phải có cả `{ "confirmation": "XÓA BỘ TIÊU CHÍ", "finalConfirmation": "XÓA TOÀN BỘ DỮ LIỆU LIÊN QUAN" }`. Máy chủ xóa bộ tiêu chí, nhóm/nội dung và mọi bảng tuần, điểm, minh chứng và snapshot dùng bộ đó trong một transaction.
+- `POST /api/destructive-confirmations` nhận `{ "confirmation": "YES", "currentPassword" }` và trả về mã xác nhận sống trong 2 phút. Gửi mã đó qua header `X-Destructive-Authorization` cho mọi thao tác xóa.
+- `DELETE /api/score-sheets/:id` chỉ dành cho Admin/Superadmin và cần header xác nhận thao tác xóa. Máy chủ xóa vật lý bảng tuần, mọi dòng điểm, minh chứng điểm và snapshot xếp hạng liên quan trong một transaction; nhật ký kiểm toán được giữ lại.
+- `DELETE /api/criteria-sets/:id` chỉ dành cho Admin/Superadmin và cần một xác nhận `YES` cùng mật khẩu hiện tại. Máy chủ xóa bộ tiêu chí, nhóm/nội dung và mọi bảng tuần, điểm, minh chứng và snapshot dùng bộ đó trong một transaction.
 - `GET /api/teacher/class-week` chỉ dành cho Teacher. Kết quả giới hạn vào lớp được phân công trong năm học, xếp hạng chính thức của lớp và các ghi nhận có tên trong tuần. Endpoint không cấp quyền đọc store tổng quát.
+- Mỗi tuần trong một trường chỉ có một `weekly_score_sheets` và một `criteria_set_id`. Sao đỏ không thể tạo bảng tuần hoặc chọn bộ tiêu chí. Admin/Superadmin chỉ có thể thay bộ tiêu chí bằng `PATCH /api/score-sheets/:id/criteria-set`, với body `{ "criteriaSetId" }` và header xác nhận; máy chủ xóa điểm, minh chứng và snapshot tuần rồi đặt bảng về `draft`.
 - ID store và ID bản ghi trong path phải được URL-encode.
 
 ### 3. Xác thực và phiên
@@ -757,9 +759,11 @@ http://127.0.0.1:3000/api
 
 ### Competition-data deletion
 
-- `DELETE /api/score-sheets/:id` is Admin/Superadmin-only. The JSON body must be `{ "confirmation": "XÓA BẢNG TUẦN" }`. The server physically removes the weekly sheet, every score row, score evidence, and related ranking snapshot in one transaction while retaining audit history.
-- `DELETE /api/criteria-sets/:id` is Admin/Superadmin-only. The JSON body must include both `{ "confirmation": "XÓA BỘ TIÊU CHÍ", "finalConfirmation": "XÓA TOÀN BỘ DỮ LIỆU LIÊN QUAN" }`. The server removes the criteria set, groups/rules, and every related weekly sheet, score, evidence, and snapshot in one transaction.
+- `POST /api/destructive-confirmations` accepts `{ "confirmation": "YES", "currentPassword" }` and returns a two-minute authorization. Send it in `X-Destructive-Authorization` for every delete operation.
+- `DELETE /api/score-sheets/:id` is Admin/Superadmin-only and requires the destructive-authorization header. The server physically removes the weekly sheet, every score row, score evidence, and related ranking snapshot in one transaction while retaining audit history.
+- `DELETE /api/criteria-sets/:id` is Admin/Superadmin-only and requires one `YES` plus current-password confirmation. The server removes the criteria set, groups/rules, and every related weekly sheet, score, evidence, and snapshot in one transaction.
 - `GET /api/teacher/class-week` is Teacher-only. It is limited to the assigned class, its official ranking, and named weekly incidents. It does not grant generic store-read access.
+- Each school week has only one `weekly_score_sheets` record and one `criteria_set_id`. Sao đỏ cannot create a weekly sheet or choose its criteria set. Admin/Superadmin can replace the set only through `PATCH /api/score-sheets/:id/criteria-set`, with `{ "criteriaSetId" }` and the destructive-authorization header; the server deletes weekly scores, evidence, and snapshots, then resets the sheet to `draft`.
 - Store and record IDs in paths must be URL-encoded.
 
 ### 3. Authentication and sessions

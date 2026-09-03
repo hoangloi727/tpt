@@ -179,6 +179,14 @@ export class UserStore {
     };
   }
 
+  async verifyPassword(id, password) {
+    const user = this.state.users.find((item) => item.id === id);
+    if (!user || user.disabled) return false;
+    const actual = Buffer.from(user.passwordHash, "base64url");
+    const supplied = Buffer.from(await scrypt(String(password || ""), user.passwordSalt, 64));
+    return actual.length === supplied.length && timingSafeEqual(actual, supplied);
+  }
+
   list(schoolId, includeGlobal = false) {
     return this.state.users
       .filter(
@@ -288,6 +296,31 @@ export class SessionManager {
     const token = randomBytes(32).toString("base64url");
     this.sessions.set(token, { user, expiresAt: Date.now() + SESSION_TTL_MS });
     return { token, user };
+  }
+
+  authorizeDestructive(header) {
+    const token = String(header || "").replace(/^Bearer\s+/i, ""),
+      session = this.sessions.get(token);
+    if (!session) return null;
+    const authorization = randomBytes(24).toString("base64url");
+    session.destructiveAuthorization = {
+      value: authorization,
+      expiresAt: Date.now() + 2 * 60 * 1000,
+    };
+    return authorization;
+  }
+
+  verifyDestructive(header, authorization) {
+    const token = String(header || "").replace(/^Bearer\s+/i, ""),
+      session = this.sessions.get(token),
+      active = session?.destructiveAuthorization;
+    const supplied = Buffer.from(String(authorization || ""));
+    return !!(
+      active &&
+      active.expiresAt > Date.now() &&
+      active.value.length === supplied.length &&
+      timingSafeEqual(Buffer.from(active.value), supplied)
+    );
   }
 
   verify(header) {

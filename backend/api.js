@@ -19,11 +19,26 @@ const DASHBOARD_STORES = new Set([
   "tasks",
   "weekly_score_sheets",
 ]);
+const SAO_DO_SCORE_STORES = new Set([
+  "classes",
+  "class_groups",
+  "campuses",
+  "school_years",
+  "semesters",
+  "criteria_sets",
+  "criteria_groups",
+  "criteria",
+  "school_weeks",
+  "weekly_score_sheets",
+  "score_entries",
+  "score_grader_assignments",
+]);
 const MANAGER_WRITE_STORES = new Set([
   "class_groups",
   "criteria_sets",
   "criteria_groups",
   "criteria",
+  "weekly_score_sheets",
   "teacher_class_assignments",
 ]);
 const NO_AUTOMATIC_AUDIT_STORES = new Set([
@@ -140,7 +155,9 @@ const sessionUser = (user, school) => ({
 });
 
 const canReadStore = (user, store) =>
-  user.role !== "teacher" &&
+  user.role === "user"
+    ? SAO_DO_SCORE_STORES.has(store)
+    : user.role !== "teacher" &&
   (store === "score_grader_assignments" ||
   ["superadmin", "admin"].includes(user.role) ||
   hasPermission(user, `store:${store}:read`) ||
@@ -323,6 +340,22 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         return sendJson(response, 401, { error: "Phiên làm việc đã hết hạn." });
       }
       const user = session.user;
+      const destructiveAuthorized = () =>
+        sessions.verifyDestructive(
+          sessionToken,
+          request.headers["x-destructive-authorization"],
+        );
+
+      if (request.method === "POST" && url.pathname === "/api/destructive-confirmations") {
+        const body = await readJson(request);
+        if (body.confirmation !== "YES")
+          return sendJson(response, 400, { error: "Cần nhập chính xác YES để xác nhận." });
+        if (!(await users.verifyPassword(user.id, body.currentPassword)))
+          return sendJson(response, 403, { error: "Mật khẩu hiện tại không đúng." });
+        return sendJson(response, 200, {
+          authorization: sessions.authorizeDestructive(sessionToken),
+        });
+      }
 
       if (request.method === "GET" && url.pathname === "/api/session") {
         return sendJson(response, 200, { user });
@@ -497,6 +530,8 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         }
         if (request.method === "DELETE") {
           if (id === user.id) return sendJson(response, 400, { error: "Không thể xóa phiên đang đăng nhập." });
+          if (!destructiveAuthorized())
+            return sendJson(response, 403, { error: "Cần xác nhận YES và mật khẩu hiện tại trước khi xóa." });
           const removed = await users.remove(id);
           if (removed)
             await clearGraderAssignments(
@@ -607,11 +642,8 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         if (!isManager(user)) return forbidden(response);
         if (request.method !== "DELETE")
           return sendJson(response, 405, { error: "Phương thức không được phép." });
-        const body = await readJson(request);
-        if (body.confirmation !== "XÓA BẢNG TUẦN")
-          return sendJson(response, 400, {
-            error: "Cần nhập chính xác XÓA BẢNG TUẦN để xác nhận.",
-          });
+        if (!destructiveAuthorized())
+          return sendJson(response, 403, { error: "Cần xác nhận YES và mật khẩu hiện tại trước khi xóa." });
         return sendJson(
           response,
           200,
@@ -622,19 +654,34 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           ),
         );
       }
+      const scoreSheetCriteriaMatch = url.pathname.match(
+        /^\/api\/score-sheets\/([^/]+)\/criteria-set$/,
+      );
+      if (scoreSheetCriteriaMatch) {
+        if (!isManager(user)) return forbidden(response);
+        if (request.method !== "PATCH")
+          return sendJson(response, 405, { error: "Phương thức không được phép." });
+        const body = await readJson(request);
+        if (!destructiveAuthorized())
+          return sendJson(response, 403, { error: "Cần xác nhận YES và mật khẩu hiện tại trước khi thay bộ tiêu chí." });
+        return sendJson(
+          response,
+          200,
+          await repository.replaceWeeklyScoreSheetCriteria(
+            decodeURIComponent(scoreSheetCriteriaMatch[1]),
+            String(body.criteriaSetId || ""),
+            user.selectedSchoolId,
+            user.id,
+          ),
+        );
+      }
       const criteriaSetMatch = url.pathname.match(/^\/api\/criteria-sets\/([^/]+)$/);
       if (criteriaSetMatch) {
         if (!isManager(user)) return forbidden(response);
         if (request.method !== "DELETE")
           return sendJson(response, 405, { error: "Phương thức không được phép." });
-        const body = await readJson(request);
-        if (
-          body.confirmation !== "XÓA BỘ TIÊU CHÍ" ||
-          body.finalConfirmation !== "XÓA TOÀN BỘ DỮ LIỆU LIÊN QUAN"
-        )
-          return sendJson(response, 400, {
-            error: "Cần hoàn tất cả hai xác nhận xóa bộ tiêu chí.",
-          });
+        if (!destructiveAuthorized())
+          return sendJson(response, 403, { error: "Cần xác nhận YES và mật khẩu hiện tại trước khi xóa." });
         return sendJson(
           response,
           200,
@@ -667,14 +714,37 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           return sendJson(
             response,
             200,
-            repository.all(
-              store,
-              url.searchParams.get("includeDeleted") === "1",
-              user.selectedSchoolId,
-            ),
+            repository
+              .all(
+                store,
+                url.searchParams.get("includeDeleted") === "1",
+                user.selectedSchoolId,
+              )
+              .filter((row) => {
+                if (user.role !== "user") return true;
+                const classIds = new Set(
+                  graderAssignments(repository, user).flatMap(
+                    (assignment) => assignment.class_ids || [],
+                  ),
+                );
+                if (store === "classes") return classIds.has(row.id);
+                if (store === "score_entries") return classIds.has(row.class_id);
+                return true;
+              }),
           );
         }
         const record = repository.get(store, id, user.selectedSchoolId);
+        if (
+          record &&
+          user.role === "user" &&
+          ["classes", "score_entries"].includes(store) &&
+          !graderAssignments(repository, user).some((assignment) =>
+            assignment.class_ids?.includes(
+              store === "classes" ? record.id : record.class_id,
+            ),
+          )
+        )
+          return forbidden(response);
         if (
           store === "score_grader_assignments" &&
           record &&
@@ -704,6 +774,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         (store === "score_grader_assignments" && !isManager(user)) ||
         (store === "score_entries" && !isManager(user) && !assignedGrader) ||
         (store === "audit_logs" && !isManager(user) && !assignedGrader) ||
+        (user.role === "user" && !["score_entries", "audit_logs"].includes(store)) ||
         (!["score_entries", "audit_logs"].includes(store) &&
           !canWriteStore(user, store))
       )
@@ -780,6 +851,8 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         );
       }
       if (request.method === "DELETE" && id) {
+        if (!destructiveAuthorized())
+          return sendJson(response, 403, { error: "Cần xác nhận YES và mật khẩu hiện tại trước khi xóa." });
         if (url.searchParams.get("hard") === "1" && !isManager(user))
           return forbidden(response);
         if (
@@ -804,6 +877,8 @@ export const createApiHandler = ({ repository, sessions, users }) =>
       }
       if (request.method === "DELETE" && !id) {
         if (!isManager(user)) return forbidden(response);
+        if (!destructiveAuthorized())
+          return sendJson(response, 403, { error: "Cần xác nhận YES và mật khẩu hiện tại trước khi xóa." });
         return sendJson(
           response,
           200,

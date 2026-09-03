@@ -57,6 +57,7 @@
       this.onChange = options.onChange;
       this.baseUrl = "/api";
       this.currentUser = null;
+      this.destructiveAuthorization = "";
       this.db = null;
     }
 
@@ -127,6 +128,9 @@
 
     async request(path, options = {}) {
       const headers = new Headers(options.headers || {});
+      if (this.destructiveAuthorization) {
+        headers.set("X-Destructive-Authorization", this.destructiveAuthorization);
+      }
       if (options.body !== undefined && !headers.has("Content-Type")) {
         headers.set("Content-Type", "application/json");
       }
@@ -187,19 +191,37 @@
       });
     }
 
-    deleteWeeklyScoreSheet(id, confirmation) {
+    async authorizeDestructive(currentPassword) {
+      const result = await this.request("/destructive-confirmations", {
+        method: "POST",
+        body: JSON.stringify({ confirmation: "YES", currentPassword }),
+      });
+      this.destructiveAuthorization = result.authorization;
+    }
+
+    clearDestructiveAuthorization() {
+      this.destructiveAuthorization = "";
+    }
+
+    deleteWeeklyScoreSheet(id) {
       this.beforeWrite();
       return this.request(`/score-sheets/${encodeURIComponent(id)}`, {
         method: "DELETE",
-        body: JSON.stringify({ confirmation }),
       });
     }
 
-    forceDeleteCriteriaSet(id, confirmation, finalConfirmation) {
+    replaceWeeklyScoreSheetCriteria(id, criteriaSetId) {
+      this.beforeWrite();
+      return this.request(`/score-sheets/${encodeURIComponent(id)}/criteria-set`, {
+        method: "PATCH",
+        body: JSON.stringify({ criteriaSetId }),
+      });
+    }
+
+    forceDeleteCriteriaSet(id) {
       this.beforeWrite();
       return this.request(`/criteria-sets/${encodeURIComponent(id)}`, {
         method: "DELETE",
-        body: JSON.stringify({ confirmation, finalConfirmation }),
       });
     }
 
