@@ -228,7 +228,7 @@ const tasks = await api("/stores/tasks");`;
         if (!endpoints.length) return "";
         return `<section class="api-reference__endpoint-group" aria-labelledby="api-group-${group}">
           <div class="api-reference__group-head">
-            <h3 id="api-group-${group}">${esc(text(GROUPS[group]))}</h3>
+            <h3 id="api-group-${esc(group)}">${esc(text(GROUPS[group]))}</h3>
             <span>${endpoints.length}</span>
           </div>
           <div class="api-reference__endpoint-grid">${endpoints.map((endpoint) => {

@@ -43,7 +43,7 @@ const publicUser = (user) => ({
   displayName: user.displayName,
   role: user.role,
   schoolId: user.schoolId || null,
-  permissions: [...user.permissions],
+  permissions: normalizePermissions(user.permissions, user.role),
   disabled: !!user.disabled,
   root: !!user.root,
   createdAt: user.createdAt,
@@ -72,25 +72,49 @@ export class UserStore {
       if (error.code !== "ENOENT") throw error;
     }
     const users = Array.isArray(stored?.users) ? stored.users : [];
+    const importedUsers = [];
+    const importedUsernames = new Set();
+    const importedIds = new Set();
+    for (const source of users) {
+      if (!source || typeof source !== "object" || Array.isArray(source)) continue;
+      const username = normalizeUsername(source.username);
+      const id = String(source.id || "").trim();
+      if (
+        !id ||
+        !USERNAME_PATTERN.test(username) ||
+        importedUsernames.has(username) ||
+        importedIds.has(id)
+      )
+        continue;
+      importedUsernames.add(username);
+      importedIds.add(id);
+      const sourceRole = String(source.role || "").trim().toLowerCase();
+      const role = ["superadmin", "admin", "teacher"].includes(sourceRole)
+        ? sourceRole
+        : "user";
+      importedUsers.push({
+        ...source,
+        id,
+        username,
+        role,
+        schoolId:
+          role === "superadmin"
+            ? null
+            : source.schoolId || this.defaultSchoolId,
+        permissions: normalizePermissions(source.permissions, role),
+        disabled: source.disabled === true,
+      });
+    }
     this.state = {
       version: 2,
-      users: users.map((user) => ({
-        ...user,
-        role: ["superadmin", "admin", "teacher"].includes(user.role)
-          ? user.role
-          : "user",
-        schoolId:
-          user.role === "superadmin"
-            ? null
-            : user.schoolId || this.defaultSchoolId,
-      })),
+      users: importedUsers,
     };
     await this.persist(this.state, {
       auth_initialized: true,
       legacy_auth_imported_at: stored ? now() : "none",
       legacy_auth_user_count: users.length,
     });
-    if (this.database.loadUsers().length !== users.length)
+    if (this.database.loadUsers().length !== importedUsers.length)
       throw new Error("SQLite account migration verification failed.");
     return this;
   }
@@ -164,6 +188,11 @@ export class UserStore {
       (user.role !== "superadmin" && user.schoolId !== schoolId)
     )
       return null;
+    if (
+      typeof user.passwordHash !== "string" ||
+      typeof user.passwordSalt !== "string"
+    )
+      return null;
     const actual = Buffer.from(user.passwordHash, "base64url");
     const supplied = Buffer.from(await scrypt(String(password || ""), user.passwordSalt, 64));
     if (actual.length !== supplied.length || !timingSafeEqual(actual, supplied)) return null;
@@ -182,6 +211,11 @@ export class UserStore {
   async verifyPassword(id, password) {
     const user = this.state.users.find((item) => item.id === id);
     if (!user || user.disabled) return false;
+    if (
+      typeof user.passwordHash !== "string" ||
+      typeof user.passwordSalt !== "string"
+    )
+      return false;
     const actual = Buffer.from(user.passwordHash, "base64url");
     const supplied = Buffer.from(await scrypt(String(password || ""), user.passwordSalt, 64));
     return actual.length === supplied.length && timingSafeEqual(actual, supplied);

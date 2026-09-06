@@ -29,8 +29,10 @@
         typeof options === "string" ? options : options.mode || "direct",
       raw = String(input ?? "").trim().toUpperCase();
 
-    if (raw === "" && mode !== "paste") {
-      return { valid: true, action: "clear", entry_state: null, value: null };
+    if (raw === "") {
+      return mode === "paste"
+        ? { valid: true, action: "skip", entry_state: null, value: null }
+        : { valid: true, action: "clear", entry_state: null, value: null };
     }
     if (raw === "KAD" || raw === "N/A") {
       return { valid: true, action: "save", entry_state: "na", value: null };
@@ -68,6 +70,15 @@
         reason: "number",
         entry_state: "value",
         value: null,
+      };
+    }
+    if (criterion?.data_type === "boolean" && ![0, 1].includes(value)) {
+      return {
+        valid: false,
+        action: "invalid",
+        reason: "boolean",
+        entry_state: "value",
+        value,
       };
     }
     if (

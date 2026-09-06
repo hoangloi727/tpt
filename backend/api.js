@@ -144,6 +144,29 @@ const readJson = (request) =>
     request.on("error", reject);
   });
 
+const assertObject = (value, field = "body") => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    const error = new Error(`${field} phải là một đối tượng JSON.`);
+    error.status = 400;
+    throw error;
+  }
+  return value;
+};
+
+const assertObjectBody = (body, field = "row") => {
+  return assertObject(body?.[field], field);
+};
+
+const decodePathPart = (value) => {
+  try {
+    return decodeURIComponent(value);
+  } catch (_) {
+    const error = new Error("Đường dẫn không hợp lệ.");
+    error.status = 400;
+    throw error;
+  }
+};
+
 const forbidden = (response) =>
   sendJson(response, 403, { error: "Tài khoản không có quyền thực hiện thao tác này." });
 
@@ -234,6 +257,7 @@ const clearGraderAssignments = async (repository, userId, schoolId) => {
   for (const assignment of assignments)
     await repository.remove("score_grader_assignments", assignment.id, false, {
       schoolId,
+      allowArchivedYear: true,
     });
 };
 
@@ -244,6 +268,7 @@ const clearTeacherAssignments = async (repository, userId, schoolId) => {
   for (const assignment of assignments)
     await repository.remove("teacher_class_assignments", assignment.id, false, {
       schoolId,
+      allowArchivedYear: true,
     });
 };
 
@@ -256,7 +281,11 @@ const validateTeacherAssignment = (repository, assignment, schoolId) => {
     throw error;
   }
   const schoolClass = repository.get("classes", classId, schoolId);
-  if (!schoolClass || (schoolClass.school_year_id || schoolClass.academic_year_id) !== schoolYearId) {
+  if (
+    !schoolClass ||
+    schoolClass.active === false ||
+    (schoolClass.school_year_id || schoolClass.academic_year_id) !== schoolYearId
+  ) {
     const error = new Error("Lớp được phân công không thuộc năm học đã chọn.");
     error.status = 400;
     throw error;
@@ -282,7 +311,7 @@ const setTeacherAssignment = async (repository, user, assignment, schoolId) => {
       school_year_id: schoolYearId,
       class_id: classId,
     },
-    { schoolId },
+    { schoolId, allowArchivedYear: true },
   );
 };
 
@@ -301,6 +330,12 @@ export const createApiHandler = ({ repository, sessions, users }) =>
             error: "Tài khoản root đã được khởi tạo.",
           });
         const body = await readJson(request);
+        assertObject(body);
+        users.validateUsername(body.username);
+        if (String(body.password || "").length < 10)
+          return sendJson(response, 400, {
+            error: "Mật khẩu phải có ít nhất 10 ký tự.",
+          });
         const school = repository.listSchools().length
           ? repository.school(body.schoolId)
           : await repository.ensureSchool(body.schoolName);
@@ -318,6 +353,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           return sendJson(response, 409, { error: "Cần khởi tạo tài khoản root trước." });
         }
         const body = await readJson(request);
+        assertObject(body);
         const school = repository.school(body.schoolId);
         if (!school) return sendJson(response, 400, { error: "Hãy chọn trường hợp lệ." });
         const user = await users.authenticate(body.username, body.password, school.id);
@@ -351,6 +387,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
 
       if (request.method === "POST" && url.pathname === "/api/destructive-confirmations") {
         const body = await readJson(request);
+        assertObject(body);
         if (body.confirmation !== "YES")
           return sendJson(response, 400, { error: "Cần nhập chính xác YES để xác nhận." });
         if (!(await users.verifyPassword(user.id, body.currentPassword)))
@@ -374,8 +411,9 @@ export const createApiHandler = ({ repository, sessions, users }) =>
       }
       if (request.method === "POST" && url.pathname === "/api/session/school") {
         if (user.role !== "superadmin") return forbidden(response);
-        const body = await readJson(request),
-          school = repository.school(body.schoolId);
+        const body = await readJson(request);
+        assertObject(body);
+        const school = repository.school(body.schoolId);
         if (!school)
           return sendJson(response, 400, { error: "Hãy chọn trường hợp lệ." });
         const updated = sessionUser(user, school);
@@ -383,8 +421,9 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         return sendJson(response, 200, { user: updated });
       }
       if (request.method === "PATCH" && url.pathname === "/api/account") {
-        const body = await readJson(request),
-          allowedFields = new Set([
+        const body = await readJson(request);
+        assertObject(body);
+        const allowedFields = new Set([
             "displayName",
             "currentPassword",
             "password",
@@ -440,6 +479,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           return sendJson(response, 200, repository.listSchools());
         if (request.method === "POST") {
           const body = await readJson(request);
+          assertObject(body);
           return sendJson(
             response,
             201,
@@ -461,6 +501,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           );
         if (request.method === "POST") {
           const body = await readJson(request);
+          assertObject(body);
           if (user.role === "admin") {
             if (body.role === "superadmin") body.role = "admin";
           }
@@ -478,7 +519,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
       const userMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
       if (userMatch) {
         if (!["superadmin", "admin"].includes(user.role)) return forbidden(response);
-        const id = decodeURIComponent(userMatch[1]);
+        const id = decodePathPart(userMatch[1]);
         const target = users.get(id);
         if (
           !target ||
@@ -489,19 +530,30 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           return forbidden(response);
         if (request.method === "PATCH") {
           const changes = await readJson(request);
+          assertObject(changes);
           const passwordChanged = !!changes.password;
           changes.schoolId = user.selectedSchoolId;
           if (user.role === "admin") {
             if (changes.role === "superadmin") changes.role = "admin";
           }
-          if ((changes.role || target.role) === "teacher")
+          if (
+            (changes.role || target.role) === "teacher" &&
+            (changes.teacherAssignment || target.role !== "teacher")
+          ) {
             validateTeacherAssignment(
               repository,
               changes.teacherAssignment,
               user.selectedSchoolId,
             );
+          }
           const updated = await users.update(id, changes);
-          await setTeacherAssignment(repository, updated, changes.teacherAssignment, user.selectedSchoolId);
+          if (changes.teacherAssignment)
+            await setTeacherAssignment(
+              repository,
+              updated,
+              changes.teacherAssignment,
+              user.selectedSchoolId,
+            );
           if (updated.disabled || updated.role !== "teacher")
             await clearTeacherAssignments(
               repository,
@@ -562,17 +614,28 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         const yearId = String(url.searchParams.get("schoolYearId") || "").trim();
         const assignments = repository.all("teacher_class_assignments", false, user.selectedSchoolId);
         const assignment = assignments.find(
-          (row) => row.user_id === user.id && (!yearId || row.school_year_id === yearId),
+          (row) =>
+            row.user_id === user.id &&
+            (!yearId || (row.school_year_id || row.academic_year_id) === yearId),
         );
         if (!assignment) return sendJson(response, 404, { error: "Chưa được phân công lớp cho năm học này." });
         const weeks = repository
           .all("school_weeks", false, user.selectedSchoolId)
-          .filter((row) => row.school_year_id === assignment.school_year_id)
+          .filter(
+            (row) =>
+              (row.school_year_id || row.academic_year_id) ===
+              (assignment.school_year_id || assignment.academic_year_id),
+          )
           .sort((a, b) => String(a.start_date).localeCompare(String(b.start_date)));
         const weekId = String(url.searchParams.get("weekId") || weeks.at(-1)?.id || "");
         const sheet = repository
           .all("weekly_score_sheets", false, user.selectedSchoolId)
-          .find((row) => row.week_id === weekId);
+          .find(
+            (row) =>
+              row.week_id === weekId &&
+              (row.school_year_id || row.academic_year_id) ===
+                (assignment.school_year_id || assignment.academic_year_id),
+          );
         const schoolClass = repository.get("classes", assignment.class_id, user.selectedSchoolId);
         const snapshot = sheet && ["approved", "locked"].includes(sheet.status)
           ? repository
@@ -607,6 +670,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
       if (request.method === "POST" && url.pathname === "/api/import/replace") {
         if (!hasPermission(user, "data:import")) return forbidden(response);
         const body = await readJson(request);
+        assertObject(body);
         assertSafeWriteBody(body);
         return sendJson(
           response,
@@ -619,6 +683,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
       if (request.method === "POST" && url.pathname === "/api/import/merge") {
         if (!hasPermission(user, "data:import")) return forbidden(response);
         const body = await readJson(request);
+        assertObject(body);
         assertSafeWriteBody(body);
         return sendJson(
           response,
@@ -651,9 +716,10 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           response,
           200,
           await repository.deleteWeeklyScoreSheet(
-            decodeURIComponent(scoreSheetMatch[1]),
+            decodePathPart(scoreSheetMatch[1]),
             user.selectedSchoolId,
             user.id,
+            user.displayName || user.username,
           ),
         );
       }
@@ -665,16 +731,18 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         if (request.method !== "PATCH")
           return sendJson(response, 405, { error: "Phương thức không được phép." });
         const body = await readJson(request);
+        assertObject(body);
         if (!destructiveAuthorized())
           return sendJson(response, 403, { error: "Cần xác nhận YES và mật khẩu hiện tại trước khi thay bộ tiêu chí." });
         return sendJson(
           response,
           200,
           await repository.replaceWeeklyScoreSheetCriteria(
-            decodeURIComponent(scoreSheetCriteriaMatch[1]),
+            decodePathPart(scoreSheetCriteriaMatch[1]),
             String(body.criteriaSetId || ""),
             user.selectedSchoolId,
             user.id,
+            user.displayName || user.username,
           ),
         );
       }
@@ -689,17 +757,18 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           response,
           200,
           await repository.forceDeleteCriteriaSet(
-            decodeURIComponent(criteriaSetMatch[1]),
+            decodePathPart(criteriaSetMatch[1]),
             user.selectedSchoolId,
             user.id,
+            user.displayName || user.username,
           ),
         );
       }
 
       const match = url.pathname.match(/^\/api\/stores\/([^/]+)(?:\/([^/]+))?$/);
       if (!match) return sendJson(response, 404, { error: "Không tìm thấy đường dẫn API." });
-      const store = decodeURIComponent(match[1]);
-      const id = match[2] ? decodeURIComponent(match[2]) : "";
+      const store = decodePathPart(match[1]);
+      const id = match[2] ? decodePathPart(match[2]) : "";
 
       if (request.method === "GET") {
         if (!canReadStore(user, store)) return forbidden(response);
@@ -789,7 +858,20 @@ export const createApiHandler = ({ repository, sessions, users }) =>
       }
       if (request.method === "POST" && id === "bulk") {
         const body = await readJson(request);
+        assertObject(body);
         assertSafeWriteBody(body);
+        if (!Array.isArray(body.rows)) {
+          const error = new Error("rows phải là một mảng JSON.");
+          error.status = 400;
+          throw error;
+        }
+        body.rows.forEach((row) => {
+          if (!row || typeof row !== "object" || Array.isArray(row)) {
+            const error = new Error("Mỗi phần tử rows phải là một đối tượng JSON.");
+            error.status = 400;
+            throw error;
+          }
+        });
         if (
           store === "score_grader_assignments" &&
           (body.rows || []).some((row) => {
@@ -797,6 +879,18 @@ export const createApiHandler = ({ repository, sessions, users }) =>
             return (
               !target ||
               target.role !== "user" ||
+              target.schoolId !== user.selectedSchoolId
+            );
+          })
+        )
+          return forbidden(response);
+        if (
+          store === "teacher_class_assignments" &&
+          (body.rows || []).some((row) => {
+            const target = users.get(row.user_id);
+            return (
+              !target ||
+              target.role !== "teacher" ||
               target.schoolId !== user.selectedSchoolId
             );
           })
@@ -826,11 +920,21 @@ export const createApiHandler = ({ repository, sessions, users }) =>
       if (request.method === "POST" && !id) {
         const body = await readJson(request);
         assertSafeWriteBody(body);
+        assertObjectBody(body);
         if (store === "score_grader_assignments") {
           const target = users.get(body.row?.user_id);
           if (
             !target ||
             target.role !== "user" ||
+            target.schoolId !== user.selectedSchoolId
+          )
+            return forbidden(response);
+        }
+        if (store === "teacher_class_assignments") {
+          const target = users.get(body.row?.user_id);
+          if (
+            !target ||
+            target.role !== "teacher" ||
             target.schoolId !== user.selectedSchoolId
           )
             return forbidden(response);
@@ -889,7 +993,10 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         return sendJson(
           response,
           200,
-          await repository.clear(store, user.selectedSchoolId),
+          await repository.clear(store, user.selectedSchoolId, {
+            actorId: user.id,
+            actorName: user.displayName || user.username,
+          }),
         );
       }
       return sendJson(response, 405, { error: "Phương thức không được phép." });

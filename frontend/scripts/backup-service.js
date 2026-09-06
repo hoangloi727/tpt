@@ -11,6 +11,7 @@
       DEVICE_ID,
       tabCoordinator,
       platform,
+      getDirectoryHandle = () => null,
       setting,
       now,
       today,
@@ -28,7 +29,9 @@
         let rows = await db.allIncludingDeleted(store);
         if (yearId)
           rows = rows.filter(
-            (row) => !row.school_year_id || row.school_year_id === yearId,
+            (row) =>
+              !(row.school_year_id || row.academic_year_id) ||
+              (row.school_year_id || row.academic_year_id) === yearId,
           );
         data[store] = rows.map(({ blob, ...row }) => row);
         counts[store] = data[store].length;
@@ -116,11 +119,12 @@
     async function ensureScheduledDirectoryBackup() {
       if (!(await setting("backup_directory_auto"))) return;
       const [directoryRecord] = await db.all("backup_handles"),
+        directoryHandle = getDirectoryHandle() || directoryRecord?.handle || null,
         last = await setting("last_directory_backup_at");
       if (
-        !directoryRecord?.handle ||
+        !directoryHandle ||
         (last && Date.now() - Date.parse(last) < 86400000) ||
-        !(await platform.permission(directoryRecord.handle, false))
+        !(await platform.permission(directoryHandle, false))
       )
         return;
       try {
@@ -129,7 +133,7 @@
           blob = new Blob([text], { type: "application/json" }),
           fileName = `tro-ly-doi-tu-dong-${today()}.json`;
         await platform.writeFile(
-          directoryRecord.handle,
+          directoryHandle,
           fileName,
           blob,
           false,
@@ -171,7 +175,9 @@
         let rows = await db.allIncludingDeleted(store);
         if (yearId)
           rows = rows.filter(
-            (row) => !row.school_year_id || row.school_year_id === yearId,
+            (row) =>
+              !(row.school_year_id || row.academic_year_id) ||
+              (row.school_year_id || row.academic_year_id) === yearId,
           );
         if (store === "attachments") {
           data[store] = rows.map(({ blob, ...meta }) => meta);

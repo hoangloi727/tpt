@@ -123,6 +123,34 @@
           ...d.ctx.days.map((day) => x.daily[day.date] || 0),
           x.total,
         ]);
+      } else if (type === "activities") {
+        head = ["Hoạt động", "Nhóm", "Ngày", "Địa điểm", "Trạng thái"];
+        rows = d.activities.map((x) => [
+          x.name,
+          x.category,
+          x.date,
+          x.location,
+          statusLabel(x.status),
+        ]);
+      } else if (type === "equipment") {
+        head = ["Mã", "Thiết bị", "Số lượng", "Tình trạng", "Nơi lưu"];
+        rows = (d.equipment || []).map((x) => [
+          x.code,
+          x.name,
+          `${x.quantity} ${x.unit || ""}`,
+          x.condition,
+          x.location,
+        ]);
+      } else if (type === "week") {
+        head = ["Công việc", "Nhóm", "Cơ sở", "Hạn", "Trạng thái", "Tiến độ"];
+        rows = d.tasks.map((x) => [
+          x.title,
+          x.group,
+          campusName(x.campus_id),
+          x.due_date,
+          statusLabel(x.status),
+          x.progress,
+        ]);
       } else {
         head = [
           "Công việc",

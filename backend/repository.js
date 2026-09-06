@@ -6,8 +6,24 @@ import {
   STORES,
 } from "./stores.js";
 
+const NO_AUTOMATIC_AUDIT_STORES = new Set([
+  "audit_logs",
+  "operation_journal",
+  "internal_snapshots",
+  "form_drafts",
+  "restore_staging",
+  "backup_handles",
+  "backup_records",
+  "migration_logs",
+]);
+const NO_OPERATION_JOURNAL_STORES = new Set([
+  "operation_journal",
+  "form_drafts",
+]);
+
 const now = () => new Date().toISOString();
 const ALLOW_CLASS_DELETION = Symbol("allowClassDeletion");
+const RECORD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 const revisionConflict = (message) => {
   const error = new Error(message);
@@ -187,7 +203,10 @@ export class SqliteRepository {
     return this.all("schools")
       .map((school) => ({
         id: school.school_profile_id,
-        name: school.name || "Trường chưa đặt tên",
+        name:
+          typeof school.name === "string" && school.name.trim()
+            ? school.name
+            : "Trường chưa đặt tên",
       }))
       .sort((a, b) => a.name.localeCompare(b.name, "vi"));
   }
@@ -479,6 +498,7 @@ export class SqliteRepository {
       return (
         !schoolClass ||
         schoolClass.deleted_at ||
+        schoolClass.active === false ||
         (schoolClass.school_year_id || schoolClass.academic_year_id) !==
           row.school_year_id
       );
@@ -580,6 +600,7 @@ export class SqliteRepository {
     );
     if (
       !week ||
+      (week.school_year_id || week.academic_year_id) !== yearId ||
       row.entry_date < week.start_date ||
       row.entry_date > week.end_date
     ) {
@@ -593,7 +614,11 @@ export class SqliteRepository {
       row.sheet_id,
       row.school_profile_id,
     );
-    if (!sheet || sheet.week_id !== row.week_id) {
+    if (
+      !sheet ||
+      sheet.week_id !== row.week_id ||
+      (sheet.school_year_id || sheet.academic_year_id) !== yearId
+    ) {
       const error = new Error("Điểm thi đua hằng ngày phải có bảng thi đua tuần tương ứng.");
       error.status = 400;
       throw error;
@@ -837,6 +862,7 @@ export class SqliteRepository {
       return (
         !schoolClass ||
         schoolClass.deleted_at ||
+        schoolClass.active === false ||
         (schoolClass.school_year_id || schoolClass.academic_year_id) !==
           row.school_year_id
       );
@@ -848,7 +874,51 @@ export class SqliteRepository {
     }
   }
 
+  assertTeacherAssignment(draft, row) {
+    if (!row.user_id || !row.school_year_id || !row.class_id) {
+      const error = new Error("Phân công giáo viên thiếu người dùng, năm học hoặc lớp.");
+      error.status = 400;
+      throw error;
+    }
+    if (row.deleted_at) return;
+    const schoolClass = this.findIn(
+      draft,
+      "classes",
+      row.class_id,
+      row.school_profile_id,
+    );
+    if (
+      !schoolClass ||
+      schoolClass.deleted_at ||
+      schoolClass.active === false ||
+      (schoolClass.school_year_id || schoolClass.academic_year_id) !==
+        row.school_year_id
+    ) {
+      const error = new Error("Phân công giáo viên phải thuộc một lớp trong cùng năm học.");
+      error.status = 400;
+      throw error;
+    }
+    const duplicate = draft.stores.teacher_class_assignments.find(
+      (assignment) =>
+        assignment.id !== row.id &&
+        !assignment.deleted_at &&
+        assignment.school_profile_id === row.school_profile_id &&
+        assignment.school_year_id === row.school_year_id &&
+        assignment.user_id === row.user_id,
+    );
+    if (duplicate) {
+      const error = new Error("Giáo viên đã có phân công trong năm học này.");
+      error.status = 409;
+      throw error;
+    }
+  }
+
   putInto(draft, store, row, options = {}) {
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      const error = new Error("Bản ghi phải là một đối tượng JSON.");
+      error.status = 400;
+      throw error;
+    }
     if (options.schoolId)
       row = { ...row, school_profile_id: options.schoolId };
     if (store === "audit_logs" && options.actorId)
@@ -860,6 +930,7 @@ export class SqliteRepository {
     const current = row.id
       ? this.findIn(draft, store, row.id, options.schoolId || null)
       : null;
+    let validationRow = current ? { ...current, ...row } : row;
     if (
       store === "classes" &&
       row.deleted_at &&
@@ -871,20 +942,25 @@ export class SqliteRepository {
       error.status = 400;
       throw error;
     }
-    this.assertWritable(draft, store, row, options);
-    this.assertDynamicCriterion(draft, store, row, current);
-    if (store === "class_groups") this.assertClassGroup(draft, row);
+    this.assertWritable(draft, store, validationRow, options);
+    this.assertDynamicCriterion(draft, store, validationRow, current);
+    if (store === "class_groups") this.assertClassGroup(draft, validationRow);
     if (store === "weekly_score_sheets")
-      this.assertWeeklyScoreSheet(draft, row, current);
+      this.assertWeeklyScoreSheet(draft, validationRow, current);
     if (store === "score_grader_assignments")
-      this.assertScoreGraderAssignment(draft, row);
-    if (store === "score_entries") this.assertDailyScoreEntry(draft, row);
+      this.assertScoreGraderAssignment(draft, validationRow);
+    if (store === "teacher_class_assignments")
+      this.assertTeacherAssignment(draft, validationRow);
+    if (store === "score_entries") this.assertDailyScoreEntry(draft, validationRow);
     const rows = draft.stores[store];
     if (store === "schools" && options.schoolId) {
       const tenantSchool = rows.find(
         (item) => item.school_profile_id === options.schoolId,
       );
-      if (tenantSchool) row = { ...row, id: tenantSchool.id };
+      if (tenantSchool) {
+        row = { ...row, id: tenantSchool.id };
+        validationRow = { ...validationRow, id: tenantSchool.id };
+      }
     }
     const index = rows.findIndex(
       (item) =>
@@ -901,12 +977,21 @@ export class SqliteRepository {
     ) {
       throw revisionConflict("Bản ghi đã thay đổi ở nơi khác; dữ liệu chưa được ghi đè.");
     }
-    const record = this.normalize(row, existing, options);
+    const record = this.normalize(validationRow, existing, options);
     if (index >= 0) rows[index] = record;
     else rows.push(record);
 
-    const action = existing ? "update" : "create";
-    if (options.audit !== false && store !== "audit_logs") {
+    const action = !existing
+      ? "create"
+      : validationRow.deleted_at && !existing.deleted_at
+        ? "soft_delete"
+        : !validationRow.deleted_at && existing.deleted_at
+          ? "restore"
+          : "update";
+    if (
+      options.audit !== false &&
+      !NO_AUTOMATIC_AUDIT_STORES.has(store)
+    ) {
       draft.stores.audit_logs.push(
         this.normalize(
           {
@@ -924,7 +1009,10 @@ export class SqliteRepository {
         ),
       );
     }
-    if (options.journal !== false && store !== "operation_journal") {
+    if (
+      options.journal !== false &&
+      !NO_OPERATION_JOURNAL_STORES.has(store)
+    ) {
       draft.stores.operation_journal.push(
         this.normalize(
           {
@@ -936,6 +1024,8 @@ export class SqliteRepository {
             status: "committed",
             committed_at: now(),
             reason: options.reason || undefined,
+            actor_id: options.actorId || undefined,
+            actor_name: options.actorName || undefined,
           },
           null,
           { preserveMetadata: true, schoolId: record.school_profile_id },
@@ -965,25 +1055,28 @@ export class SqliteRepository {
       for (const row of rows) {
         this.putInto(draft, store, row, { ...options, audit: false, journal: false });
       }
-      draft.stores.operation_journal.push(
-        this.normalize(
-          {
-            id: randomUUID(),
-            operation_id: randomUUID(),
-            operation: "bulk_put",
-            entity: store,
-            item_count: rows.length,
-            status: "committed",
-            committed_at: now(),
-            reason: options.reason || undefined,
-          },
-          null,
-          {
-            preserveMetadata: true,
-            schoolId: options.schoolId || rows[0]?.school_profile_id,
-          },
-        ),
-      );
+      if (!NO_OPERATION_JOURNAL_STORES.has(store))
+        draft.stores.operation_journal.push(
+          this.normalize(
+            {
+              id: randomUUID(),
+              operation_id: randomUUID(),
+              operation: "bulk_put",
+              entity: store,
+              item_count: rows.length,
+              status: "committed",
+              committed_at: now(),
+              reason: options.reason || undefined,
+              actor_id: options.actorId || undefined,
+              actor_name: options.actorName || undefined,
+            },
+            null,
+            {
+              preserveMetadata: true,
+              schoolId: options.schoolId || rows[0]?.school_profile_id,
+            },
+          ),
+        );
       return rows.length;
     });
   }
@@ -1098,7 +1191,49 @@ export class SqliteRepository {
             { ...rows[index], deleted_at: now() },
             rows[index],
           );
+        const removed = rows[index];
         rows.splice(index, 1);
+        if (!NO_AUTOMATIC_AUDIT_STORES.has(store))
+          draft.stores.audit_logs.push(
+            this.normalize(
+              {
+                id: randomUUID(),
+                action: "hard_delete",
+                entity: store,
+                entity_id: removed.id,
+                summary:
+                  removed.name ||
+                  removed.title ||
+                  removed.code ||
+                  removed.class_name ||
+                  "",
+                reason: options.reason || undefined,
+                actor_id: options.actorId || undefined,
+                actor_name: options.actorName || undefined,
+              },
+              null,
+              { preserveMetadata: true, schoolId: removed.school_profile_id },
+            ),
+          );
+        if (!NO_OPERATION_JOURNAL_STORES.has(store))
+          draft.stores.operation_journal.push(
+            this.normalize(
+              {
+                id: randomUUID(),
+                operation_id: randomUUID(),
+                operation: "hard_delete",
+                entity: store,
+                entity_id: removed.id,
+                status: "committed",
+                committed_at: now(),
+                reason: options.reason || undefined,
+                actor_id: options.actorId || undefined,
+                actor_name: options.actorName || undefined,
+              },
+              null,
+              { preserveMetadata: true, schoolId: removed.school_profile_id },
+            ),
+          );
         return true;
       }
       return structuredClone(
@@ -1112,7 +1247,7 @@ export class SqliteRepository {
     });
   }
 
-  clear(store, schoolId = null) {
+  clear(store, schoolId = null, options = {}) {
     this.assertStore(store);
     return this.mutate((draft) => {
       if (store === "classes") {
@@ -1150,6 +1285,12 @@ export class SqliteRepository {
               row.class_ids = (row.class_ids || []).filter(
                 (classId) => !classIds.has(classId),
               );
+        draft.stores.teacher_class_assignments =
+          draft.stores.teacher_class_assignments.filter(
+            (row) =>
+              (schoolId && row.school_profile_id !== schoolId) ||
+              !classIds.has(row.class_id),
+          );
         draft.stores.activity_classes = draft.stores.activity_classes.filter(
           (row) =>
             (schoolId && row.school_profile_id !== schoolId) ||
@@ -1166,11 +1307,51 @@ export class SqliteRepository {
         error.status = 409;
         throw error;
       }
+      const before = draft.stores[store];
+      const removedCount = schoolId
+        ? before.filter((row) => row.school_profile_id === schoolId).length
+        : before.length;
       draft.stores[store] = schoolId
         ? draft.stores[store].filter(
             (row) => row.school_profile_id !== schoolId,
           )
         : [];
+      if (!NO_AUTOMATIC_AUDIT_STORES.has(store))
+        draft.stores.audit_logs.push(
+          this.normalize(
+            {
+              id: randomUUID(),
+              action: "clear",
+              entity: store,
+              summary: `Xóa ${removedCount} bản ghi`,
+              item_count: removedCount,
+              reason: options.reason || undefined,
+              actor_id: options.actorId || undefined,
+              actor_name: options.actorName || undefined,
+            },
+            null,
+            { preserveMetadata: true, schoolId: schoolId || undefined },
+          ),
+        );
+      if (!NO_OPERATION_JOURNAL_STORES.has(store))
+        draft.stores.operation_journal.push(
+          this.normalize(
+            {
+              id: randomUUID(),
+              operation_id: randomUUID(),
+              operation: "clear",
+              entity: store,
+              item_count: removedCount,
+              status: "committed",
+              committed_at: now(),
+              reason: options.reason || undefined,
+              actor_id: options.actorId || undefined,
+              actor_name: options.actorName || undefined,
+            },
+            null,
+            { preserveMetadata: true, schoolId: schoolId || undefined },
+          ),
+        );
       return true;
     });
   }
@@ -1211,7 +1392,7 @@ export class SqliteRepository {
     return counts;
   }
 
-  deleteWeeklyScoreSheet(sheetId, schoolId, actorId) {
+  deleteWeeklyScoreSheet(sheetId, schoolId, actorId, actorName = "") {
     return this.mutate((draft) => {
       const sheet = draft.stores.weekly_score_sheets.find(
         (row) => row.id === sheetId && row.school_profile_id === schoolId,
@@ -1231,6 +1412,30 @@ export class SqliteRepository {
             entity_id: sheet.id,
             summary: `Xóa bảng tuần ${sheet.week_id}: ${counts.entries} dòng điểm, ${counts.snapshots} snapshot xếp hạng.`,
             reason: `Người thực hiện: ${actorId}; trạng thái trước khi xóa: ${sheet.status || "draft"}.`,
+            actor_id: actorId || undefined,
+            actor_name: actorName || undefined,
+          },
+          null,
+          { preserveMetadata: true, schoolId },
+        ),
+      );
+      draft.stores.operation_journal.push(
+        this.normalize(
+          {
+            id: randomUUID(),
+            operation_id: randomUUID(),
+            operation: "score_sheet_delete",
+            entity: "weekly_score_sheets",
+            entity_id: sheet.id,
+            item_count:
+              counts.sheets +
+              counts.entries +
+              counts.snapshots +
+              counts.evidence,
+            status: "committed",
+            committed_at: now(),
+            actor_id: actorId || undefined,
+            actor_name: actorName || undefined,
           },
           null,
           { preserveMetadata: true, schoolId },
@@ -1240,7 +1445,13 @@ export class SqliteRepository {
     });
   }
 
-  replaceWeeklyScoreSheetCriteria(sheetId, criteriaSetId, schoolId, actorId) {
+  replaceWeeklyScoreSheetCriteria(
+    sheetId,
+    criteriaSetId,
+    schoolId,
+    actorId,
+    actorName = "",
+  ) {
     return this.mutate((draft) => {
       const sheet = draft.stores.weekly_score_sheets.find(
         (row) => row.id === sheetId && row.school_profile_id === schoolId,
@@ -1309,6 +1520,26 @@ export class SqliteRepository {
             entity_id: sheet.id,
             summary: `Đổi bộ tiêu chí ${previousCriteriaSetId} thành ${criteriaSet.id}; xóa ${counts.entries} dòng điểm và ${counts.snapshots} snapshot.`,
             reason: `Người thực hiện: ${actorId}; bảng tuần được đặt lại về draft.`,
+            actor_id: actorId || undefined,
+            actor_name: actorName || undefined,
+          },
+          null,
+          { preserveMetadata: true, schoolId },
+        ),
+      );
+      draft.stores.operation_journal.push(
+        this.normalize(
+          {
+            id: randomUUID(),
+            operation_id: randomUUID(),
+            operation: "score_sheet_criteria_replace",
+            entity: "weekly_score_sheets",
+            entity_id: sheet.id,
+            item_count: counts.entries + counts.snapshots + counts.evidence,
+            status: "committed",
+            committed_at: now(),
+            actor_id: actorId || undefined,
+            actor_name: actorName || undefined,
           },
           null,
           { preserveMetadata: true, schoolId },
@@ -1318,7 +1549,7 @@ export class SqliteRepository {
     });
   }
 
-  forceDeleteCriteriaSet(criteriaSetId, schoolId, actorId) {
+  forceDeleteCriteriaSet(criteriaSetId, schoolId, actorId, actorName = "") {
     return this.mutate((draft) => {
       const criteriaSet = draft.stores.criteria_sets.find(
         (row) => row.id === criteriaSetId && row.school_profile_id === schoolId,
@@ -1372,6 +1603,32 @@ export class SqliteRepository {
             entity_id: criteriaSet.id,
             summary: `Xóa bộ tiêu chí ${criteriaSet.name || criteriaSet.id}: ${scoreCounts.sheets} bảng tuần, ${scoreCounts.entries} dòng điểm, ${scoreCounts.snapshots} snapshot.`,
             reason: `Người thực hiện: ${actorId}; xóa cưỡng bức dữ liệu liên quan.`,
+            actor_id: actorId || undefined,
+            actor_name: actorName || undefined,
+          },
+          null,
+          { preserveMetadata: true, schoolId },
+        ),
+      );
+      draft.stores.operation_journal.push(
+        this.normalize(
+          {
+            id: randomUUID(),
+            operation_id: randomUUID(),
+            operation: "criteria_set_force_delete",
+            entity: "criteria_sets",
+            entity_id: criteriaSet.id,
+            item_count:
+              criteriaCount +
+              groupIds.size +
+              scoreCounts.sheets +
+              scoreCounts.entries +
+              scoreCounts.snapshots +
+              scoreCounts.evidence,
+            status: "committed",
+            committed_at: now(),
+            actor_id: actorId || undefined,
+            actor_name: actorName || undefined,
           },
           null,
           { preserveMetadata: true, schoolId },
@@ -1403,12 +1660,54 @@ export class SqliteRepository {
     };
   }
 
-  replaceAll(payload, options = {}) {
-    if (!payload?.data || !Number.isInteger(payload.schema) || payload.schema > this.schema) {
-      const error = new Error("Tệp sai định dạng hoặc dùng phiên bản dữ liệu mới hơn ứng dụng.");
+  assertImportPayload(payload) {
+    if (
+      !payload ||
+      typeof payload !== "object" ||
+      Array.isArray(payload) ||
+      !payload.data ||
+      typeof payload.data !== "object" ||
+      Array.isArray(payload.data) ||
+      !Number.isInteger(payload.schema) ||
+      payload.schema < 0 ||
+      payload.schema > this.schema
+    ) {
+      const error = new Error(
+        "Tệp sai định dạng hoặc dùng phiên bản dữ liệu mới hơn ứng dụng.",
+      );
       error.status = 400;
       throw error;
     }
+    for (const [store, rows] of Object.entries(payload.data)) {
+      if (!STORES.includes(store) || !Array.isArray(rows)) {
+        const error = new Error("Tệp chứa phân hệ dữ liệu không hợp lệ.");
+        error.status = 400;
+        throw error;
+      }
+      const ids = new Set();
+      for (const row of rows) {
+        if (!row || typeof row !== "object" || Array.isArray(row)) {
+          const error = new Error("Mỗi bản ghi nhập vào phải là một đối tượng JSON.");
+          error.status = 400;
+          throw error;
+        }
+        const id = typeof row.id === "string" ? row.id.trim() : "";
+        if (!RECORD_ID_PATTERN.test(id) || ids.has(id)) {
+          const error = new Error(
+            `Tệp chứa ID bản ghi trùng, rỗng hoặc không hợp lệ (chỉ chấp nhận chữ, số và . _ : -, tối đa 128 ký tự).`,
+          );
+          error.status = 400;
+          throw error;
+        }
+        row.id = id;
+        ids.add(id);
+      }
+    }
+    return payload;
+  }
+
+  replaceAll(payload, options = {}) {
+    this.assertImportPayload(payload);
     return this.mutate((draft) => {
       const schoolId = options.schoolId || null;
       for (const store of STORES) {
@@ -1473,11 +1772,7 @@ export class SqliteRepository {
   }
 
   mergeAll(payload, options = {}) {
-    if (!payload?.data || !Number.isInteger(payload.schema) || payload.schema > this.schema) {
-      const error = new Error("Tệp sai định dạng hoặc dùng phiên bản dữ liệu mới hơn ứng dụng.");
-      error.status = 400;
-      throw error;
-    }
+    this.assertImportPayload(payload);
     return this.mutate((draft) => {
       const schoolId = options.schoolId || null,
         stats = { inserted: 0, updated: 0, kept_current: 0, stores: {} },

@@ -207,6 +207,9 @@
       this.beforeWrite();
       return this.request(`/score-sheets/${encodeURIComponent(id)}`, {
         method: "DELETE",
+      }).then((result) => {
+        this.onChange("weekly_score_sheets", id);
+        return result;
       });
     }
 
@@ -215,6 +218,9 @@
       return this.request(`/score-sheets/${encodeURIComponent(id)}/criteria-set`, {
         method: "PATCH",
         body: JSON.stringify({ criteriaSetId }),
+      }).then((result) => {
+        this.onChange("weekly_score_sheets", id);
+        return result;
       });
     }
 
@@ -222,6 +228,9 @@
       this.beforeWrite();
       return this.request(`/criteria-sets/${encodeURIComponent(id)}`, {
         method: "DELETE",
+      }).then((result) => {
+        this.onChange("criteria_sets", id);
+        return result;
       });
     }
 
@@ -320,15 +329,18 @@
     async hardDelete(store, id, force = false) {
       this.beforeWrite();
       const query = force ? "?hard=1" : "";
-      return this.request(
+      const result = await this.request(
         `/stores/${encodeURIComponent(store)}/${encodeURIComponent(id)}${query}`,
         { method: "DELETE" },
       );
+      this.onChange(store, id);
+      return result;
     }
 
     async hardClear(store) {
       this.beforeWrite();
       await this.request(`/stores/${encodeURIComponent(store)}`, { method: "DELETE" });
+      this.onChange(store, "all");
     }
 
     exportAll() {
@@ -336,15 +348,24 @@
     }
 
     replaceAll(payload) {
-      return this.write("/import/replace", { payload }, { silent: true });
+      return this.write("/import/replace", { payload }, {
+        silent: true,
+        change: { store: "all", id: "all" },
+      });
     }
 
     mergeAll(payload) {
-      return this.write("/import/merge", { payload }, { silent: true });
+      return this.write("/import/merge", { payload }, {
+        silent: true,
+        change: { store: "all", id: "all" },
+      });
     }
 
     normalizeEnhancedData() {
-      return this.write("/migrations/enhanced-data", {}, { silent: true });
+      return this.write("/migrations/enhanced-data", {}, {
+        silent: true,
+        change: { store: "all", id: "all" },
+      });
     }
   }
 

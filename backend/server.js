@@ -32,9 +32,14 @@ const handleApi = createApiHandler({ repository, sessions, users });
 const handleStatic = createStaticHandler(frontendRoot);
 
 const server = createServer((request, response) => {
-  const url = new URL(request.url, `http://${request.headers.host || `${host}:${port}`}`);
-  if (url.pathname.startsWith("/api/")) handleApi(request, response, url);
-  else handleStatic(request, response, url);
+  try {
+    const url = new URL(request.url, `http://${request.headers.host || `${host}:${port}`}`);
+    if (url.pathname.startsWith("/api/")) handleApi(request, response, url);
+    else handleStatic(request, response, url);
+  } catch (_) {
+    response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+    response.end("Yêu cầu không hợp lệ");
+  }
 });
 
 server.listen(port, host, () => {
