@@ -16,7 +16,7 @@
       return defs
         .map((f) => {
           const value = values?.[f.id] ?? "",
-            name = `cf_${f.id}`,
+            name = `cf_${esc(f.id)}`,
             options = String(f.options || "")
               .split("|")
               .filter(Boolean);

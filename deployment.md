@@ -1,64 +1,70 @@
-# Deployment Guide / Hướng dẫn triển khai
+# Hướng dẫn triển khai
 
-This guide covers server installation and mobile installation for the Trợ lý Tổng phụ trách Đội application.
+Tài liệu này gồm bước cài đặt máy chủ và cài đặt ứng dụng trên thiết bị di động cho ứng dụng **Trợ lý Tổng phụ trách Đội**.
 
-## 1. Requirements
+## 1. Yêu cầu
 
-- Node.js 20 or newer
-- A modern browser such as Chrome, Edge, Safari, or Firefox
-- For production mobile installation and secure cookies: an HTTPS domain or localhost
-- A writable directory for SQLite data
+- Node.js 20 trở lên
+- Trình duyệt hiện đại như Chrome, Edge, Safari hoặc Firefox
+- Với cài đặt di động và cookie bảo mật trong production: một domain HTTPS hoặc `localhost`
+- Một thư mục có quyền ghi cho dữ liệu SQLite
 
-## 2. Install the server
+## 2. Cài đặt máy chủ
 
-### 2.1 Get the application
+### 2.1 Chuẩn bị mã nguồn
 
-Copy the project directory to the server. Do not copy the local `data/`, `node_modules/`, `.agents/`, `.codex/`, or `reverse-engineering/` directories.
+Sao chép thư mục dự án lên máy chủ. **Không sao chép** các thư mục cục bộ sau:
 
-Install dependencies:
+- `data/`
+- `node_modules/`
+- `.agents/`
+- `.codex/`
+- `reverse-engineering/`
+
+Cài dependencies:
 
 ```sh
 npm ci
 ```
 
-### 2.2 Configure runtime paths
+### 2.2 Cấu hình đường dẫn runtime
 
-All environment variables are optional. Defaults are suitable for a local test installation.
+Mọi environment variable đều tùy chọn. Giá trị mặc định phù hợp cho bản chạy thử nội bộ.
 
-| Variable | Default | Description |
+| Biến | Mặc định | Mô tả |
 | --- | --- | --- |
-| `HOST` | `127.0.0.1` | Listen address. Use `127.0.0.1` behind a local reverse proxy. |
-| `PORT` | `3000` | Listen port. |
-| `DATA_FILE` | `data/database.json` | Legacy JSON business-data import source. Used only when initializing an empty SQLite database. |
-| `AUTH_FILE` | `users.json` beside `DATA_FILE` | Legacy JSON account import source. Used independently of `DATA_FILE`. |
-| `SQLITE_FILE` | `database.sqlite` beside `DATA_FILE` | Active SQLite database. |
+| `HOST` | `127.0.0.1` | Địa chỉ lắng nghe. Dùng `127.0.0.1` khi đặt sau reverse proxy trên cùng máy. |
+| `PORT` | `3000` | Cổng lắng nghe. |
+| `DATA_FILE` | `data/database.json` | Nguồn import dữ liệu nghiệp vụ từ JSON legacy. Chỉ dùng khi khởi tạo SQLite trống. |
+| `AUTH_FILE` | `users.json` cùng thư mục với `DATA_FILE` | Nguồn import tài khoản từ JSON legacy. Hoạt động độc lập với `DATA_FILE`. |
+| `SQLITE_FILE` | `database.sqlite` cùng thư mục với `DATA_FILE` | CSDL SQLite đang dùng. |
 
-Examples:
+Ví dụ:
 
 ```sh
-# Local test
+# Chạy thử nội bộ
 npm start
 
-# Production-style process-managed run
+# Chạy kiểu production, có process manager
 HOST=127.0.0.1 PORT=3000 SQLITE_FILE=/var/lib/tpt/database.sqlite npm start
 ```
 
-### 2.3 First run and root account
+### 2.3 Chạy lần đầu và tài khoản root
 
-1. Open the server URL, for example `http://127.0.0.1:3000`.
-2. Do **not** open `frontend/index.html` directly; that bypasses the authenticated API.
-3. On first run, create the protected root account in the browser.
-4. Store the root password in your password manager. There is no source-defined password and no password-reset bypass.
+1. Mở URL của máy chủ, ví dụ `http://127.0.0.1:3000`.
+2. **Không** mở trực tiếp `frontend/index.html`, vì cách đó bỏ qua API có xác thực.
+3. Ở lần chạy đầu, tạo tài khoản root được bảo vệ ngay trong trình duyệt.
+4. Lưu mật khẩu root vào password manager. Ứng dụng không có mật khẩu mặc định trong mã nguồn và không có cơ chế bypass đặt lại mật khẩu.
 
-Sessions are in memory and are cleared when the server restarts. Users must sign in again after a restart.
+Session được quản lý trong bộ nhớ và bị xóa khi máy chủ khởi động lại. Người dùng cần đăng nhập lại sau mỗi lần restart.
 
-## 3. Production deployment
+## 3. Triển khai production
 
-### 3.1 Recommended topology
+### 3.1 Kiến trúc khuyến nghị
 
-Run the Node server only on `127.0.0.1`. Put an HTTPS reverse proxy such as Nginx or Caddy in front and forward `/` to the Node server. The same origin serves both static files and `/api/*`, so do not split them across domains.
+Chỉ cho Node server lắng nghe trên `127.0.0.1`. Đặt một HTTPS reverse proxy như Nginx hoặc Caddy phía trước và forward toàn bộ `/` sang Node server. Tệp tĩnh và `/api/*` phải cùng một origin, vì vậy không tách chúng sang các domain khác nhau.
 
-Example Nginx location:
+Ví dụ location trong Nginx:
 
 ```nginx
 location / {
@@ -69,11 +75,11 @@ location / {
 }
 ```
 
-The app uses `X-Forwarded-Proto` only to mark the session cookie `Secure` when HTTPS is detected.
+Ứng dụng chỉ dùng `X-Forwarded-Proto` để nhận diện HTTPS và đặt cờ `Secure` cho session cookie.
 
-### 3.2 Process supervision
+### 3.2 Quản lý process
 
-Use systemd, PM2, Docker, or another process manager. Example systemd service:
+Dùng systemd, PM2, Docker hoặc một process manager khác. Ví dụ systemd service:
 
 ```ini
 [Service]
@@ -86,80 +92,79 @@ Restart=always
 User=tpt
 ```
 
-For legacy JSON imports, also set `DATA_FILE` and `AUTH_FILE`. Keep those files as rollback sources; the server does not delete them automatically.
+Nếu import từ JSON legacy, thiết lập thêm `DATA_FILE` và `AUTH_FILE`. Giữ lại các tệp này làm rollback source; máy chủ không tự động xóa chúng.
 
-### 3.3 Data and backups
+### 3.3 Dữ liệu và backup
 
-- Back up the active SQLite file regularly.
-- Stop the server for a fully consistent SQLite file copy, or use SQLite-consistent tooling.
-- Do not expose `data/`, `SQLITE_FILE`, `DATA_FILE`, or `AUTH_FILE` through a public web server.
-- Keep backups outside the application directory when possible.
-- The application's internal snapshots and export files supplement, but do not replace, server backups.
+- Backup định kỳ tệp SQLite đang dùng.
+- Dừng máy chủ trước khi copy tệp SQLite để có bản backup hoàn toàn nhất quán, hoặc dùng công cụ đảm bảo tính nhất quán của SQLite.
+- Không public `data/`, `SQLITE_FILE`, `DATA_FILE` hoặc `AUTH_FILE` qua web server.
+- Khi có thể, lưu backup ngoài thư mục ứng dụng.
+- Internal snapshot và export của ứng dụng chỉ bổ trợ, không thay thế backup máy chủ.
 
-### 3.4 Security checklist
+### 3.4 Checklist bảo mật
 
-- Use HTTPS in production.
-- Keep the Node listener private behind a reverse proxy or firewall.
-- Restrict server login access to authorized school staff.
-- Do not commit SQLite databases, legacy JSON imports, environment files, or backups.
-- Review server logs and keep Node.js updated.
+- Dùng HTTPS trong production.
+- Giữ Node listener ở chế độ private, sau reverse proxy hoặc firewall.
+- Chỉ cấp quyền truy cập máy chủ cho nhân sự nhà trường được ủy quyền.
+- Không commit database SQLite, JSON import legacy, environment file hoặc backup.
+- Theo dõi log máy chủ và cập nhật Node.js định kỳ.
 
-## 4. Server updates
+## 4. Cập nhật máy chủ
 
-1. Notify users and ensure they have signed out or stopped writes.
-2. Back up the active SQLite database.
-3. Stop the old process.
-4. Replace the application source.
-5. Run:
+1. Thông báo cho người dùng và đảm bảo họ đã đăng xuất hoặc dừng thao tác ghi.
+2. Backup database SQLite đang dùng.
+3. Dừng process cũ.
+4. Thay thế mã nguồn ứng dụng.
+5. Chạy:
 
 ```sh
 npm ci
 npm run check
 ```
 
-6. Start the application with the same `SQLITE_FILE`, `DATA_FILE`, and `AUTH_FILE` values.
-7. Open the site and confirm login, navigation, and one read-only action before releasing users.
+6. Khởi động lại ứng dụng với đúng các giá trị `SQLITE_FILE`, `DATA_FILE` và `AUTH_FILE` cũ.
+7. Mở website và kiểm tra đăng nhập, điều hướng và một thao tác chỉ đọc trước khi mở lại cho người dùng.
 
-Schema migration runs automatically during startup. Do not remove old rollback/import files.
+Schema migration chạy tự động trong lúc khởi động. Không xóa các tệp rollback/import cũ.
 
-## 5. Install on mobile
+## 5. Cài đặt trên di động
 
-The application is a Progressive Web App (PWA). No separate app store package is required.
+Ứng dụng là một Progressive Web App (PWA). Không cần gói phát hành riêng trên app store.
 
 ### Android / Chrome
 
-1. Open the HTTPS application URL.
-2. Sign in once so the application loads.
-3. Open the browser menu.
-4. Tap **Install app** or **Add to Home screen**.
-5. Confirm the installation.
+1. Mở URL HTTPS của ứng dụng.
+2. Đăng nhập một lần để ứng dụng tải đầy đủ.
+3. Mở menu của trình duyệt.
+4. Chọn **Install app** hoặc **Add to Home screen**.
+5. Xác nhận cài đặt.
 
 ### iOS / Safari
 
-1. Open the HTTPS application URL.
-2. Sign in once so the application loads.
-3. Tap the Share button.
-4. Tap **Add to Home Screen**.
-5. Confirm the name and tap **Add**.
+1. Mở URL HTTPS của ứng dụng.
+2. Đăng nhập một lần để ứng dụng tải đầy đủ.
+3. Chạm nút Share.
+4. Chạm **Add to Home Screen**.
+5. Xác nhận tên ứng dụng và chạm **Add**.
 
-After installation, launch the app from its home-screen icon. The PWA runs in standalone mode.
+Sau khi cài, mở ứng dụng bằng biểu tượng trên màn hình chính. PWA sẽ chạy ở chế độ standalone.
 
-## 6. Mobile offline and update behavior
+## 6. Hoạt động offline và cập nhật trên di động
 
-- The PWA caches the application shell for offline loading.
-- Authenticated CRUD data requires the server and a network connection; the app is not an offline data synchronization product.
-- The service worker uses a versioned shell cache (`tpt-shell-v23`).
-  When new frontend files are deployed, increase the cache version in `frontend/sw.js` and update any changed file paths in its `SHELL` list.
-- Users receive an update banner when a new version has downloaded. They can update after closing unsaved drafts.
-- If an installed app seems stale, close it fully, reopen it, or clear the browser's site data and reinstall.
+- PWA cache application shell để có thể mở giao diện khi offline.
+- Dữ liệu CRUD có xác thực vẫn cần server và kết nối mạng; ứng dụng không phải sản phẩm đồng bộ dữ liệu offline.
+- Service worker dùng shell cache có version (`tpt-shell-v23`). Khi triển khai tệp frontend mới, tăng version cache trong `frontend/sw.js` và cập nhật các đường dẫn tệp thay đổi trong danh sách `SHELL`.
+- Người dùng thấy banner cập nhật sau khi phiên bản mới tải xong. Họ có thể cập nhật sau khi đóng các bản nháp chưa lưu.
+- Nếu ứng dụng đã cài hiển thị phiên bản cũ, hãy đóng hoàn toàn rồi mở lại, hoặc xóa site data trong trình duyệt và cài lại.
 
-## 7. Troubleshooting
+## 7. Xử lý sự cố
 
-| Symptom | Likely cause / action |
+| Hiện tượng | Nguyên nhân / cách xử lý |
 | --- | --- |
-| Browser opens only the login shell offline | PWA shell loaded, but server data requires connectivity. Reconnect. |
-| Users signed out after server restart | Expected behavior; sessions are in memory. |
-| Cookie not marked `Secure` | Ensure the reverse proxy sends `X-Forwarded-Proto: https`, or access the site directly over HTTPS. |
-| Empty first-run data | Empty SQLite database. Set `DATA_FILE`/`AUTH_FILE` only when starting from a legacy JSON backup. |
-| PWA does not install | Use HTTPS or localhost, install after the page loads, and check the browser's site permissions. |
-| Updates not appearing | Increase `frontend/sw.js` cache version and redeploy; ask users to close the installed app. |
+| Trình duyệt chỉ mở shell đăng nhập khi offline | PWA shell đã tải, nhưng dữ liệu server cần kết nối mạng. Hãy kết nối lại. |
+| Người dùng bị đăng xuất sau khi restart máy chủ | Đây là hành vi đúng vì session nằm trong bộ nhớ. |
+| Cookie không có cờ `Secure` | Kiểm tra reverse proxy gửi `X-Forwarded-Proto: https`, hoặc truy cập trực tiếp qua HTTPS. |
+| Lần chạy đầu không có dữ liệu | SQLite đang trống. Chỉ thiết lập `DATA_FILE`/`AUTH_FILE` khi khởi tạo từ backup JSON legacy. |
+| Không cài được PWA | Dùng HTTPS hoặc `localhost`, chờ trang tải xong, và kiểm tra site permission trong trình duyệt. |
+| Không thấy bản cập nhật | Tăng version cache trong `frontend/sw.js`, deploy lại, và nhắc người dùng đóng ứng dụng đã cài. |
