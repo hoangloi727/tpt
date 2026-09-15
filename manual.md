@@ -195,7 +195,7 @@ Các trang Kế hoạch, Hoạt động, Tổ chức, Rèn luyện, Khen thưở
 3. Chọn **Sửa** để cập nhật hoặc **Xóa** để xóa mềm.
 4. Chọn **Xuất CSV** để tải các cột đang được định nghĩa cho trang.
 
-Biểu mẫu trong hộp thoại tự lưu bản nháp sau khi thay đổi. Khi mở lại cùng loại biểu mẫu trong vòng 30 ngày, có thể **Khôi phục nháp** hoặc **Bỏ nháp**. Khôi phục chỉ điền lại biểu mẫu, chưa ghi vào dữ liệu chính. Lưu thành công xóa bản nháp tương ứng.
+Chọn **Lưu** hoặc **Tạo** để ghi dữ liệu từ biểu mẫu. Đóng hộp thoại khi chưa lưu sẽ bỏ các thay đổi chưa lưu.
 
 API sở hữu metadata, nhật ký thao tác, nhật ký kiểm toán và revision. Nếu bản ghi đã thay đổi ở nơi khác, thao tác có thể báo **Xung đột dữ liệu - cần xem lại** thay vì ghi đè. Tải lại dữ liệu, đối chiếu rồi nhập lại thay đổi cần thiết.
 

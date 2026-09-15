@@ -114,15 +114,16 @@
     return score;
   }
 
-  function scoreWeekdays(week) {
+  function scoreWeekdays(week, sheet) {
     if (!week?.start_date) return [];
-    const labels = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu"],
+    const labels = ["Thứ Hai", "Thứ Ba", "Thứ Tư", "Thứ Năm", "Thứ Sáu", "Thứ Bảy"],
+      lastDay = sheet?.include_saturday === true ? 6 : 5,
       start = new Date(`${week.start_date}T00:00:00`),
       days = [];
-    for (let offset = 0; offset < 7 && days.length < 5; offset++) {
+    for (let offset = 0; offset < 7 && days.length < lastDay; offset++) {
       const date = new Date(start);
       date.setDate(start.getDate() + offset);
-      if (date.getDay() >= 1 && date.getDay() <= 5)
+      if (date.getDay() >= 1 && date.getDay() <= lastDay)
         days.push({ date: localISO(date), label: labels[date.getDay() - 1] });
     }
     return days;

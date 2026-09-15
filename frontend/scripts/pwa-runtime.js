@@ -1,7 +1,7 @@
 (function (window) {
   "use strict";
 
-  function createController({ state, $, toast }) {
+  function createController({ $, toast }) {
     function registerPWA() {
       if (
         !("serviceWorker" in navigator) ||
@@ -38,11 +38,11 @@
       banner.innerHTML = `<span>Có phiên bản PWA mới đã tải xong.</span><button class="btn small" type="button">Cập nhật khi an toàn</button>`;
       banner.querySelector("button").onclick = async () => {
         if (
-          state.hasPendingDraft ||
+          $("#modalLayer")?.classList.contains("open") ||
           $("#saveState")?.dataset.state === "saving"
         )
           return toast(
-            "Hãy lưu hoặc đóng bản nháp đang mở trước khi cập nhật.",
+            "Hãy lưu hoặc đóng biểu mẫu đang mở trước khi cập nhật.",
             "bad",
           );
         let reloaded = false;

@@ -60,7 +60,7 @@ Tất cả đều tùy chọn:
 - `frontend/index.html`: phần vỏ HTML tĩnh.
 - `frontend/styles/app.css`: kiểu giao diện ứng dụng.
 - `frontend/scripts/app.js`: composition root, điều hướng và điều phối tính năng trình duyệt.
-- `frontend/scripts/app-schema.js`, `browser-runtime.js`, `form-drafts.js`, `custom-fields.js`: cấu hình, tích hợp trình duyệt và biểu mẫu.
+- `frontend/scripts/app-schema.js`, `browser-runtime.js`, `custom-fields.js`: cấu hình, tích hợp trình duyệt và biểu mẫu.
 - `frontend/scripts/score-engine.js`, `report-formatters.js`, `backup-codec.js`, `backup-service.js`: tính điểm, báo cáo và sao lưu.
 - `frontend/scripts/api-reference.js`, `pwa-runtime.js`: trang tham chiếu API nội bộ và vòng đời PWA.
 - `frontend/scripts/api-data-provider.js`: bộ chuyển đổi CRUD qua HTTP (`window.ApiDataProvider`).
@@ -139,7 +139,7 @@ All variables are optional:
 - `frontend/index.html`: static HTML shell.
 - `frontend/styles/app.css`: application styles.
 - `frontend/scripts/app.js`: browser composition root, routing, and feature orchestration.
-- `frontend/scripts/app-schema.js`, `browser-runtime.js`, `form-drafts.js`, `custom-fields.js`: configuration, browser integration, and forms.
+- `frontend/scripts/app-schema.js`, `browser-runtime.js`, `custom-fields.js`: configuration, browser integration, and forms.
 - `frontend/scripts/score-engine.js`, `report-formatters.js`, `backup-codec.js`, `backup-service.js`: scoring, reports, and backups.
 - `frontend/scripts/api-reference.js`, `pwa-runtime.js`: private API reference page and PWA lifecycle.
 - `frontend/scripts/api-data-provider.js`: HTTP CRUD adapter (`window.ApiDataProvider`).

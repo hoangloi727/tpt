@@ -9,7 +9,6 @@
           !MODULES?.score ||
           !MODULES?.backupCodec ||
           !MODULES?.backupService ||
-          !MODULES?.formDrafts ||
           !MODULES?.customFields ||
           !MODULES?.pwaRuntime ||
           !MODULES?.reportFormatters ||
@@ -80,7 +79,6 @@
             base64ToBlob,
           } = MODULES.backupCodec,
           { createService: createBackupService } = MODULES.backupService,
-          { createController: createFormDraftController } = MODULES.formDrafts,
           { createController: createCustomFieldsController } =
             MODULES.customFields,
           { createController: createPwaRuntimeController } = MODULES.pwaRuntime,
@@ -117,7 +115,6 @@
           overdueScoreDate: "",
           cache: {},
           yearEditOverrides: new Map(),
-          hasPendingDraft: false,
           modalReturnFocus: null,
           activeBackup: null,
           unlocked: false,
@@ -181,7 +178,6 @@
             overdueScoreDate: "",
             cache: {},
             yearEditOverrides: new Map(),
-            hasPendingDraft: false,
             modalReturnFocus: null,
             activeBackup: null,
             schoolId: "",
@@ -350,22 +346,9 @@
             onChange: (store, id) => tabCoordinator.announceChange(store, id),
           }),
           assistant = new AssistantProvider();
-        const { clearFormDraft, setupModalDraft } =
-            createFormDraftController({
-              db,
-              state,
-              tabCoordinator,
-              $,
-              debounce,
-              normalizeText,
-              now,
-              fmtDateTime,
-              setSave,
-              toast,
-            }),
-          { customFieldDefs, renderCustomInputs, collectCustomValues } =
+        const { customFieldDefs, renderCustomInputs, collectCustomValues } =
             createCustomFieldsController({ db, esc }),
-          { registerPWA } = createPwaRuntimeController({ state, $, toast }),
+          { registerPWA } = createPwaRuntimeController({ $, toast }),
           { reportHTML, exportReportCSV } = createReportFormattersController({
             esc,
             fmtDate,
@@ -709,19 +692,8 @@
           };
           $("#modalClose").onclick = closeModal;
           $("#modalLayer").addEventListener("click", (e) => {
-            if (e.target.id === "modalLayer") closeModal();
+            if (e.target.id === "modalLayer") closeModal(e);
           });
-          $("#modalFoot").addEventListener(
-            "click",
-            (e) => {
-              const id = e.target.closest("button")?.id || "";
-              state.modalSaveIntent =
-                /save|confirm|create|finalize|activate|finish|doBackup/i.test(
-                  id,
-                ) && !/cancel|close/i.test(id);
-            },
-            true,
-          );
           $("#quickAdd").onclick = showQuickAdd;
           $("#mobileContext").onclick = showMobileContext;
           $("#schoolSelect").onchange = async (event) => {
@@ -775,7 +747,7 @@
             refreshContext();
           };
           document.addEventListener("keydown", (e) => {
-            if (e.key === "Escape") closeModal();
+            if (e.key === "Escape") closeModal(e);
             if (
               e.key === "Tab" &&
               $("#modalLayer").classList.contains("open")
@@ -1191,7 +1163,6 @@
         }
         function openModal(title, body, foot = "", wide = false) {
           state.modalReturnFocus = document.activeElement;
-          state.modalSaveIntent = false;
           $("#modalTitle").textContent = title;
           $("#modalBody").innerHTML = body;
           $("#modalFoot").innerHTML = foot;
@@ -1199,20 +1170,14 @@
           $("#modalLayer").classList.add("open");
           $("#modalLayer").setAttribute("aria-hidden", "false");
           setTimeout(() => {
-            setupModalDraft(title);
             $("#modalBody")
               .querySelector("input,select,textarea,button")
               ?.focus();
           }, 10);
         }
         function closeModal() {
-          if (state.modalSaveIntent && state.modalDraftKey)
-            clearFormDraft(state.modalDraftKey);
           $("#modalLayer").classList.remove("open");
           $("#modalLayer").setAttribute("aria-hidden", "true");
-          state.hasPendingDraft = false;
-          state.modalDraftKey = null;
-          state.modalSaveIntent = false;
           state.modalReturnFocus?.focus?.();
         }
 
@@ -1907,7 +1872,7 @@
               }),
             overdueDays =
               currentWeek && sheet && expected
-                ? scoreWeekdays(currentWeek)
+                ? scoreWeekdays(currentWeek, sheet)
                     .filter((day) => day.date < scoreDate)
                     .map((day) => ({
                       ...day,
@@ -2375,7 +2340,7 @@
             ) +
               `
       <div class="notice warn"><strong>${esc(ctx.set?.name || "Chưa có bộ tiêu chí")}</strong><br>${esc(ctx.set?.basis || "Cần tạo bộ tiêu chí trước khi nhập điểm.")} ${ctx.set ? `Công thức: ${ctx.set.formula === "base" ? `Điểm chuẩn ${ctx.set.base_score || 0}, sau đó cộng/trừ` : "Cộng điểm từng nhóm"}.` : ""}</div>
-      <div class="toolbar"><strong>${esc(week?.name || "Chưa chọn tuần")}</strong><span>${week ? `${fmtDate(week.start_date)} – ${fmtDate(week.end_date)}` : ""}</span><label class="muted">Bộ tiêu chí ${ctx.sheet ? `<strong>${esc(ctx.set?.name || "—")} • v${esc(ctx.set?.version || "1.0")}</strong>` : manager ? `<select id="scoreSetSelect">${ctx.sets.filter((s) => s.status !== "stopped" && s.active !== false).map((s) => `<option value="${esc(s.id)}" ${s.id === ctx.set?.id ? "selected" : ""}>${esc(s.name)} • v${esc(s.version || "1.0")}</option>`).join("")}</select>` : `<strong>${esc(ctx.set?.name || "Chưa có bộ tiêu chí")}</strong>`}</label><span style="margin-left:auto">Trạng thái: ${statusBadge(ctx.sheet?.status || "Chưa tạo")}</span></div>
+      <div class="toolbar"><strong>${esc(week?.name || "Chưa chọn tuần")}</strong><span>${week ? `${fmtDate(week.start_date)} – ${fmtDate(week.end_date)}` : ""}</span><span style="margin-left:auto">Trạng thái: ${statusBadge(ctx.sheet?.status || "Chưa tạo")}</span></div>
       <div class="tabs"><button data-score-tab="entry" class="${state.scoreTab === "entry" ? "active" : ""}">Nhập điểm</button>${manager ? `<button data-score-tab="ranking" class="${state.scoreTab === "ranking" ? "active" : ""}">Xếp hạng</button><button data-score-tab="anomaly" class="${state.scoreTab === "anomaly" ? "active" : ""}">Kiểm tra bất thường</button><button data-score-tab="history" class="${state.scoreTab === "history" ? "active" : ""}">Nhật ký điều chỉnh</button>` : ""}</div><div id="scoreArea"></div>`,
           );
           if (state.scoreTab === "entry") renderScoreEntry(ctx);
@@ -2392,11 +2357,6 @@
           if ($("#assignScoreGraders"))
             $("#assignScoreGraders").onclick = showScoreGraderAssignments;
           if ($("#criteriaConfig")) $("#criteriaConfig").onclick = showRulesetConfig;
-          if ($("#scoreSetSelect") && manager && !ctx.sheet)
-            $("#scoreSetSelect").onchange = (e) => {
-              state.criteriaSetId = e.target.value;
-              renderScores();
-            };
           if ($("#scoreWorkflow"))
             $("#scoreWorkflow").onclick = () => scoreWorkflow(ctx);
           if ($("#deleteScoreSheet"))
@@ -2548,7 +2508,7 @@
               '<div class="empty">Bạn chưa được phân công lớp nào trong năm học đang chọn.</div>');
           if (!ctx.days.length)
             return (area.innerHTML =
-              '<div class="empty">Tuần đang chọn chưa có ngày học từ Thứ Hai đến Thứ Sáu.</div>');
+              '<div class="empty">Tuần đang chọn chưa có ngày chấm điểm.</div>');
           const map = entryMap(ctx.selectedEntries),
             locked = ["approved", "locked"].includes(ctx.sheet.status);
           area.innerHTML = `<div class="score-day-picker" aria-label="Chọn ngày nhập điểm">${ctx.days.map((day) => `<button type="button" data-score-date="${esc(day.date)}" class="${day.date === state.scoreDate ? "active" : ""}"><strong>${day.label}</strong><span>${fmtDate(day.date)}</span></button>`).join("")}</div><div class="score-wrap"><table class="score-table"><thead><tr><th style="min-width:110px">Lớp</th>${ctx.criteria.map((c) => `<th title="${esc(c.name)}">${esc(c.code)}<br><small>${esc(c.is_category ? c.name : c.group)}</small></th>`).join("")}<th>Điểm ngày</th><th>Tổng tuần</th><th>Trạng thái ngày</th></tr></thead><tbody>${ctx.classes
@@ -2587,7 +2547,7 @@
             })
             .join(
               "",
-            )}</tbody></table></div><div class="notice mt">Điểm tuần = điểm chuẩn một lần + tổng điều chỉnh từ Thứ Hai đến Thứ Sáu. Ô trống = chưa nhập; nhập <strong>0</strong> = có dữ liệu bằng 0; nhập <strong>KAD</strong> = không áp dụng; nhập <strong>MIỄN</strong> = được miễn. Có thể dán một vùng dữ liệu từ Excel bắt đầu tại ô đang chọn.</div>`;
+            )}</tbody></table></div><div class="notice mt">Điểm tuần = điểm chuẩn một lần + tổng điều chỉnh từ các ngày chấm điểm trong tuần. Ô trống = chưa nhập; nhập <strong>0</strong> = có dữ liệu bằng 0; nhập <strong>KAD</strong> = không áp dụng; nhập <strong>MIỄN</strong> = được miễn. Có thể dán một vùng dữ liệu từ Excel bắt đầu tại ô đang chọn.</div>`;
           $$('[data-score-date]').forEach(
             (button) =>
               (button.onclick = () => {
@@ -3004,17 +2964,46 @@
         }
         async function scoreWorkflow(ctx) {
           if (!ctx.sheet) {
-            const sheet = await db.put("weekly_score_sheets", {
-              school_year_id: state.yearId,
-              campus_id: "all",
-              week_id: state.weekId,
-              criteria_set_id: ctx.set?.id,
-              status: "draft",
-              approved_at: null,
-              locked_at: null,
-            });
-            toast("Đã khởi tạo bảng tuần");
-            return renderScores();
+            const availableSets = ctx.sets.filter(
+              (set) => set.status !== "stopped" && set.active !== false,
+            );
+            if (!ctx.week)
+              return toast("Hãy chọn tuần trước khi khởi tạo bảng điểm.", "bad");
+            if (!availableSets.length)
+              return toast("Cần có bộ tiêu chí đang sử dụng để khởi tạo bảng tuần.", "bad");
+            openModal(
+              "Khởi tạo bảng tuần",
+              `<form id="createScoreWeekForm"><div class="field"><label class="required" for="createScoreWeekCriteria">Bộ tiêu chí áp dụng trong tuần</label><select id="createScoreWeekCriteria" name="criteria_set_id" required>${availableSets.map((set) => `<option value="${esc(set.id)}" ${set.id === ctx.set?.id ? "selected" : ""}>${esc(set.name)} • v${esc(set.version || "1.0")}</option>`).join("")}</select></div><div class="notice mt">Chấm điểm từ Thứ Hai đến Thứ Sáu. Chọn thêm Thứ Bảy nếu tuần này có học.</div><label class="check-row mt"><input type="checkbox" name="include_saturday"> Thêm Thứ Bảy vào bảng điểm tuần</label></form>`,
+              '<button class="btn" id="cancelCreateScoreWeek">Hủy</button><button class="btn primary" id="confirmCreateScoreWeek">Khởi tạo bảng tuần</button>',
+            );
+            $("#cancelCreateScoreWeek").onclick = closeModal;
+            $("#confirmCreateScoreWeek").onclick = async () => {
+              const button = $("#confirmCreateScoreWeek"),
+                includeSaturday = $("#createScoreWeekForm [name=include_saturday]").checked,
+                criteriaSetId = $("#createScoreWeekCriteria").value;
+              if (!availableSets.some((set) => set.id === criteriaSetId))
+                return toast("Hãy chọn bộ tiêu chí áp dụng trong tuần.", "bad");
+              button.disabled = true;
+              try {
+                await db.put("weekly_score_sheets", {
+                  school_year_id: ctx.week.school_year_id,
+                  campus_id: "all",
+                  week_id: ctx.week.id,
+                  criteria_set_id: criteriaSetId,
+                  include_saturday: includeSaturday,
+                  status: "draft",
+                  approved_at: null,
+                  locked_at: null,
+                });
+                closeModal();
+                toast("Đã khởi tạo bảng tuần");
+                await renderScores();
+              } catch (error) {
+                button.disabled = false;
+                toast(error.message, "bad");
+              }
+            };
+            return;
           }
           const sheet = ctx.sheet;
           if (sheet.status === "draft") {
@@ -3734,12 +3723,12 @@
                 schoolClass.campus_id === state.campusId,
             ),
             week = state.cache.weeks.find((x) => x.id === state.weekId),
-            days = scoreWeekdays(week),
-            validDates = new Set(days.map((day) => day.date)),
             sheet = sheets.find(
               (x) =>
                 x.week_id === state.weekId && x.criteria_set_id === set?.id,
             ),
+            days = scoreWeekdays(week, sheet),
+            validDates = new Set(days.map((day) => day.date)),
             allClassIds = new Set(allClasses.map((schoolClass) => schoolClass.id)),
             allEntries = rawEntries.filter(
               (x) =>
@@ -3759,6 +3748,7 @@
           );
           return {
             sets: scopedSets,
+            week,
             set,
             criteria,
             groups,
