@@ -104,6 +104,8 @@
           scoreDate: "",
           campusId: "all",
           scoreTab: "entry",
+          rankingGroupId: "",
+          userRoleFilter: "all",
           taskView: "list",
           calendarDate: new Date(),
           lastScoreUndo: null,
@@ -168,6 +170,8 @@
             scoreDate: "",
             campusId: "all",
             scoreTab: "entry",
+            rankingGroupId: "",
+            userRoleFilter: "all",
             taskView: "list",
             calendarDate: new Date(),
             lastScoreUndo: null,
@@ -3159,8 +3163,25 @@
         async function renderScoreRanking(ctx) {
           const area = $("#scoreArea"),
             official = ["approved", "locked"].includes(ctx.sheet?.status),
-            rank = await calculateRanking(official);
+            allRanks = await calculateRanking(official),
+            groups = new Map(
+              allRanks.map((row) => [row.class_group_id, row.class_group_name]),
+            );
+          if (!groups.has(state.rankingGroupId)) state.rankingGroupId = "";
+          const rank = allRanks.filter(
+            (row) => !state.rankingGroupId || row.class_group_id === state.rankingGroupId,
+          );
           area.innerHTML = `${!official ? '<div class="notice warn">Bảng chưa được duyệt. Xếp hạng dưới đây là tạm thời, không dùng cho báo cáo chính thức.</div>' : ""}<div class="notice">Mỗi nhóm lớp có thứ hạng riêng. Các lớp chưa phân nhóm chỉ cạnh tranh trong nhóm “Chưa phân nhóm”.</div><div class="table-wrap"><table><thead><tr><th>Hạng trong nhóm</th><th>Lớp</th><th>Nhóm lớp</th><th>Cơ sở</th>${ctx.days.map((day) => `<th>${day.label.replace("Thứ ", "T")}</th>`).join("")}<th>Tổng tuần</th><th>Mức dữ liệu</th><th>Loại</th></tr></thead><tbody>${rank.map((r) => `<tr><td><strong>${r.rank}</strong></td><td>${esc(r.class_name)}</td><td>${esc(r.class_group_name)}</td><td>${esc(campusName(r.campus_id))}</td>${ctx.days.map((day) => `<td>${Number(r.daily[day.date] || 0).toFixed(1)}</td>`).join("")}<td><strong>${r.total.toFixed(1)}</strong></td><td>${r.complete ? '<span class="badge green">Đủ</span>' : '<span class="badge yellow">Chưa đủ</span>'}</td><td>${official ? '<span class="badge green">Chính thức</span>' : '<span class="badge yellow">Tạm thời</span>'}</td></tr>`).join("") || `<tr><td colspan="${ctx.days.length + 7}" class="empty">Chưa có dữ liệu xếp hạng.</td></tr>`}</tbody></table></div>`;
+          area.querySelector(".table-wrap").insertAdjacentHTML(
+            "beforebegin",
+            `<div class="tabs" aria-label="Nhóm lớp xếp hạng"><button data-ranking-group="" class="${!state.rankingGroupId ? "active" : ""}" aria-pressed="${!state.rankingGroupId}">Tất cả nhóm</button>${Array.from(groups, ([id, name]) => `<button data-ranking-group="${esc(id)}" class="${state.rankingGroupId === id ? "active" : ""}" aria-pressed="${state.rankingGroupId === id}">${esc(name)}</button>`).join("")}</div>`,
+          );
+          $$("[data-ranking-group]").forEach((button) => {
+            button.onclick = () => {
+              state.rankingGroupId = button.dataset.rankingGroup;
+              return renderScoreRanking(ctx);
+            };
+          });
         }
         function renderScoreAnomalies(ctx) {
           const items = scoreAnomalyItems(ctx);
@@ -5370,14 +5391,23 @@
 
         async function renderUserManagement() {
           const users = await db.listUsers(),
-            isSuperadmin = state.user?.role === "superadmin";
+            isSuperadmin = state.user?.role === "superadmin",
+            roleOptions = [
+              ["all", "Tất cả loại tài khoản"],
+              ["superadmin", "Superadmin"],
+              ["admin", "Admin"],
+              ["teacher", "Giáo viên"],
+              ["user", "Sao đỏ"],
+            ];
           setContent(
             pageHead(
               "Quản lý người dùng",
               `Tài khoản thuộc ${state.user?.selectedSchoolName || "trường đang chọn"}.`,
               `${isSuperadmin ? '<button class="btn" id="addSchool">＋ Thêm trường</button>' : ""}<button class="btn" id="importUsers">Nhập Excel/CSV</button><button class="btn primary" id="addUser">＋ Thêm người dùng</button>`,
             ) +
+              `<div class="toolbar"><label for="userRoleFilter">Loại tài khoản</label><select id="userRoleFilter">${roleOptions.map(([role, label]) => `<option value="${role}" ${state.userRoleFilter === role ? "selected" : ""}>${label}</option>`).join("")}</select></div>` +
               `<div class="notice"><strong>Admin có toàn quyền trong trường này</strong> và có thể quản lý User/Admin, nhưng không thể tạo hoặc quản lý Superadmin. Superadmin dùng bộ chọn trường trên thanh điều hướng để đổi phạm vi.</div><div class="table-wrap"><table><thead><tr><th>Tài khoản</th><th>Tên hiển thị</th><th>Vai trò</th><th>Quyền</th><th>Trạng thái</th><th>Lần đăng nhập cuối</th><th>Thao tác</th></tr></thead><tbody>${users
+                .filter((user) => state.userRoleFilter === "all" || user.role === state.userRoleFilter)
                 .map(
                   (user) => {
                     const manageable =
@@ -5398,8 +5428,12 @@
                     return `<tr><td><strong>${esc(user.username)}</strong></td><td>${esc(user.displayName)}</td><td>${roleBadge}</td><td class="wrap">${["superadmin", "admin"].includes(user.role) ? "Toàn quyền" : esc((user.permissions || []).join(", ") || "Chưa cấp")}</td><td>${user.disabled ? '<span class="badge red">Đã khóa</span>' : '<span class="badge green">Hoạt động</span>'}</td><td>${user.lastLoginAt ? fmtDateTime(user.lastLoginAt) : "Chưa đăng nhập"}</td><td>${actions}</td></tr>`;
                   },
                 )
-                .join("")}</tbody></table></div>`,
+                .join("") || '<tr><td colspan="7" class="empty">Không có tài khoản thuộc loại đã chọn.</td></tr>'}</tbody></table></div>`,
           );
+          $("#userRoleFilter").onchange = (event) => {
+            state.userRoleFilter = event.target.value;
+            return renderUserManagement();
+          };
           $("#addUser").onclick = () => openUserForm();
           $("#importUsers").onclick = () =>
             showUserImport().catch((error) => toast(error.message, "bad"));
