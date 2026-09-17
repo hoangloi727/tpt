@@ -31,6 +31,7 @@
   };
 
   const ENDPOINTS = [
+    ["GET", "/api/school-branding", "session", "Logo trường", "School logo", "Mọi tài khoản đã đăng nhập; chỉ trả brand_logo của trường trong phiên hiện tại.", "Any authenticated account; returns only brand_logo for the session's selected school.", "200 / 401"],
     ["GET", "/api/auth/status", "setup", "Trạng thái khởi tạo", "Setup status", "Công khai; trả setupRequired và danh sách trường.", "Public; returns setupRequired and the school list.", "200 JSON"],
     ["POST", "/api/auth/setup", "setup", "Tạo tài khoản root", "Create root account", "Chỉ khi chưa có tài khoản; tạo Superadmin root và phiên. Body gồm username, displayName, password và schoolId hoặc schoolName.", "First run only; creates the root Superadmin and a session. Body contains username, displayName, password, and schoolId or schoolName.", "201 / 409"],
     ["POST", "/api/session", "session", "Đăng nhập", "Sign in", "Công khai; body gồm username, password, schoolId. Cookie phiên được đặt khi thành công.", "Public; body contains username, password, and schoolId. Sets the session cookie on success.", "200 / 401 / 409"],

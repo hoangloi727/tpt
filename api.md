@@ -152,6 +152,8 @@ Trả về `200 { "user": ... }` và đặt cookie. Trường phải tồn tại
 
 #### `GET /api/session`
 
+Endpoint liên quan: `GET /api/school-branding` cho mọi tài khoản đã đăng nhập, trả `{ brand_logo }` của trường trong phiên hiện tại. Logo dùng envelope `Blob` base64 hoặc `null` nếu chưa có; không nhận ID trường từ client và không cấp quyền đọc/sửa thông tin trường khác.
+
 Trả về `{ "user": ... }` cho phiên hiện tại.
 
 #### `DELETE /api/session`
@@ -879,6 +881,8 @@ Logs into a specific school:
 Returns `200 { "user": ... }` and sets the cookie. The school must exist. A non-`superadmin` account can only log into its assigned `schoolId`. Invalid credentials, a disabled account, and the wrong school all produce the same `401`. If root setup is still required, the response is `409`.
 
 #### `GET /api/session`
+
+Related endpoint: `GET /api/school-branding` is available to every authenticated role and returns `{ brand_logo }` for the session's selected school. The logo is a base64 `Blob` envelope, or `null` when absent. It accepts no client-selected school ID and grants no additional school-record read or write permissions.
 
 Returns `{ "user": ... }` for the current session.
 

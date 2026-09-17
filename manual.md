@@ -489,9 +489,9 @@ Các danh mục cấu hình cho phép tìm, thêm, sửa, nhân bản, đổi th
 Tạo năm học mới:
 
 1. Mở **Thiết lập > Cơ sở - năm học - học kỳ - tuần** và chọn **Tạo năm học mới**.
-2. Nhập tên, ngày bắt đầu và kết thúc.
+2. Nhập tên năm học, chọn năm bắt đầu lịch học (tháng 8 đến tháng 7 năm sau), rồi đánh dấu các tuần có học. Bỏ trống tuần nghỉ Tết, nghỉ lễ và nghỉ hè; cần chọn ít nhất một tuần. Đổi năm lịch sẽ xóa lựa chọn tuần trong biểu mẫu.
 3. Chọn sao chép lớp/giáo viên và bộ tiêu chí nếu cần.
-4. Xác nhận; ứng dụng tạo snapshot bảo vệ, hai học kỳ, 40 tuần, đặt năm mới hiện hành, tạo ID mới cho lớp/nhóm và đưa bộ tiêu chí sao chép về dự thảo.
+4. Xác nhận; ứng dụng chỉ tạo các tuần đã chọn, đánh số liên tiếp qua các kỳ nghỉ (Tuần 20 → nghỉ Tết → Tuần 21). Ngày đầu/cuối năm lấy từ tuần đầu/cuối đã chọn. Các tuần chia thành hai nửa để tạo học kỳ (chỉ một học kỳ nếu chọn một tuần). Ứng dụng vẫn tạo snapshot bảo vệ, đặt năm mới hiện hành, tạo ID mới cho lớp/nhóm và đưa bộ tiêu chí sao chép về dự thảo; không sửa tuần hoặc điểm của năm cũ.
 5. Kiểm tra các ngày tuần, lớp, nhóm và bộ tiêu chí trước khi nhập dữ liệu.
 
 Không sao chép điểm, xếp hạng, công việc phát sinh, hoạt động hoặc báo cáo cũ. Tùy chọn **Mẫu công việc dùng chung** đang hiển thị nhưng chưa được xử lý.
@@ -596,7 +596,7 @@ Giới hạn tệp tài liệu mặc định là 25 MB/tệp và có thể đổ
 5. Tạo sao lưu đầy đủ độc lập trước khi đóng năm.
 6. Chọn **Đóng năm**, lưu gói `.tptbackup` và ghi lại checksum.
 7. Thử đọc tệp sao lưu trên thiết bị/vị trí khác trước khi bàn giao.
-8. Tạo năm mới; kiểm tra 40 tuần, học kỳ, lớp/nhóm và bộ tiêu chí sao chép.
+8. Tạo năm mới; kiểm tra chỉ các tuần đã chọn được tạo, tuần nghỉ được bỏ qua, số tuần liên tiếp, học kỳ, lớp/nhóm và bộ tiêu chí sao chép.
 9. Không dựa vào tùy chọn sao chép mẫu công việc; thêm lại mẫu từ Thư viện mẫu khi cần.
 10. Giữ năm cũ chỉ đọc; chỉ mở sửa có lý do và đóng quyền ngay sau hiệu chỉnh.
 
@@ -605,6 +605,8 @@ Giới hạn tệp tài liệu mặc định là 25 MB/tệp và có thể đổ
 Mọi thao tác xóa yêu cầu nhập `YES` và mật khẩu hiện tại. Chỉ Admin/Superadmin có thể xóa dữ liệu thi đua. **Xóa bảng tuần** xóa toàn bộ điểm và snapshot xếp hạng của tuần đang chọn cho mọi lớp. **Xóa bộ tiêu chí** chỉ hỏi một lần rồi xóa cả lịch sử bảng tuần dùng bộ đó. Nhật ký kiểm toán vẫn được giữ.
 
 Tài khoản **Teacher** chỉ mở trang **Lớp chủ nhiệm** và **Tài khoản của tôi**. Teacher xem xếp hạng chính thức và các ghi nhận có tên của lớp được giao theo tuần, rồi chọn **In/Lưu PDF** để tạo bản in dễ đọc.
+
+Khi đăng nhập, tuần chứa ngày hiện tại được chọn tự động. Dùng **Tuần hiện tại** để quay về tuần này hoặc **Tuần trước (xem lại)** để xem tuần học gần nhất đã kết thúc, bỏ qua tuần nghỉ. Nếu đang nghỉ hoặc ngoài lịch học, ứng dụng mở tuần học gần nhất đã kết thúc (hoặc tuần đầu tiên nếu năm học chưa bắt đầu); nút **Tuần hiện tại** bị vô hiệu hóa khi không có tuần phù hợp.
 
 Mỗi tuần chỉ dùng một bộ tiêu chí cho toàn bộ lớp. Chỉ Admin/Superadmin được chọn bộ tiêu chí trước khi khởi tạo bảng tuần. Sao đỏ chỉ nhập/chấm điểm cho lớp được giao và không thể chọn hay sửa bộ tiêu chí. Nếu phải thay bộ tiêu chí sau khi đã tạo bảng, Admin/Superadmin xác nhận bằng `YES` và mật khẩu hiện tại; hệ thống xóa toàn bộ điểm, minh chứng và snapshot xếp hạng của tuần rồi đặt bảng về `draft`.
 
@@ -1027,9 +1029,9 @@ Configuration categories support search, add, edit, clone, reorder, disable/enab
 Create a new academic year:
 
 1. Open **Settings > Campus - academic year - semester - week** and select **Create new academic year**.
-2. Enter name, start date, and end date.
+2. Enter the academic-year name, choose the calendar's starting year (August through the following July), and check the teaching weeks. Leave Lunar New Year, other holidays, and summer breaks unchecked; select at least one week. Changing the calendar year clears the form's week selections.
 3. Select class/teacher and criteria copying as needed.
-4. Confirm; the app creates a protected snapshot, two semesters, 40 weeks, marks the new year current, gives copied classes/groups new IDs, and resets copied criteria sets to draft.
+4. Confirm; only selected weeks are created and numbered consecutively across breaks (Week 20 → holiday → Week 21). The year's dates come from the first and last selected weeks. Selected weeks are split into two halves for semesters (one semester when only one week is selected). The app still creates a protected snapshot, marks the new year current, gives copied classes/groups new IDs, and resets copied criteria sets to draft. Existing years' weeks and scores are unchanged.
 5. Verify week dates, classes, groups, and criteria before data entry.
 
 Scores, rankings, generated tasks, activities, and old reports are not copied. The visible **Shared task templates** option is not currently processed.
@@ -1134,7 +1136,7 @@ The default document limit is 25 MB per file and can be configured from 1 to 250
 5. Create an independent full backup before closing the year.
 6. Select **Close year**, store the downloaded `.tptbackup`, and record its checksum.
 7. Test reading the backup from another device/location before handover.
-8. Create the new year and verify 40 weeks, semesters, copied classes/groups, and criteria.
+8. Create the new year and verify that only selected weeks exist, holidays are skipped, week numbers remain consecutive, and semesters, copied classes/groups, and criteria are correct.
 9. Do not rely on copy task templates; add templates again from the Template library when needed.
 10. Keep the old year read-only; enable reasoned edits only when necessary and disable the override immediately afterward.
 
@@ -1143,5 +1145,7 @@ The default document limit is 25 MB per file and can be configured from 1 to 250
 Every deletion requires `YES` and the current password. Only Admin/Superadmin can delete competition data. **Delete weekly sheet** removes every class score and ranking snapshot for the selected week. **Delete criteria set** asks once and also removes the history of every weekly sheet using that set. Audit history remains.
 
 A **Teacher** account can open only **Homeroom class** and **My account**. It shows the official ranking and named incidents for the assigned class and selected week; choose **Print/Save PDF** for a readable report.
+
+Login automatically selects the week containing today's local date. Use **Current week** to return to it or **Previous week (review)** to view the most recent completed teaching week, skipping holiday gaps. During a break or outside the teaching calendar, the latest completed week opens instead (or the first week before the year starts); **Current week** is disabled when no teaching week contains today.
 
 Each week uses one criteria set for all classes. Only Admin/Superadmin selects the criteria set before initializing a weekly sheet. Sao đỏ only enters/scores assigned classes and cannot select or edit criteria. To replace criteria after a sheet exists, Admin/Superadmin confirms with `YES` and the current password; the system deletes all weekly scores, evidence, and ranking snapshots, then resets the sheet to `draft`.

@@ -69,6 +69,20 @@
     d.setDate(d.getDate() + n);
     return localISO(d);
   };
+  function academicWeekOptions(startYear) {
+    if (!Number.isInteger(startYear) || startYear < 1900 || startYear > 9998)
+      return [];
+    const date = new Date(`${startYear}-08-01T00:00:00`),
+      limit = `${startYear + 1}-08-01`,
+      weeks = [];
+    date.setDate(date.getDate() + ((8 - date.getDay()) % 7));
+    while (localISO(date) < limit) {
+      const start = localISO(date);
+      weeks.push({ start_date: start, end_date: addDays(start, 6) });
+      date.setDate(date.getDate() + 7);
+    }
+    return weeks;
+  }
   function sortWeeksAscending(rows) {
     const getNumber = (row) => {
       const stored = Number(row?.number),
@@ -196,6 +210,7 @@
     statusLabel,
     statusBadge,
     addDays,
+    academicWeekOptions,
     sortWeeksAscending,
     pageHead,
     debounce,

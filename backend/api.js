@@ -400,6 +400,10 @@ export const createApiHandler = ({ repository, sessions, users }) =>
       if (request.method === "GET" && url.pathname === "/api/session") {
         return sendJson(response, 200, { user });
       }
+      if (request.method === "GET" && url.pathname === "/api/school-branding") {
+        const [school] = repository.all("schools", false, user.selectedSchoolId);
+        return sendJson(response, 200, { brand_logo: school?.brand_logo || null });
+      }
       if (request.method === "DELETE" && url.pathname === "/api/session") {
         sessions.remove(sessionToken);
         return sendJson(

@@ -157,6 +157,10 @@
       return this.request("/admin/users");
     }
 
+    schoolBranding() {
+      return this.request("/school-branding");
+    }
+
     createSchool(name) {
       return this.request("/admin/schools", {
         method: "POST",

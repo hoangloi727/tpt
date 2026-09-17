@@ -42,6 +42,7 @@
             statusLabel,
             statusBadge,
             addDays,
+            academicWeekOptions,
             sortWeeksAscending,
             pageHead,
             debounce,
@@ -613,11 +614,9 @@
           if (state.user?.role !== "teacher") {
             await loadContext();
             await loadScoreAssignment();
-            if (state.user?.role !== "user") {
-              const [activeSchool] = await db.all("schools");
-              state.schoolLogo = activeSchool?.brand_logo || null;
-            }
           }
+          const branding = await db.schoolBranding();
+          state.schoolLogo = branding.brand_logo || null;
           updateSchoolBranding();
           renderNav();
           sessionLock.setTimeoutMinutes(
@@ -629,6 +628,9 @@
           );
           const manager = ["superadmin", "admin"].includes(state.user?.role);
           $("#quickAdd").classList.toggle("hidden", !manager);
+          $$("#yearSelect, #semesterSelect, #weekSelect, #campusSelect, #mobileContext, .topbar .searchbox").forEach(
+            (control) => control.classList.toggle("hidden", state.user?.role === "teacher"),
+          );
           document.body.dataset.paper =
             state.user?.role === "teacher"
               ? "portrait"
@@ -797,7 +799,7 @@
               items[next].classList.add("active");
               items[next].scrollIntoView({ block: "nearest" });
             }
-            if (e.ctrlKey && e.key.toLowerCase() === "k") {
+            if (e.ctrlKey && e.key.toLowerCase() === "k" && state.user?.role !== "teacher") {
               e.preventDefault();
               $("#globalSearch").focus();
             }
@@ -2310,7 +2312,18 @@
         }
 
         async function renderTeacherClass() {
-          const data = await db.teacherClassWeek(state.yearId, state.weekId);
+          let data = await db.teacherClassWeek(state.yearId, state.weekId);
+          const calendarDate = today(),
+            weeks = [...data.weeks].sort((a, b) =>
+              String(a.start_date || "").localeCompare(String(b.start_date || "")),
+            ),
+            currentWeek = weeks.find((week) =>
+              week.start_date <= calendarDate && week.end_date >= calendarDate,
+            ),
+            previousWeek = weeks.filter((week) => week.end_date < calendarDate).at(-1),
+            initialWeek = currentWeek || previousWeek || weeks[0];
+          if (!weeks.some((week) => week.id === state.weekId) && initialWeek && data.week?.id !== initialWeek.id)
+            data = await db.teacherClassWeek(data.assignment.school_year_id, initialWeek.id);
           state.yearId = data.assignment.school_year_id;
           state.weekId = data.week?.id || "";
           const ranking = data.ranking,
@@ -2322,11 +2335,21 @@
               "Xem xếp hạng lớp và các ghi nhận trong tuần được chọn.",
               '<button class="btn no-print" onclick="window.print()">In/Lưu PDF</button>',
             ) +
-              `<article class="teacher-week-report"><div class="toolbar no-print"><label>Tuần <select id="teacherWeekSelect">${data.weeks.map((week) => `<option value="${esc(week.id)}" ${week.id === data.week?.id ? "selected" : ""}>${esc(week.name)}${week.start_date ? ` (${fmtDate(week.start_date)} - ${fmtDate(week.end_date)})` : ""}</option>`).join("")}</select></label></div><div class="card"><div class="card-head"><h2>${esc(schoolClass?.class_name || "Lớp chưa xác định")}</h2><span class="meta">${esc(data.week?.name || "Chưa chọn tuần")}</span></div><div class="card-body">${data.official ? "" : '<div class="notice warn">Bảng tuần chưa duyệt hoặc chưa khóa; chưa có xếp hạng chính thức.</div>'}${ranking ? `<div class="grid-3"><div class="split"><span>Hạng trong nhóm</span><strong>#${esc(ranking.rank)}</strong></div><div class="split"><span>Nhóm lớp</span><strong>${esc(ranking.class_group_name || "Chưa phân nhóm")}</strong></div><div class="split"><span>Tổng tuần</span><strong>${Number(ranking.total || 0).toFixed(1)} điểm</strong></div></div><div class="table-wrap mt"><table><thead><tr>${Object.keys(ranking.daily || {}).map((date) => `<th>${fmtDate(date)}</th>`).join("")}</tr></thead><tbody><tr>${Object.values(ranking.daily || {}).map((value) => `<td>${Number(value || 0).toFixed(1)}</td>`).join("")}</tr></tbody></table></div>` : '<div class="empty">Chưa có xếp hạng cho lớp trong tuần này.</div>'}</div></div><div class="card mt"><div class="card-head"><h2>Ghi nhận trong tuần</h2><span class="meta">${incidents.length} dòng</span></div><div class="card-body"><div class="table-wrap"><table><thead><tr><th>Ngày</th><th>Họ và tên</th><th>Nội dung</th><th>Điểm</th></tr></thead><tbody>${incidents.map((item) => `<tr><td>${fmtDate(item.date)}</td><td>${esc(item.person_name || "—")}</td><td>${esc(item.rule || "—")}</td><td class="${Number(item.points) < 0 ? "negative" : Number(item.points) > 0 ? "positive" : ""}">${Number(item.points) > 0 ? "+" : ""}${Number(item.points || 0)}</td></tr>`).join("") || '<tr><td colspan="4" class="empty">Chưa có ghi nhận có tên trong tuần này.</td></tr>'}</tbody></table></div></div></div></article>`,
+              `<article class="teacher-week-report"><div class="toolbar no-print"><label>Tuần <select id="teacherWeekSelect">${data.weeks.map((week) => `<option value="${esc(week.id)}" ${week.id === data.week?.id ? "selected" : ""}>${esc(week.name)}${week.start_date ? ` (${fmtDate(week.start_date)} - ${fmtDate(week.end_date)})` : ""}</option>`).join("")}</select></label><button class="btn" id="teacherCurrentWeek" ${currentWeek ? "" : 'disabled title="Không có tuần học trong ngày hiện tại"'}>Tuần hiện tại</button><button class="btn" id="teacherPreviousWeek" ${previousWeek ? "" : 'disabled title="Chưa có tuần học trước đó"'}>Tuần trước (xem lại)</button></div><div class="card"><div class="card-head"><h2>${esc(schoolClass?.class_name || "Lớp chưa xác định")}</h2><span class="meta">${esc(data.week?.name || "Chưa chọn tuần")}</span></div><div class="card-body">${data.official ? "" : '<div class="notice warn">Bảng tuần chưa duyệt hoặc chưa khóa; chưa có xếp hạng chính thức.</div>'}${ranking ? `<div class="grid-3"><div class="split"><span>Hạng trong nhóm</span><strong>#${esc(ranking.rank)}</strong></div><div class="split"><span>Nhóm lớp</span><strong>${esc(ranking.class_group_name || "Chưa phân nhóm")}</strong></div><div class="split"><span>Tổng tuần</span><strong>${Number(ranking.total || 0).toFixed(1)} điểm</strong></div></div><div class="table-wrap mt"><table><thead><tr>${Object.keys(ranking.daily || {}).map((date) => `<th>${fmtDate(date)}</th>`).join("")}</tr></thead><tbody><tr>${Object.values(ranking.daily || {}).map((value) => `<td>${Number(value || 0).toFixed(1)}</td>`).join("")}</tr></tbody></table></div>` : '<div class="empty">Chưa có xếp hạng cho lớp trong tuần này.</div>'}</div></div><div class="card mt"><div class="card-head"><h2>Ghi nhận trong tuần</h2><span class="meta">${incidents.length} dòng</span></div><div class="card-body"><div class="table-wrap"><table><thead><tr><th>Ngày</th><th>Họ và tên</th><th>Nội dung</th><th>Điểm</th></tr></thead><tbody>${incidents.map((item) => `<tr><td>${fmtDate(item.date)}</td><td>${esc(item.person_name || "—")}</td><td>${esc(item.rule || "—")}</td><td class="${Number(item.points) < 0 ? "negative" : Number(item.points) > 0 ? "positive" : ""}">${Number(item.points) > 0 ? "+" : ""}${Number(item.points || 0)}</td></tr>`).join("") || '<tr><td colspan="4" class="empty">Chưa có ghi nhận có tên trong tuần này.</td></tr>'}</tbody></table></div></div></div></article>`,
           );
           $("#teacherWeekSelect").onchange = (event) => {
             state.weekId = event.target.value;
-            renderTeacherClass();
+            return renderTeacherClass();
+          };
+          $("#teacherCurrentWeek").onclick = () => {
+            if (!currentWeek) return;
+            state.weekId = currentWeek.id;
+            return renderTeacherClass();
+          };
+          $("#teacherPreviousWeek").onclick = () => {
+            if (!previousWeek) return;
+            state.weekId = previousWeek.id;
+            return renderTeacherClass();
           };
         }
         async function renderScores() {
@@ -4380,19 +4403,60 @@
             "Xóa cơ sở",
           );
         }
+        function mountAcademicWeekPicker(form, startYear) {
+          const picker = document.createElement("fieldset");
+          picker.className = "mt";
+          picker.innerHTML = `<legend>Chọn các tuần học cần tạo</legend><div class="field"><label>Năm bắt đầu lịch học (tháng 8 đến tháng 7 năm sau)</label><input data-week-calendar-year type="number" min="1900" max="9998" value="${startYear}" required></div><div class="notice mt">Chọn tuần có học; bỏ trống tuần nghỉ Tết, nghỉ lễ hoặc nghỉ hè. Mỗi tuần từ Thứ Hai đến Chủ Nhật. Các tuần được chọn sẽ đánh số liên tiếp, không tính tuần nghỉ.</div><div class="toolbar mt"><button class="btn small" type="button" data-select-weeks>Chọn tất cả</button><button class="btn small" type="button" data-clear-weeks>Bỏ chọn tất cả</button><span data-week-count aria-live="polite"></span></div><div class="class-group-picker" data-week-options></div>`;
+          form.append(picker);
+          const yearInput = picker.querySelector("[data-week-calendar-year]"),
+            options = picker.querySelector("[data-week-options]"),
+            count = picker.querySelector("[data-week-count]");
+          let weeks = [];
+          const selectedWeeks = () => {
+            const selected = new Set(
+              [...options.querySelectorAll("input:checked")].map((input) => input.value),
+            );
+            return weeks.filter((week) => selected.has(week.start_date)).map((week, index) => ({
+              ...week,
+              number: index + 1,
+              name: `Tuần ${index + 1}`,
+            }));
+          };
+          const updateCount = () => {
+            count.textContent = `Đã chọn ${selectedWeeks().length} tuần học`;
+          };
+          const render = () => {
+            weeks = academicWeekOptions(Number(yearInput.value));
+            options.innerHTML = weeks.map((week) => `<label class="check-row"><input type="checkbox" value="${week.start_date}"><span>${fmtDate(week.start_date)} – ${fmtDate(week.end_date)}</span></label>`).join("");
+            updateCount();
+          };
+          yearInput.onchange = render;
+          options.onchange = updateCount;
+          for (const [selector, checked] of [["[data-select-weeks]", true], ["[data-clear-weeks]", false]])
+            picker.querySelector(selector).onclick = () => {
+              options.querySelectorAll("input").forEach((input) => (input.checked = checked));
+              updateCount();
+            };
+          render();
+          return selectedWeeks;
+        }
         function yearForm() {
           openModal(
             "Thêm năm học",
-            `<form id="yearForm"><div class="form-grid"><div class="field full"><label class="required">Tên năm học</label><input name="name" placeholder="2027–2028" required></div><div class="field"><label class="required">Ngày bắt đầu</label><input type="date" name="start_date" required></div><div class="field"><label class="required">Ngày kết thúc</label><input type="date" name="end_date" required></div><label class="check-row full"><input type="checkbox" name="is_current" value="true"> Đặt làm năm học hiện hành</label></div></form>`,
-            `<button class="btn" id="cancelYear">Hủy</button><button class="btn primary" id="saveYear">Tạo năm học và 40 tuần</button>`,
+            `<form id="yearForm"><div class="form-grid"><div class="field full"><label class="required">Tên năm học</label><input name="name" placeholder="2027–2028" required></div><label class="check-row full"><input type="checkbox" name="is_current" value="true"> Đặt làm năm học hiện hành</label></div></form>`,
+            `<button class="btn" id="cancelYear">Hủy</button><button class="btn primary" id="saveYear">Tạo năm học và tuần đã chọn</button>`,
           );
+          const selectedWeeks = mountAcademicWeekPicker($("#yearForm"), new Date().getFullYear());
           $("#cancelYear").onclick = closeModal;
           $("#saveYear").onclick = async () => {
             const f = $("#yearForm");
             if (!f.reportValidity()) return;
-            const d = Object.fromEntries(new FormData(f));
-            if (d.end_date <= d.start_date)
-              return toast("Ngày kết thúc phải sau ngày bắt đầu.", "bad");
+            const d = Object.fromEntries(new FormData(f)),
+              chosenWeeks = selectedWeeks();
+            if (!chosenWeeks.length)
+              return toast("Hãy chọn ít nhất một tuần học cần tạo.", "bad");
+            d.start_date = chosenWeeks[0].start_date;
+            d.end_date = chosenWeeks[chosenWeeks.length - 1].end_date;
             const id = uid();
             if (d.is_current) {
               for (const y of await db.all("school_years"))
@@ -4403,21 +4467,11 @@
               ...d,
               is_current: !!d.is_current,
             });
-            const weeks = [];
-            let date = new Date(d.start_date + "T00:00:00");
-            for (let i = 1; i <= 40; i++) {
-              let end = new Date(date);
-              end.setDate(end.getDate() + 6);
-              weeks.push({
-                id: uid(),
-                school_year_id: id,
-                number: i,
-                name: `Tuần ${i}`,
-                start_date: localISO(date),
-                end_date: localISO(end),
-              });
-              date.setDate(date.getDate() + 7);
-            }
+            const weeks = chosenWeeks.map((week) => ({
+              ...week,
+              id: uid(),
+              school_year_id: id,
+            }));
             await db.bulkPut("school_weeks", weeks);
             closeModal();
             await loadContext();
@@ -4793,7 +4847,7 @@
             if (step === 7)
               body = `<div class="notice"><strong>Lưu trữ máy chủ:</strong> mọi thao tác nghiệp vụ được gửi tới API của ứng dụng.</div><p class="muted">Có thể tạo tệp sao lưu, điểm khôi phục nội bộ và chọn thư mục sao lưu sau khi hoàn tất.</p>`;
             if (step === 8)
-              body = `<div class="notice"><strong>Checklist mức sẵn sàng</strong><ul><li>${data.school ? "✓" : "○"} Tên trường</li><li>✓ ${data.campuses.length} cơ sở</li><li>✓ Năm học và 40 tuần</li><li>○ Danh sách lớp thật — có thể nhập sau</li><li>○ Bản sao lưu đầu tiên — tạo sau khi hoàn tất cấu hình</li></ul></div>`;
+              body = `<div class="notice"><strong>Checklist mức sẵn sàng</strong><ul><li>${data.school ? "✓" : "○"} Tên trường</li><li>✓ ${data.campuses.length} cơ sở</li><li>✓ Năm học và danh sách tuần học</li><li>○ Danh sách lớp thật — có thể nhập sau</li><li>○ Bản sao lưu đầu tiên — tạo sau khi hoàn tất cấu hình</li></ul></div>`;
             openModal(
               `${step + 1}/9 • ${titles[step]}`,
               `<div class="wizard-steps">${Array.from({ length: 9 }, (_, i) => `<span class="${i < step ? "done" : i === step ? "active" : ""}"></span>`).join("")}</div>${body}`,
@@ -5901,7 +5955,7 @@
             })
             .join(
               "",
-            )}</tbody></table></div></div></div><div class="grid-2 mt"><div class="card"><div class="card-head"><h2>Quy tắc tạo năm</h2></div><div class="card-body"><ul><li>Tạo mới học kỳ và 40 tuần theo ngày bắt đầu.</li><li>Chỉ sao chép lớp và bộ tiêu chí khi được chọn.</li><li>Không sao chép điểm, xếp hạng, hoạt động, công việc đã phát sinh hay báo cáo cũ.</li></ul></div></div><div class="card"><div class="card-head"><h2>Quy tắc đóng năm</h2></div><div class="card-body"><ul><li>Kiểm tra bảng điểm chưa khóa, việc chưa xong và báo cáo nháp.</li><li>Tạo điểm khôi phục bảo vệ, báo cáo tổng kết chốt và gói năm học.</li><li>Sau khi đóng, bản ghi năm cũ chuyển sang chỉ đọc.</li></ul></div></div></div>`;
+            )}</tbody></table></div></div></div><div class="grid-2 mt"><div class="card"><div class="card-head"><h2>Quy tắc tạo năm</h2></div><div class="card-body"><ul><li>Chỉ tạo các tuần được chọn; bỏ qua tuần nghỉ và đánh số tuần học liên tiếp. Học kỳ chia theo hai nửa danh sách tuần đã chọn.</li><li>Chỉ sao chép lớp và bộ tiêu chí khi được chọn.</li><li>Không sao chép điểm, xếp hạng, hoạt động, công việc đã phát sinh hay báo cáo cũ.</li></ul></div></div><div class="card"><div class="card-head"><h2>Quy tắc đóng năm</h2></div><div class="card-body"><ul><li>Kiểm tra bảng điểm chưa khóa, việc chưa xong và báo cáo nháp.</li><li>Tạo điểm khôi phục bảo vệ, báo cáo tổng kết chốt và gói năm học.</li><li>Sau khi đóng, bản ghi năm cũ chuyển sang chỉ đọc.</li></ul></div></div></div>`;
           $("#addCampusCenter").onclick = () => campusForm();
           $$('[data-edit-campus]').forEach(
             (button) =>
@@ -5930,17 +5984,21 @@
               ) + 1;
           openModal(
             "Tạo năm học mới",
-            `<form id="academicYearForm"><div class="form-grid"><div class="field full"><label class="required">Tên năm học</label><input name="name" value="${startYear}–${startYear + 1}" required></div><div class="field"><label class="required">Ngày bắt đầu</label><input type="date" name="start_date" value="${startYear}-08-15" required></div><div class="field"><label class="required">Ngày kết thúc</label><input type="date" name="end_date" value="${startYear + 1}-05-31" required></div></div><fieldset class="mt"><legend>Sao chép có chọn lọc từ ${esc(current?.name || "năm hiện tại")}</legend><label class="check-row"><input type="checkbox" name="copy_classes" checked> Danh sách lớp và giáo viên (tạo ID mới)</label><label class="check-row"><input type="checkbox" name="copy_criteria" checked> Bộ tiêu chí và tiêu chí (chuyển về dự thảo)</label><label class="check-row"><input type="checkbox" name="copy_templates" checked> Mẫu công việc dùng chung</label></fieldset><div class="notice warn mt">Không sao chép điểm thi đua, xếp hạng, công việc phát sinh, hoạt động, hồ sơ giao dịch hoặc báo cáo năm cũ.</div></form>`,
+            `<form id="academicYearForm"><div class="form-grid"><div class="field full"><label class="required">Tên năm học</label><input name="name" value="${startYear}–${startYear + 1}" required></div></div><fieldset class="mt"><legend>Sao chép có chọn lọc từ ${esc(current?.name || "năm hiện tại")}</legend><label class="check-row"><input type="checkbox" name="copy_classes" checked> Danh sách lớp và giáo viên (tạo ID mới)</label><label class="check-row"><input type="checkbox" name="copy_criteria" checked> Bộ tiêu chí và tiêu chí (chuyển về dự thảo)</label><label class="check-row"><input type="checkbox" name="copy_templates" checked> Mẫu công việc dùng chung</label></fieldset><div class="notice warn mt">Không sao chép điểm thi đua, xếp hạng, công việc phát sinh, hoạt động, hồ sơ giao dịch hoặc báo cáo năm cũ.</div></form>`,
             `<button class="btn" id="cancelCreateYear">Hủy</button><button class="btn primary" id="confirmCreateYear">Tạo năm học</button>`,
             true,
           );
+          const selectedWeeks = mountAcademicWeekPicker($("#academicYearForm"), startYear);
           $("#cancelCreateYear").onclick = closeModal;
           $("#confirmCreateYear").onclick = async () => {
             const form = $("#academicYearForm");
             if (!form.reportValidity()) return;
-            const values = Object.fromEntries(new FormData(form));
-            if (values.start_date >= values.end_date)
-              return toast("Ngày kết thúc phải sau ngày bắt đầu.", "bad");
+            const values = Object.fromEntries(new FormData(form)),
+              chosenWeeks = selectedWeeks();
+            if (!chosenWeeks.length)
+              return toast("Hãy chọn ít nhất một tuần học cần tạo.", "bad");
+            values.start_date = chosenWeeks[0].start_date;
+            values.end_date = chosenWeeks[chosenWeeks.length - 1].end_date;
             if (
               (await db.all("school_years")).some(
                 (year) =>
@@ -5975,43 +6033,22 @@
                 status: "active",
                 read_only: false,
               });
-              const middle = new Date(values.start_date + "T00:00:00");
-              middle.setDate(middle.getDate() + 145);
-              await db.bulkPut("semesters", [
-                {
+              const middle = Math.ceil(chosenWeeks.length / 2),
+                semesterWeeks = [chosenWeeks.slice(0, middle), chosenWeeks.slice(middle)];
+              await db.bulkPut("semesters", semesterWeeks
+                .filter((weeks) => weeks.length)
+                .map((weeks, index) => ({
                   id: uid(),
                   school_year_id: yearId,
-                  name: "Học kỳ I",
-                  start_date: values.start_date,
-                  end_date: localISO(middle),
-                },
-                {
-                  id: uid(),
-                  school_year_id: yearId,
-                  name: "Học kỳ II",
-                  start_date: addDays(localISO(middle), 1),
-                  end_date: values.end_date,
-                },
-              ]);
-              const firstMonday = new Date(values.start_date + "T00:00:00");
-              firstMonday.setDate(
-                firstMonday.getDate() + ((8 - firstMonday.getDay()) % 7),
-              );
-              const newWeeks = [];
-              for (let number = 1; number <= 40; number++) {
-                const start = new Date(firstMonday),
-                  end = new Date(firstMonday);
-                start.setDate(start.getDate() + (number - 1) * 7);
-                end.setDate(start.getDate() + 6);
-                newWeeks.push({
-                  id: uid(),
-                  school_year_id: yearId,
-                  number,
-                  name: `Tuần ${number}`,
-                  start_date: localISO(start),
-                  end_date: localISO(end),
-                });
-              }
+                  name: index === 0 ? "Học kỳ I" : "Học kỳ II",
+                  start_date: weeks[0].start_date,
+                  end_date: weeks[weeks.length - 1].end_date,
+                })));
+              const newWeeks = chosenWeeks.map((week) => ({
+                ...week,
+                id: uid(),
+                school_year_id: yearId,
+              }));
               await db.bulkPut("school_weeks", newWeeks);
               let copiedClasses = 0,
                 copiedCriteria = 0;
@@ -6149,7 +6186,7 @@
               closeModal();
               await loadContext();
               toast(
-                `Đã tạo ${values.name}: ${copiedClasses} lớp, ${copiedCriteria} tiêu chí.`,
+                `Đã tạo ${values.name}: ${newWeeks.length} tuần học, ${copiedClasses} lớp, ${copiedCriteria} tiêu chí.`,
               );
               renderSettings();
             } catch (error) {
