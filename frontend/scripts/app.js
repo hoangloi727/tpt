@@ -135,8 +135,14 @@
           unlockTimeoutMinutes: 10,
         };
 
-        function applyAuthenticatedUser(user) {
-          if (state.schoolId && state.schoolId !== user.selectedSchoolId) {
+        function applyAuthenticatedUser(user, freshLogin = false) {
+          const identityChanged =
+            freshLogin ||
+            !state.user ||
+            state.user.id !== user.id ||
+            state.user.role !== user.role ||
+            state.schoolId !== user.selectedSchoolId;
+          if (identityChanged) {
             state.yearId = "";
             state.semesterId = "all";
             state.weekId = "";
@@ -145,6 +151,11 @@
             state.criteriaSetId = "";
             state.lastScoreUndo = null;
             state.scoreClassIds = new Set();
+            state.page = "dashboard";
+            state.scoreTab = "entry";
+            state.rankingGroupId = "";
+            state.userRoleFilter = "all";
+            state.cache = {};
             state.schoolLogo = null;
             state.directoryHandle = null;
           }
@@ -245,7 +256,7 @@
               this.blockedUntil = 0;
               this.lastActivityAt = Date.now();
               state.unlocked = true;
-              applyAuthenticatedUser(user);
+              applyAuthenticatedUser(user, true);
               return { ok: true, wait: 0, user };
             }
             this.failedAttempts += 1;
@@ -333,9 +344,13 @@
         }
         const sessionLock = new SessionLockManager();
 
-        const tabCoordinator = new TabCoordinator(APP.appId, uid, () =>
-          toast("Dữ liệu vừa thay đổi ở thẻ đang có quyền ghi."),
-        );
+        const tabCoordinator = new TabCoordinator(APP.appId, uid, async () => {
+          toast("Dữ liệu vừa thay đổi ở thẻ đang có quyền ghi.");
+          if (state.user?.role === "user" && state.page === "scores") {
+            await loadScoreAssignment();
+            await renderScores();
+          }
+        });
 
         class AssistantProvider {
           async answer(q) {
@@ -355,6 +370,12 @@
             onChange: (store, id) => tabCoordinator.announceChange(store, id),
           }),
           assistant = new AssistantProvider();
+        document.addEventListener("visibilitychange", async () => {
+          if (!document.hidden && state.unlocked && state.user?.role === "user" && state.page === "scores") {
+            await loadScoreAssignment();
+            await renderScores();
+          }
+        });
         const { customFieldDefs, renderCustomInputs, collectCustomValues } =
             createCustomFieldsController({ db, esc }),
           { registerPWA } = createPwaRuntimeController({ $, toast }),
@@ -463,7 +484,7 @@
               if (user) {
                 state.unlocked = true;
                 sessionLock.lastActivityAt = Date.now();
-                applyAuthenticatedUser(user);
+                applyAuthenticatedUser(user, true);
                 try {
                   await launchApp();
                   return;
@@ -717,7 +738,7 @@
             selector.disabled = true;
             try {
               const user = await db.switchSchool(selector.value);
-              applyAuthenticatedUser(user);
+              applyAuthenticatedUser(user, true);
               await launchApp();
               toast(`Đã chuyển sang ${user.selectedSchoolName}`);
             } catch (error) {
@@ -2358,6 +2379,7 @@
           };
         }
         async function renderScores() {
+          await loadScoreAssignment();
           const ctx = await scoreContext(),
             week = state.cache.weeks.find((x) => x.id === state.weekId),
             manager = canManageScores();
