@@ -54,6 +54,9 @@
             formatBytes,
             fileIcon,
             normalizeText,
+            normalizeSchoolYearName,
+            parseAccountImportText,
+            validateAccountImportRows,
             defaultConfigColor,
           } = MODULES.utils,
           { NAV, ENTITY, SETTINGS_TABS, SETTINGS_CONFIG_KEYS, CONFIG_DEFINITIONS } =
@@ -839,7 +842,7 @@
           ]);
           await db.put("school_years", {
             id: yid,
-            name: "2026–2027",
+            name: "2026-2027",
             start_date: "2026-08-15",
             end_date: "2027-05-31",
             is_current: true,
@@ -996,11 +999,12 @@
           return r[key];
         }
         async function loadContext() {
-          const [years, sems, rawWeeks, campuses] = await Promise.all(
+          const [rawYears, sems, rawWeeks, campuses] = await Promise.all(
             ["school_years", "semesters", "school_weeks", "campuses"].map((s) =>
               db.all(s),
             ),
           ),
+            years = rawYears.map((year) => ({ ...year, name: normalizeSchoolYearName(year.name) })),
             weeks = sortWeeksAscending(rawWeeks);
           state.cache = { years, sems, weeks, campuses };
           state.yearId =
@@ -2332,7 +2336,7 @@
           setContent(
             pageHead(
               "Lớp chủ nhiệm",
-              "Xem xếp hạng lớp và các ghi nhận trong tuần được chọn.",
+              "Xem xếp hạng lớp và các ghi nhận trong tuần.",
               '<button class="btn no-print" onclick="window.print()">In/Lưu PDF</button>',
             ) +
               `<article class="teacher-week-report"><div class="toolbar no-print"><label>Tuần <select id="teacherWeekSelect">${data.weeks.map((week) => `<option value="${esc(week.id)}" ${week.id === data.week?.id ? "selected" : ""}>${esc(week.name)}${week.start_date ? ` (${fmtDate(week.start_date)} - ${fmtDate(week.end_date)})` : ""}</option>`).join("")}</select></label><button class="btn" id="teacherCurrentWeek" ${currentWeek ? "" : 'disabled title="Không có tuần học trong ngày hiện tại"'}>Tuần hiện tại</button><button class="btn" id="teacherPreviousWeek" ${previousWeek ? "" : 'disabled title="Chưa có tuần học trước đó"'}>Tuần trước (xem lại)</button></div><div class="card"><div class="card-head"><h2>${esc(schoolClass?.class_name || "Lớp chưa xác định")}</h2><span class="meta">${esc(data.week?.name || "Chưa chọn tuần")}</span></div><div class="card-body">${data.official ? "" : '<div class="notice warn">Bảng tuần chưa duyệt hoặc chưa khóa; chưa có xếp hạng chính thức.</div>'}${ranking ? `<div class="grid-3"><div class="split"><span>Hạng trong nhóm</span><strong>#${esc(ranking.rank)}</strong></div><div class="split"><span>Nhóm lớp</span><strong>${esc(ranking.class_group_name || "Chưa phân nhóm")}</strong></div><div class="split"><span>Tổng tuần</span><strong>${Number(ranking.total || 0).toFixed(1)} điểm</strong></div></div><div class="table-wrap mt"><table><thead><tr>${Object.keys(ranking.daily || {}).map((date) => `<th>${fmtDate(date)}</th>`).join("")}</tr></thead><tbody><tr>${Object.values(ranking.daily || {}).map((value) => `<td>${Number(value || 0).toFixed(1)}</td>`).join("")}</tr></tbody></table></div>` : '<div class="empty">Chưa có xếp hạng cho lớp trong tuần này.</div>'}</div></div><div class="card mt"><div class="card-head"><h2>Ghi nhận trong tuần</h2><span class="meta">${incidents.length} dòng</span></div><div class="card-body"><div class="table-wrap"><table><thead><tr><th>Ngày</th><th>Họ và tên</th><th>Nội dung</th><th>Điểm</th></tr></thead><tbody>${incidents.map((item) => `<tr><td>${fmtDate(item.date)}</td><td>${esc(item.person_name || "—")}</td><td>${esc(item.rule || "—")}</td><td class="${Number(item.points) < 0 ? "negative" : Number(item.points) > 0 ? "positive" : ""}">${Number(item.points) > 0 ? "+" : ""}${Number(item.points || 0)}</td></tr>`).join("") || '<tr><td colspan="4" class="empty">Chưa có ghi nhận có tên trong tuần này.</td></tr>'}</tbody></table></div></div></div></article>`,
@@ -2392,6 +2396,13 @@
             $("#replaceScoreCriteria").onclick = () => replaceScoreCriteria(ctx);
           $("#undoScore").onclick = undoScore;
         }
+        function graderClassLabel(user, classes) {
+          if (!user.graderClassId) return "Chưa gắn lớp";
+          const schoolClass = classes.find((row) => row.id === user.graderClassId);
+          if (!schoolClass) return "Lớp không còn khả dụng";
+          const year = state.cache.years.find((row) => row.id === (schoolClass.school_year_id || schoolClass.academic_year_id));
+          return [schoolClass.class_name, year?.name, campusName(schoolClass.campus_id)].filter(Boolean).join(" • ");
+        }
         async function showScoreGraderAssignments() {
           const [allUsers, assignments, allClasses, allGroups] = await Promise.all([
               db.listUsers(),
@@ -2426,11 +2437,18 @@
                 "Chưa có tài khoản Sao đỏ đang hoạt động để phân công.",
               "bad",
             );
+          const graderClasses = new Map(
+            users.map((user) => [user.graderClassId || "unbound", graderClassLabel(user, allClasses)]),
+          );
           openModal(
             "Phân công chấm điểm theo lớp",
-            `<div class="notice">Mỗi lớp chỉ giao cho một Sao đỏ trong năm học đang chọn. Admin và Superadmin luôn có thể quản lý tất cả lớp.</div><div class="field mt"><label>Sao đỏ chấm điểm</label><select id="scoreGraderUser">${users.map((user) => `<option value="${esc(user.id)}">${esc(user.displayName)} (${esc(user.username)})</option>`).join("")}</select></div><div class="toolbar mt"><button class="btn small" id="selectAllGraderClasses" type="button">Chọn lớp còn trống</button><button class="btn small" id="clearGraderClasses" type="button">Bỏ chọn tất cả</button>${classGroups.length ? `<label class="muted">Chọn nhanh nhóm <select id="graderClassGroup"><option value="">— Chọn nhóm —</option>${classGroups.map((group) => `<option value="${esc(group.id)}">${esc(group.name)}</option>`).join("")}</select></label>` : ""}</div><div class="form-grid" id="scoreGraderClasses"></div>`,
+            `<div class="notice">Mỗi lớp chỉ giao cho một Sao đỏ trong năm học đang chọn. Admin và Superadmin luôn có thể quản lý tất cả lớp.</div><div class="field mt"><label>Sao đỏ chấm điểm</label><select id="scoreGraderUser">${users.map((user) => `<option value="${esc(user.id)}">${esc(graderClassLabel(user, allClasses))} — ${esc(user.displayName)} (${esc(user.username)})</option>`).join("")}</select></div><div class="toolbar mt"><button class="btn small" id="selectAllGraderClasses" type="button">Chọn lớp còn trống</button><button class="btn small" id="clearGraderClasses" type="button">Bỏ chọn tất cả</button>${classGroups.length ? `<label class="muted">Chọn nhanh nhóm <select id="graderClassGroup"><option value="">— Chọn nhóm —</option>${classGroups.map((group) => `<option value="${esc(group.id)}">${esc(group.name)}</option>`).join("")}</select></label>` : ""}</div><div class="form-grid" id="scoreGraderClasses"></div>`,
             '<button class="btn" id="cancelScoreGrader">Hủy</button><button class="btn primary" id="saveScoreGrader">Lưu phân công</button>',
             true,
+          );
+          $("#scoreGraderUser").parentElement.insertAdjacentHTML(
+            "beforebegin",
+            `<div class="field mt"><label for="scoreGraderClassFilter">Lọc Sao đỏ theo lớp của mình</label><select id="scoreGraderClassFilter"><option value="all">Tất cả lớp</option>${Array.from(graderClasses).sort((a, b) => a[1].localeCompare(b[1], "vi", { numeric: true })).map(([id, label]) => `<option value="${esc(id)}">${esc(label)}</option>`).join("")}</select></div>`,
           );
           const renderClasses = () => {
             const userId = $("#scoreGraderUser").value,
@@ -2469,6 +2487,17 @@
               : '<div class="empty">Chưa có lớp trong năm học này.</div>';
           };
           renderClasses();
+          $("#scoreGraderClassFilter").onchange = (event) => {
+            const classId = event.target.value,
+              visibleUsers = users.filter((user) => classId === "all" || (user.graderClassId || "unbound") === classId),
+              previousUserId = $("#scoreGraderUser").value;
+            fillSelect(
+              $("#scoreGraderUser"),
+              visibleUsers.map((user) => [user.id, `${graderClassLabel(user, allClasses)} — ${user.displayName} (${user.username})`]),
+              visibleUsers.some((user) => user.id === previousUserId) ? previousUserId : visibleUsers[0]?.id,
+            );
+            renderClasses();
+          };
           $("#scoreGraderUser").onchange = renderClasses;
           $("#selectAllGraderClasses").onclick = () =>
             $$('[data-grader-class]:not(:disabled)').forEach(
@@ -4443,7 +4472,7 @@
         function yearForm() {
           openModal(
             "Thêm năm học",
-            `<form id="yearForm"><div class="form-grid"><div class="field full"><label class="required">Tên năm học</label><input name="name" placeholder="2027–2028" required></div><label class="check-row full"><input type="checkbox" name="is_current" value="true"> Đặt làm năm học hiện hành</label></div></form>`,
+            `<form id="yearForm"><div class="form-grid"><div class="field full"><label class="required">Tên năm học</label><input name="name" placeholder="2027-2028" required></div><label class="check-row full"><input type="checkbox" name="is_current" value="true"> Đặt làm năm học hiện hành</label></div></form>`,
             `<button class="btn" id="cancelYear">Hủy</button><button class="btn primary" id="saveYear">Tạo năm học và tuần đã chọn</button>`,
           );
           const selectedWeeks = mountAcademicWeekPicker($("#yearForm"), new Date().getFullYear());
@@ -4455,6 +4484,7 @@
               chosenWeeks = selectedWeeks();
             if (!chosenWeeks.length)
               return toast("Hãy chọn ít nhất một tuần học cần tạo.", "bad");
+            d.name = normalizeSchoolYearName(d.name);
             d.start_date = chosenWeeks[0].start_date;
             d.end_date = chosenWeeks[chosenWeeks.length - 1].end_date;
             const id = uid();
@@ -4812,7 +4842,7 @@
             code: "",
             address: "",
             campuses: ["Cơ sở 1", "Cơ sở 2"],
-            year: "2026–2027",
+            year: "2026-2027",
             start: "2026-08-15",
             end: "2027-05-31",
             mode: "local",
@@ -4890,7 +4920,7 @@
                     .map((x) => x.trim())
                     .filter(Boolean) || data.campuses;
               if (step === 2) {
-                data.year = $("#wYear")?.value.trim() || data.year;
+                data.year = normalizeSchoolYearName($("#wYear")?.value || data.year);
                 data.start = $("#wStart")?.value || data.start;
                 data.end = $("#wEnd")?.value || data.end;
               }
@@ -5444,7 +5474,7 @@
         }
 
         async function renderUserManagement() {
-          const users = await db.listUsers(),
+          const [users, classes] = await Promise.all([db.listUsers(), db.all("classes")]),
             isSuperadmin = state.user?.role === "superadmin",
             roleOptions = [
               ["all", "Tất cả loại tài khoản"],
@@ -5457,7 +5487,7 @@
             pageHead(
               "Quản lý người dùng",
               `Tài khoản thuộc ${state.user?.selectedSchoolName || "trường đang chọn"}.`,
-              `${isSuperadmin ? '<button class="btn" id="addSchool">＋ Thêm trường</button>' : ""}<button class="btn" id="importUsers">Nhập Excel/CSV</button><button class="btn primary" id="addUser">＋ Thêm người dùng</button>`,
+              `${isSuperadmin ? '<button class="btn" id="addSchool">＋ Thêm trường</button>' : ""}<button class="btn" id="importUsers">Nhập Sao đỏ (Excel/CSV)</button><button class="btn" id="importTeachers">Nhập Giáo viên (Excel/CSV)</button><button class="btn primary" id="addUser">＋ Thêm người dùng</button>`,
             ) +
               `<div class="toolbar"><label for="userRoleFilter">Loại tài khoản</label><select id="userRoleFilter">${roleOptions.map(([role, label]) => `<option value="${role}" ${state.userRoleFilter === role ? "selected" : ""}>${label}</option>`).join("")}</select></div>` +
               `<div class="notice"><strong>Admin có toàn quyền trong trường này</strong> và có thể quản lý User/Admin, nhưng không thể tạo hoặc quản lý Superadmin. Superadmin dùng bộ chọn trường trên thanh điều hướng để đổi phạm vi.</div><div class="table-wrap"><table><thead><tr><th>Tài khoản</th><th>Tên hiển thị</th><th>Vai trò</th><th>Quyền</th><th>Trạng thái</th><th>Lần đăng nhập cuối</th><th>Thao tác</th></tr></thead><tbody>${users
@@ -5473,7 +5503,7 @@
                           ? '<span class="badge blue">Admin</span>'
                           : user.role === "teacher"
                             ? '<span class="badge green">Giáo viên</span>'
-                            : '<span class="badge">Sao đỏ</span>',
+                            : `<span class="badge">Sao đỏ</span><br><small class="muted">${esc(graderClassLabel(user, classes))}</small>`,
                       actions = user.root
                         ? `<button class="link-btn" data-edit-user="${esc(user.id)}">Đổi tên/mật khẩu</button> <span class="muted">root</span>`
                         : manageable
@@ -5490,7 +5520,9 @@
           };
           $("#addUser").onclick = () => openUserForm();
           $("#importUsers").onclick = () =>
-            showUserImport().catch((error) => toast(error.message, "bad"));
+            showUserImport("user").catch((error) => toast(error.message, "bad"));
+          $("#importTeachers").onclick = () =>
+            showUserImport("teacher").catch((error) => toast(error.message, "bad"));
           if ($("#addSchool"))
             $("#addSchool").onclick = async () => {
               const name = await promptDialog("Tên trường mới:");
@@ -5526,121 +5558,125 @@
           );
         }
 
-        async function showUserImport() {
-          const importClasses = await db.all("classes");
+        async function showUserImport(role = "user") {
+          const teacher = role === "teacher",
+            schoolYearId = state.yearId,
+            headers = ["Tên đăng nhập", "Tên hiển thị", "Mật khẩu", ...(teacher ? ["Năm học", "Lớp"] : ["Lớp liên kết (tùy chọn)"])],
+            yearName = normalizeSchoolYearName(state.cache.years?.find((year) => year.id === schoolYearId)?.name || "");
           openModal(
-            "Nhập tài khoản từ Excel/CSV",
-            `<div class="notice">Tải mẫu CSV, mở bằng Excel để nhập thông tin, rồi tải lại tệp hoặc dán trực tiếp bảng từ Excel. Cột bắt buộc: tên đăng nhập, tên hiển thị, mật khẩu (tối thiểu 10 ký tự), vai trò <code>user</code>, <code>admin</code> hoặc <code>teacher</code>. Teacher cần thêm năm học và lớp chủ nhiệm, dùng tên hoặc ID năm học và mã/tên/ID lớp.</div><div class="toolbar mt"><button class="btn" type="button" id="downloadUserTemplate">Tải mẫu Excel (CSV)</button><label class="btn" for="userImportFile">Chọn tệp CSV</label><input id="userImportFile" type="file" accept=".csv,text/csv" hidden></div><div class="field mt"><label>Dữ liệu CSV hoặc bảng dán từ Excel</label><textarea id="userImportText" style="min-height:220px" placeholder="Tên đăng nhập\tTên hiển thị\tMật khẩu\tVai trò\tNăm học chủ nhiệm\tLớp chủ nhiệm"></textarea></div><div id="userImportPreview" class="mt"></div>`,
+            teacher ? "Nhập tài khoản Giáo viên" : "Nhập tài khoản Sao đỏ",
+            `<div class="notice">Cột theo thứ tự: ${headers.map(esc).join(", ")}. Mật khẩu tối thiểu 10 ký tự. ${teacher ? "Năm học dùng dạng 2026-2027; lớp phải thuộc năm học đó." : `Lớp liên kết có thể để trống; nếu có, phải thuộc năm ${esc(yearName || "đang chọn")} và chưa được tài khoản Sao đỏ khác liên kết.`} Lớp dùng tên, mã hoặc ID. Không có cột vai trò. Hỗ trợ CSV, bảng dán từ Excel và trang tính đầu tiên của XLSX (tối đa 2 MB, 2000 dòng).</div><div class="toolbar mt"><button class="btn" id="downloadUserTemplate">Tải mẫu CSV</button><label class="btn" for="userImportFile">Chọn CSV/XLSX</label><input id="userImportFile" type="file" accept=".csv,.xlsx" hidden><span id="userImportSource"></span></div><div class="field mt"><label>Dữ liệu CSV hoặc bảng dán từ Excel</label><textarea id="userImportText" rows="10" placeholder="${esc(headers.join("\t"))}"></textarea></div><div id="userImportPreview" class="mt"></div>`,
             '<button class="btn" id="cancelUserImport">Hủy</button><button class="btn" id="previewUserImport">Xem trước</button><button class="btn primary" id="commitUserImport" disabled>Thêm tài khoản</button>',
             true,
           );
-          let parsed = [];
-          const parseUsers = () => {
-            const text = $("#userImportText").value.trim();
-            if (!text) return toast("Hãy chọn tệp hoặc dán dữ liệu từ Excel.", "bad");
-            const delimiter = text.includes("\t") ? "\t" : ",",
-              rows = text
-                .split(/\r?\n/)
-                .map((line) => parseDelimited(line, delimiter))
-                .filter((row) => row.some((value) => String(value || "").trim()));
-            if (rows[0] && /username|tên đăng nhập|ten dang nhap/i.test(String(rows[0][0]).replace(/^\uFEFF/, ""))) rows.shift();
-            const existingUsernames = new Set();
-            parsed = rows.map((row, index) => {
-              const username = String(row[0] || "").trim().toLowerCase(),
-                displayName = String(row[1] || "").trim(),
-                password = String(row[2] || ""),
-                role = String(row[3] || "user").trim().toLowerCase() || "user",
-                teacherYear = String(row[4] || "").trim(),
-                teacherClass = String(row[5] || "").trim(),
-                schoolYear = state.cache.years?.find(
-                  (year) => year.id === teacherYear || year.name === teacherYear,
-                ),
-                schoolClass = importClasses.find(
-                  (item) =>
-                    item.id === teacherClass ||
-                    item.code === teacherClass ||
-                    item.class_name === teacherClass,
-                );
-              const errors = [];
-              if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(username)) errors.push("Tên đăng nhập không hợp lệ");
-              if (!displayName) errors.push("Thiếu tên hiển thị");
-              if (password.length < 10) errors.push("Mật khẩu dưới 10 ký tự");
-              if (!["user", "admin", "teacher"].includes(role)) errors.push("Vai trò phải là user, admin hoặc teacher");
-              if (role === "teacher" && !schoolYear) errors.push("Không tìm thấy năm học Teacher");
-              if (role === "teacher" && !schoolClass) errors.push("Không tìm thấy lớp chủ nhiệm");
-              if (role === "teacher" && schoolClass?.school_year_id !== schoolYear?.id)
-                errors.push("Lớp không thuộc năm học Teacher");
-              if (existingUsernames.has(username)) errors.push("Trùng tên đăng nhập trong tệp");
-              existingUsernames.add(username);
-              return {
-                row: index + 2,
-                username,
-                displayName,
-                password,
-                role,
-                teacherAssignment:
-                  role === "teacher" && schoolYear && schoolClass
-                    ? { schoolYearId: schoolYear.id, classId: schoolClass.id }
-                    : null,
-                errors,
-              };
-            });
-            const errors = parsed.filter((item) => item.errors.length);
-            $("#userImportPreview").innerHTML = `<div class="notice ${errors.length ? "danger" : ""}">${parsed.length} dòng; ${errors.length} dòng lỗi.</div>${simpleTable(["Dòng", "Tên đăng nhập", "Tên hiển thị", "Vai trò", "Lớp chủ nhiệm", "Kết quả"], parsed.slice(0, 30).map((item) => [item.row, item.username, item.displayName, item.role, item.teacherAssignment ? importClasses.find((schoolClass) => schoolClass.id === item.teacherAssignment.classId)?.class_name || "—" : "—", item.errors.join("; ") || "Hợp lệ"]))}`;
-            $("#commitUserImport").disabled = !!errors.length || !parsed.length;
+          const input = $("#userImportText"), fileInput = $("#userImportFile"),
+            preview = $("#userImportPreview"), commit = $("#commitUserImport"),
+            previewButton = $("#previewUserImport"), source = $("#userImportSource");
+          let parsed = [], fileRows = null, version = 0, saving = false, loading = false;
+          const invalidate = () => {
+            version++;
+            parsed = [];
+            commit.disabled = true;
+            preview.textContent = "";
           };
-          $("#downloadUserTemplate").onclick = () =>
-            download(
-              "\ufeffTên đăng nhập,Tên hiển thị,Mật khẩu,Vai trò,Năm học chủ nhiệm,Lớp chủ nhiệm\r\n",
-              "mau-nhap-tai-khoan-excel.csv",
-              "text/csv;charset=utf-8",
-            );
-          $("#userImportFile").onchange = async (event) => {
-            const file = event.target.files?.[0];
-            if (!file) return;
+          const validate = async () => {
+            const current = version;
             try {
-              $("#userImportText").value = await file.text();
-              parseUsers();
+              const rows = fileRows || parseAccountImportText(input.value),
+                [years, classes, users] = await Promise.all([db.all("school_years"), db.all("classes"), db.listUsers()]);
+              if (current !== version) return null;
+              parsed = validateAccountImportRows(rows, { role, years, classes, users, schoolYearId });
+              const errors = parsed.filter((item) => item.errors.length);
+              preview.innerHTML = `<div class="notice ${errors.length ? "danger" : ""}">${parsed.length} dòng; ${errors.length} dòng lỗi. Hiển thị tối đa 30 dòng.</div>${simpleTable(["Dòng", "Tên đăng nhập", "Tên hiển thị", "Năm học", "Lớp", "Kết quả"], parsed.slice(0, 30).map((item) => [item.row, item.username, item.displayName, item.yearName || "—", item.className || "—", item.errors.join("; ") || "Hợp lệ"]))}`;
+              commit.disabled = saving || loading || !!errors.length || !parsed.length;
+              return errors.length ? null : parsed;
             } catch (error) {
-              toast("Không thể đọc tệp: " + error.message, "bad");
+              if (current === version) {
+                parsed = [];
+                commit.disabled = true;
+                preview.textContent = error.message;
+              }
+              return null;
+            }
+          };
+          input.oninput = () => {
+            fileRows = null;
+            fileInput.value = "";
+            source.textContent = "";
+            loading = false;
+            invalidate();
+          };
+          $("#downloadUserTemplate").onclick = () => download(
+            "\ufeff" + headers.join(",") + "\r\n",
+            teacher ? "mau-tai-khoan-giao-vien.csv" : "mau-tai-khoan-sao-do.csv",
+            "text/csv;charset=utf-8",
+          );
+          fileInput.onchange = async () => {
+            invalidate();
+            fileRows = null;
+            input.value = "";
+            source.textContent = "";
+            const file = fileInput.files?.[0], current = version;
+            loading = false;
+            if (!file) return;
+            loading = true;
+            try {
+              if (file.size > 2 * 1024 * 1024) throw new Error("Tệp vượt quá 2 MB.");
+              if (!/\.(csv|xlsx)$/i.test(file.name)) throw new Error("Hãy chọn tệp CSV hoặc XLSX.");
+              const rows = /\.xlsx$/i.test(file.name)
+                ? (await db.readAccountWorkbook(file)).rows
+                : parseAccountImportText(await file.text());
+              if (current !== version) return;
+              fileRows = rows;
+              source.textContent = file.name;
+              loading = false;
+              await validate();
+            } catch (error) {
+              if (current !== version) return;
+              loading = false;
+              preview.textContent = error.message;
             }
           };
           $("#cancelUserImport").onclick = closeModal;
-          $("#previewUserImport").onclick = parseUsers;
-          $("#commitUserImport").onclick = async () => {
-            const existing = await db.listUsers(),
-              existingUsernames = new Set(existing.map((user) => user.username));
-            const duplicates = parsed.filter((item) => existingUsernames.has(item.username));
-            if (duplicates.length)
-              return toast(`Tên đăng nhập đã tồn tại: ${duplicates.map((item) => item.username).join(", ")}`, "bad");
-            const button = $("#commitUserImport");
-            button.disabled = true;
+          previewButton.onclick = () => { if (!loading && !saving) return validate(); };
+          commit.onclick = async () => {
+            if (saving || loading || commit.disabled) return;
+            saving = true;
+            commit.disabled = input.disabled = fileInput.disabled = previewButton.disabled = true;
+            let created = 0, total = 0;
             try {
-              for (const item of parsed)
+              const items = await validate();
+              if (!items?.length) return;
+              total = items.length;
+              for (const item of items) {
                 await db.createUser({
-                  username: item.username,
-                  displayName: item.displayName,
-                  password: item.password,
-                  role: item.role,
-                  permissions: ["dashboard"],
-                  ...(item.teacherAssignment
-                    ? { teacherAssignment: item.teacherAssignment }
-                    : {}),
+                  username: item.username, displayName: item.displayName,
+                  password: item.password, role, permissions: ["dashboard"],
+                  ...(teacher ? { teacherAssignment: item.teacherAssignment } : { graderClassId: item.graderClassId }),
                 });
+                created++;
+              }
+              parsed = [];
               closeModal();
-              toast(`Đã thêm ${parsed.length} tài khoản.`);
-              renderUserManagement();
+              toast(`Đã thêm ${created} tài khoản.`);
+              await renderUserManagement();
             } catch (error) {
-              button.disabled = false;
-              toast("Nhập tài khoản chưa hoàn tất: " + error.message, "bad");
+              invalidate();
+              preview.textContent = `Đã tạo ${created}/${total} tài khoản. Nhập chưa hoàn tất: ${error.message}. Xóa các dòng đã tạo khỏi dữ liệu rồi xem trước lại.`;
+              toast("Nhập tài khoản chưa hoàn tất.", "bad");
+            } finally {
+              saving = false;
+              input.disabled = fileInput.disabled = previewButton.disabled = false;
+              commit.disabled = !parsed.length || parsed.some((item) => item.errors.length);
             }
           };
         }
 
         async function openUserForm(user = null) {
-          const [assignments, classes] = await Promise.all([
+          const [assignments, classes, accounts] = await Promise.all([
               db.all("teacher_class_assignments"),
               db.all("classes"),
+              db.listUsers(),
             ]),
             assignment = assignments.find(
               (row) => row.user_id === user?.id,
@@ -5659,6 +5695,30 @@
             "beforeend",
             `<div class="field full" id="teacherAssignmentField"><label>Năm học và lớp chủ nhiệm</label><div class="split"><select name="teacherSchoolYearId">${state.cache.years.map((year) => `<option value="${esc(year.id)}" ${year.id === (assignment?.school_year_id || state.yearId) ? "selected" : ""}>${esc(year.name)}</option>`).join("")}</select><select name="teacherClassId">${classes.filter((schoolClass) => schoolClass.active !== false && schoolClass.school_year_id === (assignment?.school_year_id || state.yearId)).map((schoolClass) => `<option value="${esc(schoolClass.id)}" ${schoolClass.id === assignment?.class_id ? "selected" : ""}>${esc(schoolClass.class_name)}</option>`).join("")}</select></div><small class="hint">Teacher chỉ xem xếp hạng và ghi nhận của đúng một lớp trong năm học được giao.</small></div>`,
           );
+          const boundClass = classes.find((row) => row.id === user?.graderClassId),
+            bindingYearId = boundClass?.school_year_id || boundClass?.academic_year_id || state.yearId,
+            boundOwners = new Map(accounts
+              .filter((account) => account.id !== user?.id && account.role === "user" && account.graderClassId)
+              .map((account) => [account.graderClassId, account]));
+          $("#userForm .form-grid").insertAdjacentHTML(
+            "beforeend",
+            `<div class="field full" id="graderClassField"><label for="graderOwnClass">Lớp của Sao đỏ</label><div class="split"><select id="graderClassYear" aria-label="Năm học của lớp Sao đỏ">${state.cache.years.map((year) => `<option value="${esc(year.id)}" ${year.id === bindingYearId ? "selected" : ""}>${esc(year.name)}</option>`).join("")}</select><select id="graderOwnClass" name="graderClassId"></select></div><small class="hint">Ví dụ: Sao đỏ lớp 6/1 gắn với lớp 6/1. Dùng để tìm và phân công theo lớp; quyền chấm điểm vẫn theo danh sách lớp được giao.</small></div>`,
+          );
+          const renderGraderOwnClasses = (selectedId = "") => {
+            const yearId = $("#graderClassYear").value;
+            fillSelect(
+              $("#graderOwnClass"),
+              [["", "Chưa gắn lớp"], ...classes
+                .filter((row) => (row.active !== false || row.id === user?.graderClassId) && (row.school_year_id || row.academic_year_id) === yearId)
+                .sort((a, b) => String(a.class_name).localeCompare(String(b.class_name), "vi", { numeric: true }))
+                .map((row) => [row.id, `${row.class_name} • ${campusName(row.campus_id)}${row.active === false ? " (ngừng hoạt động)" : ""}${boundOwners.has(row.id) ? ` — Đã gắn: ${boundOwners.get(row.id).username}` : ""}`])],
+              selectedId,
+            );
+            for (const option of $("#graderOwnClass").options)
+              option.disabled = boundOwners.has(option.value) && option.value !== user?.graderClassId;
+          };
+          renderGraderOwnClasses(user?.graderClassId || "");
+          $("#graderClassYear").onchange = () => renderGraderOwnClasses();
           const roleSelect = $('#userForm select[name="role"]'),
             assignmentField = $("#teacherAssignmentField"),
             assignmentInputs = $$('[name="teacherSchoolYearId"], [name="teacherClassId"]');
@@ -5666,6 +5726,9 @@
             const teacher = roleSelect.value === "teacher";
             assignmentField.classList.toggle("hidden", !teacher);
             assignmentInputs.forEach((input) => (input.required = teacher));
+            $("#graderClassField").classList.toggle("hidden", roleSelect.value !== "user");
+            $("#graderOwnClass").disabled = roleSelect.value !== "user";
+            $("#graderClassYear").disabled = roleSelect.value !== "user";
           };
           roleSelect.onchange = updateTeacherAssignment;
           updateTeacherAssignment();
@@ -5679,6 +5742,7 @@
                 displayName: values.displayName,
                 role: values.role,
                 permissions: permissionList(values.permissions),
+                ...(values.role === "user" ? { graderClassId: values.graderClassId || null } : {}),
                 ...(values.role === "teacher"
                   ? {
                       teacherAssignment: {
@@ -5929,7 +5993,7 @@
           };
         }
         async function renderAcademicYearPanel(panel) {
-          const years = (await db.all("school_years")).sort((a, b) =>
+          const years = (await db.all("school_years")).map((year) => ({ ...year, name: normalizeSchoolYearName(year.name) })).sort((a, b) =>
               String(b.start_date || "").localeCompare(
                 String(a.start_date || ""),
               ),
@@ -5984,7 +6048,7 @@
               ) + 1;
           openModal(
             "Tạo năm học mới",
-            `<form id="academicYearForm"><div class="form-grid"><div class="field full"><label class="required">Tên năm học</label><input name="name" value="${startYear}–${startYear + 1}" required></div></div><fieldset class="mt"><legend>Sao chép có chọn lọc từ ${esc(current?.name || "năm hiện tại")}</legend><label class="check-row"><input type="checkbox" name="copy_classes" checked> Danh sách lớp và giáo viên (tạo ID mới)</label><label class="check-row"><input type="checkbox" name="copy_criteria" checked> Bộ tiêu chí và tiêu chí (chuyển về dự thảo)</label><label class="check-row"><input type="checkbox" name="copy_templates" checked> Mẫu công việc dùng chung</label></fieldset><div class="notice warn mt">Không sao chép điểm thi đua, xếp hạng, công việc phát sinh, hoạt động, hồ sơ giao dịch hoặc báo cáo năm cũ.</div></form>`,
+            `<form id="academicYearForm"><div class="form-grid"><div class="field full"><label class="required">Tên năm học</label><input name="name" value="${startYear}-${startYear + 1}" required></div></div><fieldset class="mt"><legend>Sao chép có chọn lọc từ ${esc(current?.name || "năm hiện tại")}</legend><label class="check-row"><input type="checkbox" name="copy_classes" checked> Danh sách lớp và giáo viên (tạo ID mới)</label><label class="check-row"><input type="checkbox" name="copy_criteria" checked> Bộ tiêu chí và tiêu chí (chuyển về dự thảo)</label><label class="check-row"><input type="checkbox" name="copy_templates" checked> Mẫu công việc dùng chung</label></fieldset><div class="notice warn mt">Không sao chép điểm thi đua, xếp hạng, công việc phát sinh, hoạt động, hồ sơ giao dịch hoặc báo cáo năm cũ.</div></form>`,
             `<button class="btn" id="cancelCreateYear">Hủy</button><button class="btn primary" id="confirmCreateYear">Tạo năm học</button>`,
             true,
           );
@@ -5997,12 +6061,13 @@
               chosenWeeks = selectedWeeks();
             if (!chosenWeeks.length)
               return toast("Hãy chọn ít nhất một tuần học cần tạo.", "bad");
+            values.name = normalizeSchoolYearName(values.name);
             values.start_date = chosenWeeks[0].start_date;
             values.end_date = chosenWeeks[chosenWeeks.length - 1].end_date;
             if (
               (await db.all("school_years")).some(
                 (year) =>
-                  normalizeText(year.name) === normalizeText(values.name),
+                  normalizeText(normalizeSchoolYearName(year.name)) === normalizeText(values.name),
               )
             )
               return toast("Tên năm học đã tồn tại.", "bad");

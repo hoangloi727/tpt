@@ -43,6 +43,7 @@ const publicUser = (user) => ({
   displayName: user.displayName,
   role: user.role,
   schoolId: user.schoolId || null,
+  graderClassId: user.role === "user" ? user.graderClassId || null : null,
   permissions: normalizePermissions(user.permissions, user.role),
   disabled: !!user.disabled,
   root: !!user.root,
@@ -147,6 +148,15 @@ export class UserStore {
     return username;
   }
 
+  assertUniqueGraderClass(draft, user) {
+    if (user.role !== "user" || !user.graderClassId) return;
+    if (draft.users.some((other) =>
+      other.id !== user.id && other.role === "user" &&
+      other.schoolId === user.schoolId && other.graderClassId === user.graderClassId,
+    ))
+      throw conflict("Lớp này đã gắn với tài khoản Sao đỏ khác. Mỗi lớp chỉ được gắn một tài khoản; hãy bỏ gắn tài khoản cũ trước.");
+  }
+
   async passwordFields(password) {
     validatePassword(password);
     const salt = randomBytes(16).toString("base64url");
@@ -244,6 +254,7 @@ export class UserStore {
     role = "user",
     permissions = ["dashboard"],
     schoolId,
+    graderClassId = null,
   }) {
     const normalized = this.validateUsername(username);
     const normalizedRole = ["superadmin", "admin", "teacher"].includes(role)
@@ -261,6 +272,7 @@ export class UserStore {
         displayName: String(displayName || normalized).trim().slice(0, 120),
         role: normalizedRole,
         schoolId: normalizedRole === "superadmin" ? null : schoolId,
+        graderClassId: normalizedRole === "user" ? graderClassId : null,
         permissions: normalizePermissions(permissions, normalizedRole),
         disabled: false,
         root: false,
@@ -269,6 +281,7 @@ export class UserStore {
         updatedAt: stamp,
         lastLoginAt: null,
       };
+      this.assertUniqueGraderClass(draft, user);
       draft.users.push(user);
       return publicUser(user);
     });
@@ -303,6 +316,9 @@ export class UserStore {
             : changes.schoolId || user.schoolId;
       }
       if (!user.root && changes.disabled !== undefined) user.disabled = !!changes.disabled;
+      if (user.role !== "user") user.graderClassId = null;
+      else if (changes.graderClassId !== undefined) user.graderClassId = changes.graderClassId;
+      this.assertUniqueGraderClass(draft, user);
       user.permissions = normalizePermissions(changes.permissions ?? user.permissions, user.role);
       if (credentials) Object.assign(user, credentials);
       user.updatedAt = now();

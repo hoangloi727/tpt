@@ -185,6 +185,99 @@
       .replace(/Đ/g, "D")
       .toLowerCase();
   }
+  function normalizeSchoolYearName(value) {
+    return String(value ?? "").trim().replace(/[\u2010-\u2015\u2212]/g, "-").replace(/\s*-\s*/g, "-");
+  }
+  function parseAccountImportText(value) {
+    const text = String(value).replace(/^\uFEFF/, ""),
+      firstLine = text.split(/\r?\n/).find((line) => line.trim()) || "",
+      delimiter = firstLine.includes("\t") ? "\t" : firstLine.includes(";") && !firstLine.includes(",") ? ";" : ",",
+      rows = [];
+    let row = [], cell = "", quoted = false;
+    for (let i = 0; i < text.length; i++) {
+      const char = text[i];
+      if (char === '"') {
+        if (quoted && text[i + 1] === '"') { cell += '"'; i++; }
+        else if (quoted || !cell) quoted = !quoted;
+        else throw new Error("Dấu ngoặc kép trong CSV không hợp lệ.");
+      } else if (!quoted && (char === delimiter || char === "\r" || char === "\n")) {
+        row.push(cell);
+        cell = "";
+        if (char !== delimiter) {
+          rows.push(row);
+          row = [];
+          if (char === "\r" && text[i + 1] === "\n") i++;
+        }
+      } else cell += char;
+    }
+    if (quoted) throw new Error("CSV có ô chưa đóng dấu ngoặc kép.");
+    row.push(cell);
+    rows.push(row);
+    return rows;
+  }
+  function validateAccountImportRows(rows, { role, years, classes, users, schoolYearId }) {
+    if (!["user", "teacher"].includes(role)) throw new Error("Loại tài khoản nhập không hợp lệ.");
+    const textKey = (value) => normalizeText(String(value ?? "").trim()),
+      yearKey = (value) => textKey(normalizeSchoolYearName(value)),
+      lines = rows.map((cells, index) => ({ cells: cells || [], row: index + 1 }))
+        .filter(({ cells }) => cells.some((cell) => String(cell ?? "").trim()));
+    if (["username", "ten dang nhap"].includes(textKey(lines[0]?.cells[0])) &&
+        ["display name", "displayname", "ten hien thi"].includes(textKey(lines[0]?.cells[1]))) lines.shift();
+    if (!lines.length) throw new Error("Chưa có tài khoản để nhập.");
+    if (lines.length > 2000) throw new Error("Chỉ nhập tối đa 2.000 tài khoản mỗi lần.");
+    const existingNames = new Set(users.map((user) => textKey(user.username))),
+      boundClasses = new Set(users.filter((user) => user.role === "user" && user.graderClassId).map((user) => user.graderClassId)),
+      parsed = lines.map(({ cells, row }) => {
+        const username = String(cells[0] ?? "").trim().toLowerCase(),
+          displayName = String(cells[1] ?? "").trim(),
+          password = String(cells[2] ?? ""),
+          yearInput = role === "teacher" ? String(cells[3] ?? "").trim() : schoolYearId,
+          classInput = String(cells[role === "teacher" ? 4 : 3] ?? "").trim(),
+          matchingYears = role === "teacher"
+            ? years.filter((year) => year.id === yearInput || yearKey(year.name) === yearKey(yearInput))
+            : years.filter((year) => year.id === schoolYearId),
+          year = matchingYears.length === 1 ? matchingYears[0] : null,
+          errors = [];
+        if (!/^[a-z0-9][a-z0-9._-]{2,31}$/.test(username)) errors.push("Tên đăng nhập không hợp lệ");
+        if (!displayName) errors.push("Thiếu tên hiển thị");
+        if (password.length < 10) errors.push("Mật khẩu dưới 10 ký tự");
+        if (cells.slice(role === "teacher" ? 5 : 4).some((cell) => String(cell ?? "").trim())) errors.push("Thừa cột; hãy dùng đúng mẫu của loại tài khoản này");
+        if (existingNames.has(username)) errors.push("Tên đăng nhập đã tồn tại");
+        if ((role === "teacher" || classInput) && !year)
+          errors.push(matchingYears.length > 1 ? "Tên năm học không duy nhất; dùng ID năm học" : "Không tìm thấy năm học");
+        if (role === "teacher" && !classInput) errors.push("Thiếu lớp chủ nhiệm");
+        const eligible = year ? classes.filter((schoolClass) => schoolClass.active !== false && !schoolClass.deleted_at &&
+            (schoolClass.school_year_id || schoolClass.academic_year_id) === year.id) : [],
+          exactId = eligible.find((schoolClass) => schoolClass.id === classInput),
+          matches = classInput ? exactId ? [exactId] : eligible.filter((schoolClass) =>
+            [schoolClass.code, schoolClass.class_name].some((value) => value && textKey(value) === textKey(classInput))) : [],
+          schoolClass = matches.length === 1 ? matches[0] : null;
+        if (classInput && year && !schoolClass)
+          errors.push(matches.length > 1 ? "Tên lớp không duy nhất; dùng mã lớp hoặc ID" : "Không tìm thấy lớp đang hoạt động trong năm học");
+        if (role === "user" && schoolClass && boundClasses.has(schoolClass.id)) errors.push("Lớp đã gắn với tài khoản Sao đỏ khác");
+        return {
+          row, username, displayName, password, role, errors,
+          yearName: year ? normalizeSchoolYearName(year.name) : normalizeSchoolYearName(yearInput),
+          className: schoolClass?.class_name || classInput,
+          graderClassId: role === "user" ? schoolClass?.id || null : null,
+          teacherAssignment: role === "teacher" && year && schoolClass ? { schoolYearId: year.id, classId: schoolClass.id } : null,
+        };
+      });
+    const usernames = new Map(), bindings = new Map();
+    for (const item of parsed) {
+      if (!usernames.has(item.username)) usernames.set(item.username, []);
+      usernames.get(item.username).push(item);
+      if (item.graderClassId) {
+        if (!bindings.has(item.graderClassId)) bindings.set(item.graderClassId, []);
+        bindings.get(item.graderClassId).push(item);
+      }
+    }
+    for (const duplicates of usernames.values())
+      if (duplicates.length > 1) duplicates.forEach((item) => item.errors.push("Trùng tên đăng nhập trong tệp"));
+    for (const duplicates of bindings.values())
+      if (duplicates.length > 1) duplicates.forEach((item) => item.errors.push("Một lớp chỉ được gắn một Sao đỏ; lớp bị trùng trong tệp"));
+    return parsed;
+  }
   function defaultConfigColor(index) {
     return [
       "#0b6bcb",
@@ -222,6 +315,9 @@
     formatBytes,
     fileIcon,
     normalizeText,
+    normalizeSchoolYearName,
+    parseAccountImportText,
+    validateAccountImportRows,
     defaultConfigColor,
   });
 })(window);

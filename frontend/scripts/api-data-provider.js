@@ -175,6 +175,13 @@
       });
     }
 
+    async readAccountWorkbook(file) {
+      return this.request("/admin/users/import-sheet", {
+        method: "POST",
+        body: JSON.stringify({ file: await encodeBinary(file) }),
+      });
+    }
+
     updateUser(id, changes) {
       return this.request(`/admin/users/${encodeURIComponent(id)}`, {
         method: "PATCH",

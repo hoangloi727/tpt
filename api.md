@@ -225,6 +225,10 @@ Chỉ dành cho `superadmin` hoặc `admin`. `admin` thấy người dùng trong
 
 #### `POST /api/admin/users`
 
+Đọc XLSX qua `POST /api/admin/users/import-sheet`, chỉ dành cho Admin/Superadmin. Gửi `{file: {__type: "Blob", name: "accounts.xlsx", data: "<base64>"}}`; nhận `{rows: [...]}` từ trang tính đầu tiên. Giới hạn 2 MB và 2.001 dòng gồm tiêu đề; tệp không hợp lệ trả 400. API này chỉ đọc tệp, không tạo tài khoản; tạo bằng API thông thường sau khi kiểm tra dữ liệu.
+
+Tài khoản `user` có thể gửi thêm `graderClassId` là ID lớp đang hoạt động trong trường hiện tại, hoặc `null` để chưa gắn lớp. Trường này được trả trong dữ liệu tài khoản công khai và có thể cập nhật qua `PATCH /api/admin/users/:id`; bỏ qua khi PATCH sẽ giữ liên kết cũ. Chỉ Admin/Superadmin được thay đổi. Đổi sang vai trò khác `user` sẽ xóa liên kết. Đây là lớp của Sao đỏ, không phải quyền chấm điểm.
+
 Chỉ dành cho `superadmin` hoặc `admin`. Tạo người dùng trong trường đang chọn:
 
 ```json
@@ -240,6 +244,8 @@ Chỉ dành cho `superadmin` hoặc `admin`. Tạo người dùng trong trườn
 `role` khác `admin`/`superadmin` được chuẩn hóa thành `user`. Một `admin` không thể tạo `superadmin`; giá trị đó bị hạ xuống thành `admin`. Máy chủ tự gán trường đang chọn, vì vậy không gửi `schoolId`. Trả về `201` cùng đối tượng người dùng công khai.
 
 #### `PATCH /api/admin/users/:id`
+
+`graderClassId` phải duy nhất giữa các tài khoản `user` trong cùng trường, kể cả tài khoản bị khóa. Tạo/sửa trùng trả `409` và không lưu thay đổi. Kiểm tra nằm trong hàng đợi ghi tài khoản để xử lý cả các yêu cầu đồng thời; tài khoản được giữ liên kết của chính mình.
 
 Chỉ dành cho `superadmin` hoặc `admin`, và chỉ khi tài khoản đích nằm trong phạm vi được phép. Các thay đổi an toàn từ client gồm `username`, `displayName`, `password`, `role`, `permissions`, `disabled`. Không gửi `schoolId`; máy chủ buộc tài khoản thuộc trường đang chọn. `admin` không thể quản lý `superadmin` hoặc nâng cấp tài khoản thành `superadmin`. Không thể thay đổi vai trò và trạng thái disabled của tài khoản root.
 
@@ -955,6 +961,10 @@ The name is trimmed, limited to 200 characters, required, and unique case-insens
 
 #### `POST /api/admin/users`
 
+A `user` account may include `graderClassId`, the ID of an active class in the current school, or `null` for no binding. It is returned in public account data and may be changed through `PATCH /api/admin/users/:id`; omitting it in PATCH preserves the existing link. Only Admin/Superadmin can change it. Changing away from role `user` clears the link. This identifies the grader's own class and does not grant scoring permissions.
+
+XLSX parsing is available at `POST /api/admin/users/import-sheet` for Admin/Superadmin only. Send `{file: {__type: "Blob", name: "accounts.xlsx", data: "<base64>"}}`; response is `{rows: [...]}` from the first worksheet. Limits: 2 MB and 2,001 rows including a header. Invalid workbooks return 400. This endpoint only parses; create accounts through the normal endpoint after validation.
+
 `superadmin` or `admin` only. Creates a user in the selected school:
 
 ```json
@@ -970,6 +980,8 @@ The name is trimmed, limited to 200 characters, required, and unique case-insens
 A `role` other than `admin`/`superadmin` is normalized to `user`. An `admin` cannot create a `superadmin`; that value is reduced to `admin`. The server assigns the selected school, so do not send `schoolId`. Returns `201` with the public user.
 
 #### `PATCH /api/admin/users/:id`
+
+`graderClassId` must be unique among `user` accounts in the same school, including disabled accounts. Duplicate creates/updates return `409` without saving changes. Validation runs inside the account mutation queue, including concurrent requests; an account may retain its own binding.
 
 `superadmin` or `admin` only, and only when the target account is within the allowed scope. Safe client changes are `username`, `displayName`, `password`, `role`, `permissions`, and `disabled`. Do not send `schoolId`; the server forces the selected school. An `admin` cannot manage or promote a `superadmin`. A root account's role and disabled state cannot be changed.
 

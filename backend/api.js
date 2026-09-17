@@ -1,4 +1,5 @@
 import { hasPermission } from "./auth.js";
+import { readAccountWorkbook } from "./account-import.js";
 
 const MAX_BODY_BYTES = 100 * 1024 * 1024;
 const SESSION_COOKIE = "tpt_session";
@@ -293,6 +294,18 @@ const validateTeacherAssignment = (repository, assignment, schoolId) => {
   return { schoolYearId, classId };
 };
 
+const validateGraderClass = (repository, classId, schoolId) => {
+  if (classId === null || classId === "") return null;
+  const schoolClass = typeof classId === "string"
+    ? repository.get("classes", classId, schoolId) : null;
+  if (!schoolClass || schoolClass.deleted_at || schoolClass.active === false) {
+    const error = new Error("Lớp của Sao đỏ phải là lớp đang hoạt động trong trường này.");
+    error.status = 400;
+    throw error;
+  }
+  return schoolClass.id;
+};
+
 const setTeacherAssignment = async (repository, user, assignment, schoolId) => {
   if (user.role !== "teacher") return;
   const { schoolYearId, classId } = validateTeacherAssignment(
@@ -511,6 +524,9 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           }
           if (body.role === "teacher")
             validateTeacherAssignment(repository, body.teacherAssignment, user.selectedSchoolId);
+          if (body.graderClassId !== undefined)
+            body.graderClassId = ["admin", "superadmin", "teacher"].includes(body.role)
+              ? null : validateGraderClass(repository, body.graderClassId, user.selectedSchoolId);
           const created = await users.create({ ...body, schoolId: user.selectedSchoolId });
           await setTeacherAssignment(repository, created, body.teacherAssignment, user.selectedSchoolId);
           return sendJson(
@@ -519,6 +535,12 @@ export const createApiHandler = ({ repository, sessions, users }) =>
             created,
           );
         }
+      }
+      if (request.method === "POST" && url.pathname === "/api/admin/users/import-sheet") {
+        if (!isManager(user)) return forbidden(response);
+        const body = await readJson(request);
+        assertObject(body);
+        return sendJson(response, 200, { rows: await readAccountWorkbook(body.file) });
       }
       const userMatch = url.pathname.match(/^\/api\/admin\/users\/([^/]+)$/);
       if (userMatch) {
@@ -550,6 +572,11 @@ export const createApiHandler = ({ repository, sessions, users }) =>
               user.selectedSchoolId,
             );
           }
+          if (changes.graderClassId !== undefined)
+            changes.graderClassId = ["admin", "superadmin", "teacher"].includes(changes.role || target.role)
+              ? null : changes.graderClassId === target.graderClassId
+                ? target.graderClassId
+                : validateGraderClass(repository, changes.graderClassId, user.selectedSchoolId);
           const updated = await users.update(id, changes);
           if (changes.teacherAssignment)
             await setTeacherAssignment(
@@ -966,6 +993,8 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           return sendJson(response, 403, { error: "Cần xác nhận YES và mật khẩu hiện tại trước khi xóa." });
         if (url.searchParams.get("hard") === "1" && !isManager(user))
           return forbidden(response);
+        if (store === "classes" && users.list(user.selectedSchoolId, false).some((account) => account.graderClassId === id))
+          return sendJson(response, 409, { error: "Lớp đang gắn với tài khoản Sao đỏ. Hãy bỏ gắn hoặc đổi lớp của tài khoản trước khi xóa." });
         if (
           store === "score_entries" &&
           !canGrade(

@@ -278,7 +278,11 @@ Nếu thiếu địa điểm, phụ trách hoặc checklist an toàn, ứng dụ
 3. Bộ đã phát sinh bảng tuần bị khóa cấu trúc. Muốn thay đổi, nhân bản thành phiên bản mới.
 4. Nếu dùng `User`, chọn **Phân công chấm điểm** và giao mỗi lớp cho tối đa một `User`.
 
+Để gắn Sao đỏ với lớp của mình, vào **Quản lý người dùng > Thêm người dùng/Sửa**, chọn vai trò **Sao đỏ**, rồi chọn năm học và **Lớp của Sao đỏ** (ví dụ `6/1`). Có thể chọn **Chưa gắn lớp** để bỏ liên kết. Lớp đã gắn xuất hiện trong danh sách tài khoản và **Phân công Sao đỏ**; dùng **Lọc Sao đỏ theo lớp của mình** để tìm tài khoản khi giao nhiều lớp hoặc chọn nhanh nhóm lớp. Liên kết này không tự cấp quyền chấm lớp: danh sách lớp được chấm vẫn do phân công quản lý. Khi sang năm học mới, cập nhật liên kết sang lớp của năm mới nếu cần.
+
 ### Nhập điểm
+
+Mỗi lớp chỉ gắn với một tài khoản Sao đỏ, kể cả tài khoản đã khóa. Lớp đã có tài khoản sẽ được đánh dấu và không thể chọn cho tài khoản khác. Muốn chuyển lớp sang tài khoản mới, hãy bỏ gắn hoặc đổi lớp của tài khoản cũ trước; máy chủ cũng kiểm tra trùng khi tạo/sửa tài khoản.
 
 1. Chọn đúng năm, học kỳ, tuần, cơ sở và bộ tiêu chí.
 2. `Admin`/`Superadmin` chọn **Khởi tạo bảng tuần**.
@@ -452,6 +456,13 @@ Mọi vai trò đều có trang này.
 ## 25. Quản lý người dùng
 
 Trang này dành cho `Admin` và `Superadmin`.
+
+Hai nút nhập riêng nhận CSV, tệp XLSX (trang tính đầu tiên), hoặc bảng dán từ Excel:
+
+- **Nhập Sao đỏ:** tên đăng nhập, tên hiển thị, mật khẩu, lớp liên kết (có thể bỏ trống). Lớp thuộc năm học đang chọn; mỗi lớp chỉ liên kết một tài khoản, kể cả tài khoản bị khóa.
+- **Nhập Giáo viên:** tên đăng nhập, tên hiển thị, mật khẩu, năm học, lớp. Dùng năm học dạng `2026-2027`; tên năm cũ có gạch dài vẫn được nhận diện.
+
+Mỗi nút có mẫu CSV riêng, không có cột vai trò. Tệp tối đa 2 MB và 2.000 tài khoản. Xem trước kiểm tra tên đăng nhập trùng, lớp trùng và lớp/năm không hợp lệ trước khi tạo. Mật khẩu tối thiểu 10 ký tự, không hiện trong bảng xem trước. Nếu nhập dừng giữa chừng, các tài khoản đã tạo vẫn được giữ; bỏ các dòng đó trước khi nhập lại.
 
 1. `Superadmin` có thể chọn **+ Thêm trường**, sau đó chuyển trường bằng bộ chọn trên thanh trên cùng.
 2. Chọn **+ Thêm người dùng**; tên đăng nhập dài 3-32 ký tự, chỉ gồm chữ thường ASCII, số, `.`, `_`, `-`; mật khẩu tối thiểu 10 ký tự.
@@ -818,7 +829,11 @@ If location, leader, or safety checklist is missing, the event is saved with a w
 3. A set used by a weekly sheet becomes structurally locked. Clone it as a new version to make changes.
 4. When using `User` graders, select **Assign graders** and assign each class to at most one `User`.
 
+To bind a grader to their own class, open **User management > Add/Edit user**, select **Sao đỏ**, then choose the school year and **Grader's own class** (for example, `6/1`). Choose **Unbound** to remove the link. The bound class appears in the account list and grading-assignment dialog; use **Filter graders by own class** when assigning multiple classes or selecting class groups. The binding itself grants no scoring permissions; those still come from grading assignments. Update the binding to the new year's class when needed.
+
 ### Data entry
+
+Each class may be bound to only one Sao đỏ account, including disabled accounts. Occupied classes are labeled and unavailable to other accounts. Unbind or reassign the previous account before transferring the class; the server also checks uniqueness when accounts are created or updated.
 
 1. Select the correct year, semester, week, campus, and criteria set.
 2. `Admin`/`Superadmin` selects **Initialize weekly sheet**.
@@ -992,6 +1007,13 @@ Every role can access this page.
 ## 25. User management
 
 This page is for `Admin` and `Superadmin`.
+
+Separate import buttons accept CSV, XLSX uploads (first worksheet), or pasted Excel cells:
+
+- **Sao đỏ:** username, display name, password, optional bound class. Classes resolve within the selected year; each class can bind to only one account, including disabled accounts.
+- **Teacher:** username, display name, password, school year, class. Use `2026-2027`; existing year names with long dashes also match.
+
+Each button provides its own CSV template without a role column. Limits: 2 MB per file and 2,000 accounts. Preview checks duplicate usernames/bindings and invalid classes/years before creation. Passwords require 10 characters and are not displayed in preview. If creation stops partway through, created accounts remain; remove those rows before retrying.
 
 1. A `Superadmin` can select **+ Add school**, then switch school with the top selector.
 2. Select **+ Add user**; usernames are 3-32 characters using lowercase ASCII letters, digits, `.`, `_`, `-`; passwords are at least 10 characters.
