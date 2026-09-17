@@ -278,6 +278,52 @@
       if (duplicates.length > 1) duplicates.forEach((item) => item.errors.push("Một lớp chỉ được gắn một Sao đỏ; lớp bị trùng trong tệp"));
     return parsed;
   }
+  function prepareGraderAssignmentImport(rows, { classes, users, assignments, schoolYearId }) {
+    const key = (value) => normalizeText(String(value ?? "").trim()),
+      eligible = classes.filter((row) => !row.deleted_at && row.active !== false &&
+        (row.school_year_id || row.academic_year_id) === schoolYearId),
+      lines = rows.map((cells, index) => ({ cells, row: index + 1 }))
+        .filter(({ cells }) => cells.some((cell) => String(cell ?? "").trim()));
+    if (["lop cham", "grader class", "class grading"].includes(key(lines[0]?.cells[0]))) lines.shift();
+    if (!lines.length || lines.length > 2000) throw new Error("Hãy nhập từ 1 đến 2.000 dòng phân công.");
+    const resolve = (value) => {
+      const id = eligible.find((row) => row.id === String(value ?? "").trim());
+      const matches = id ? [id] : eligible.filter((row) =>
+        [row.code, row.class_name].some((name) => name && key(name) === key(value)));
+      return matches.length === 1 ? matches[0] : null;
+    };
+    const seen = new Map(), changes = new Map();
+    const parsed = lines.map(({ cells, row }) => {
+      const source = resolve(cells[0]), target = resolve(cells[1]), errors = [],
+        graders = source ? users.filter((user) => user.role === "user" && !user.disabled && user.graderClassId === source.id) : [],
+        grader = graders.length === 1 ? graders[0] : null;
+      if (!source) errors.push("Lớp chấm không hợp lệ hoặc không duy nhất trong năm học");
+      if (!target) errors.push("Lớp được chấm không hợp lệ hoặc không duy nhất trong năm học");
+      if (source && !grader) errors.push("Lớp chấm phải gắn với đúng một tài khoản Sao đỏ đang hoạt động");
+      if (cells.slice(2).some((value) => String(value ?? "").trim())) errors.push("Chỉ dùng hai cột");
+      const current = assignments.find((item) => !item.deleted_at && item.school_year_id === schoolYearId && item.user_id === grader?.id);
+      if (target && assignments.some((item) => !item.deleted_at && item.school_year_id === schoolYearId &&
+          item.user_id !== grader?.id && item.class_ids?.includes(target.id)))
+        errors.push("Lớp đã giao cho Sao đỏ khác; bỏ phân công cũ trước khi nhập");
+      const item = { row, source: source?.class_name || String(cells[0] ?? ""), target: target?.class_name || String(cells[1] ?? ""),
+        username: grader?.username || "", errors };
+      if (target) {
+        if (seen.has(target.id)) {
+          errors.push("Lớp được chấm bị trùng trong tệp");
+          seen.get(target.id).errors.push("Lớp được chấm bị trùng trong tệp");
+        } else seen.set(target.id, item);
+      }
+      if (grader && target && !errors.length) {
+        if (!changes.has(grader.id)) changes.set(grader.id, {
+          ...(current || {}), user_id: grader.id, school_year_id: schoolYearId, class_ids: [...(current?.class_ids || [])],
+        });
+        const change = changes.get(grader.id);
+        if (!change.class_ids.includes(target.id)) change.class_ids.push(target.id);
+      }
+      return item;
+    });
+    return { parsed, changes: parsed.some((item) => item.errors.length) ? [] : [...changes.values()] };
+  }
   function defaultConfigColor(index) {
     return [
       "#0b6bcb",
@@ -318,6 +364,7 @@
     normalizeSchoolYearName,
     parseAccountImportText,
     validateAccountImportRows,
+    prepareGraderAssignmentImport,
     defaultConfigColor,
   });
 })(window);

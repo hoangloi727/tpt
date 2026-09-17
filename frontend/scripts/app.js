@@ -57,6 +57,7 @@
             normalizeSchoolYearName,
             parseAccountImportText,
             validateAccountImportRows,
+            prepareGraderAssignmentImport,
             defaultConfigColor,
           } = MODULES.utils,
           { NAV, ENTITY, SETTINGS_TABS, SETTINGS_CONFIG_KEYS, CONFIG_DEFINITIONS } =
@@ -2443,7 +2444,7 @@
           openModal(
             "Phân công chấm điểm theo lớp",
             `<div class="notice">Mỗi lớp chỉ giao cho một Sao đỏ trong năm học đang chọn. Admin và Superadmin luôn có thể quản lý tất cả lớp.</div><div class="field mt"><label>Sao đỏ chấm điểm</label><select id="scoreGraderUser">${users.map((user) => `<option value="${esc(user.id)}">${esc(graderClassLabel(user, allClasses))} — ${esc(user.displayName)} (${esc(user.username)})</option>`).join("")}</select></div><div class="toolbar mt"><button class="btn small" id="selectAllGraderClasses" type="button">Chọn lớp còn trống</button><button class="btn small" id="clearGraderClasses" type="button">Bỏ chọn tất cả</button>${classGroups.length ? `<label class="muted">Chọn nhanh nhóm <select id="graderClassGroup"><option value="">— Chọn nhóm —</option>${classGroups.map((group) => `<option value="${esc(group.id)}">${esc(group.name)}</option>`).join("")}</select></label>` : ""}</div><div class="form-grid" id="scoreGraderClasses"></div>`,
-            '<button class="btn" id="cancelScoreGrader">Hủy</button><button class="btn primary" id="saveScoreGrader">Lưu phân công</button>',
+            '<button class="btn" id="cancelScoreGrader">Hủy</button><button class="btn" id="bulkScoreGrader">Nhập phân công hàng loạt</button><button class="btn primary" id="saveScoreGrader">Lưu phân công</button>',
             true,
           );
           $("#scoreGraderUser").parentElement.insertAdjacentHTML(
@@ -2521,6 +2522,7 @@
               );
             };
           $("#cancelScoreGrader").onclick = closeModal;
+          $("#bulkScoreGrader").onclick = showBulkGraderAssignments;
           $("#saveScoreGrader").onclick = async () => {
             const userId = $("#scoreGraderUser").value,
               current = assignments.find(
@@ -2546,6 +2548,76 @@
               renderScores();
             } catch (error) {
               toast(error.message, "bad");
+            }
+          };
+        }
+        function showBulkGraderAssignments() {
+          const schoolYearId = state.yearId;
+          openModal(
+            "Phân công chấm điểm hàng loạt",
+            `<div class="notice">Hai cột: <strong>Lớp chấm, Lớp được chấm</strong>. Năm học: ${esc(state.cache.years.find((year) => year.id === schoolYearId)?.name || "")}. Lớp chấm phải gắn với tài khoản Sao đỏ đang hoạt động. Dùng tên, mã hoặc ID lớp. Một lớp chỉ giao cho một Sao đỏ; phân công khác được giữ nguyên. CSV/XLSX tối đa 2 MB, 2.000 dòng; XLSX dùng trang tính đầu tiên.</div><div class="toolbar mt"><button class="btn" id="assignmentTemplate">Tải mẫu CSV</button><input type="file" id="assignmentFile" accept=".csv,.xlsx"></div><div class="field mt"><label>Dán hai cột từ Excel hoặc CSV</label><textarea id="assignmentText" rows="8" placeholder="Lớp chấm,Lớp được chấm"></textarea></div><div id="assignmentPreview"></div>`,
+            '<button class="btn" id="cancelAssignmentImport">Hủy</button><button class="btn" id="previewAssignmentImport">Xem trước</button><button class="btn primary" id="saveAssignmentImport" disabled>Lưu phân công</button>',
+            true,
+          );
+          const input = $("#assignmentText"), file = $("#assignmentFile"),
+            preview = $("#assignmentPreview"), save = $("#saveAssignmentImport"),
+            check = $("#previewAssignmentImport");
+          let rows = null, version = 0, busy = false, loading = false;
+          const invalidate = () => { version++; save.disabled = true; preview.textContent = ""; };
+          const validate = async () => {
+            const current = version;
+            save.disabled = true;
+            try {
+              const source = rows || parseAccountImportText(input.value),
+                [classes, users, assignments] = await Promise.all([db.all("classes"), db.listUsers(), db.all("score_grader_assignments")]);
+              if (version !== current) return null;
+              const result = prepareGraderAssignmentImport(source, { classes, users, assignments, schoolYearId });
+              preview.innerHTML = simpleTable(["Dòng", "Lớp chấm", "Sao đỏ", "Lớp được chấm", "Kết quả"],
+                result.parsed.map((row) => [row.row, row.source, row.username, row.target, row.errors.join("; ") || "Hợp lệ"]));
+              save.disabled = busy || loading || !result.changes.length;
+              return result.changes.length ? result.changes : null;
+            } catch (error) {
+              if (version === current) preview.textContent = error.message;
+              return null;
+            }
+          };
+          input.oninput = () => { rows = null; file.value = ""; loading = false; invalidate(); };
+          $("#assignmentTemplate").onclick = () => download("\ufeffLớp chấm,Lớp được chấm\r\n", "mau-phan-cong-cham.csv", "text/csv;charset=utf-8");
+          file.onchange = async () => {
+            invalidate(); rows = null; input.value = "";
+            const selected = file.files?.[0], current = version;
+            loading = false;
+            if (!selected) return;
+            loading = true;
+            try {
+              if (selected.size > 2 * 1024 * 1024 || !/\.(csv|xlsx)$/i.test(selected.name))
+                throw new Error("Hãy chọn CSV/XLSX tối đa 2 MB.");
+              const contents = /\.xlsx$/i.test(selected.name) ? (await db.readAccountWorkbook(selected)).rows : parseAccountImportText(await selected.text());
+              if (version !== current) return;
+              rows = contents; loading = false;
+              await validate();
+            } catch (error) {
+              if (version === current) { loading = false; preview.textContent = error.message; }
+            }
+          };
+          check.onclick = () => { if (!loading && !busy) return validate(); };
+          $("#cancelAssignmentImport").onclick = closeModal;
+          save.onclick = async () => {
+            if (busy || loading || save.disabled) return;
+            busy = true;
+            save.disabled = input.disabled = file.disabled = check.disabled = true;
+            try {
+              const changes = await validate();
+              if (!changes) return;
+              await db.bulkPut("score_grader_assignments", changes);
+              closeModal();
+              toast("Đã lưu phân công hàng loạt.");
+              await renderScores();
+            } catch (error) { preview.textContent = error.message; }
+            finally {
+              busy = false;
+              input.disabled = file.disabled = check.disabled = false;
+              save.disabled = true;
             }
           };
         }

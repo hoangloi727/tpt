@@ -455,6 +455,8 @@ Mọi vai trò đều có trang này.
 <a id="vi-25"></a>
 ## 25. Quản lý người dùng
 
+Trong **Phân công chấm điểm theo lớp**, chọn **Nhập phân công hàng loạt**. Tải mẫu hai cột **Lớp chấm, Lớp được chấm**, rồi tải CSV/XLSX hoặc dán từ Excel. Lớp chấm được tìm qua liên kết lớp của tài khoản Sao đỏ trong năm đang chọn. Xem trước kiểm tra lớp trùng, tài khoản thiếu/bị khóa và lớp đã giao cho Sao đỏ khác. Lưu bổ sung các lớp hợp lệ vào phân công hiện có; không xóa phân công khác. Muốn chuyển lớp sang Sao đỏ khác, bỏ phân công cũ trước. Cả lô được lưu cùng nhau.
+
 Trang này dành cho `Admin` và `Superadmin`.
 
 Hai nút nhập riêng nhận CSV, tệp XLSX (trang tính đầu tiên), hoặc bảng dán từ Excel:
