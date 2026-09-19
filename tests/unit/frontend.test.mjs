@@ -13,6 +13,28 @@ for (const name of ["app-utils", "score-engine", "backup-codec"])
 const { utils, score, backupCodec: codec } = context.window.TPTAppModules;
 const plain = (value) => JSON.parse(JSON.stringify(value));
 
+test("2026-2027 displays week 3 as week 1 without changing stored weeks", () => {
+  const years = [{ id: "current", name: "2026 – 2027" }, { id: "other", name: "2027-2028" }];
+  const rows = [1, 2, 3, 4, 40].map((number) => ({
+    id: `week-${number}`, school_year_id: "current", number, name: `Tuần ${number}`,
+    start_date: "2026-08-31", end_date: "2026-09-06",
+  }));
+  rows.push({ id: "other", school_year_id: "other", number: 1, name: "Tuần 1" });
+  rows.push({ id: "legacy", academic_year_id: "current", name: "Tuần 5" });
+  const before = structuredClone(rows);
+  const displayed = plain(utils.sortWeeksAscending(utils.visibleSchoolWeeks(rows, years)));
+  assert.deepEqual(displayed.map(({ id, number, name }) => ({ id, number, name })), [
+    { id: "other", number: 1, name: "Tuần 1" },
+    { id: "week-3", number: 1, name: "Tuần 1" },
+    { id: "week-4", number: 2, name: "Tuần 2" },
+    { id: "legacy", number: 3, name: "Tuần 3" },
+    { id: "week-40", number: 38, name: "Tuần 38" },
+  ]);
+  assert.equal(displayed.find((row) => row.id === "week-3").start_date, rows[2].start_date);
+  assert.deepEqual(rows, before);
+  assert.deepEqual(plain(utils.visibleSchoolWeeks(rows, [])), rows);
+});
+
 test("score input distinguishes clearing, pasted blanks, exemptions and invalid values", () => {
   assert.equal(score.parseScoreInput(" ", {}).action, "clear");
   assert.equal(score.parseScoreInput(" ", {}, { mode: "paste" }).action, "skip");

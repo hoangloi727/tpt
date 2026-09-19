@@ -83,6 +83,17 @@
     }
     return weeks;
   }
+  function visibleSchoolWeeks(rows, years) {
+    const shiftedYears = new Set(years
+      .filter((year) => normalizeSchoolYearName(year.name) === "2026-2027")
+      .map((year) => year.id));
+    return rows.flatMap((week) => {
+      if (!shiftedYears.has(week.school_year_id || week.academic_year_id)) return [week];
+      const number = Number(week.number || String(week.name || "").match(/\d+/)?.[0]);
+      if (!Number.isInteger(number) || number < 1) return [week];
+      return number <= 2 ? [] : [{ ...week, number: number - 2, name: `Tuần ${number - 2}` }];
+    });
+  }
   function sortWeeksAscending(rows) {
     const getNumber = (row) => {
       const stored = Number(row?.number),
@@ -355,6 +366,7 @@
     addDays,
     academicWeekOptions,
     sortWeeksAscending,
+    visibleSchoolWeeks,
     pageHead,
     debounce,
     nextRepeatDate,

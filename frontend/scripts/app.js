@@ -44,6 +44,7 @@
             addDays,
             academicWeekOptions,
             sortWeeksAscending,
+            visibleSchoolWeeks,
             pageHead,
             debounce,
             nextRepeatDate,
@@ -1027,18 +1028,19 @@
             ),
           ),
             years = rawYears.map((year) => ({ ...year, name: normalizeSchoolYearName(year.name) })),
-            weeks = sortWeeksAscending(rawWeeks);
+            weeks = sortWeeksAscending(visibleSchoolWeeks(rawWeeks, years));
           state.cache = { years, sems, weeks, campuses };
           state.yearId =
             state.yearId ||
             years.find((x) => x.is_current)?.id ||
             years[0]?.id ||
             "";
+          const yearWeeks = weeks.filter((week) => week.school_year_id === state.yearId);
           state.weekId =
-            state.weekId ||
-            weeks.find((w) => today() >= w.start_date && today() <= w.end_date)
+            yearWeeks.find((week) => week.id === state.weekId)?.id ||
+            yearWeeks.find((w) => today() >= w.start_date && today() <= w.end_date)
               ?.id ||
-            weeks[0]?.id ||
+            yearWeeks[0]?.id ||
             "";
           fillSelect(
             $("#yearSelect"),
@@ -1837,7 +1839,7 @@
         async function renderSaoDoScoreDashboard() {
           const [classes, weeks, sheets, entries, criteria, groups] = await Promise.all([
               db.all("classes"),
-              db.all("school_weeks"),
+              state.cache.weeks,
               db.all("weekly_score_sheets"),
               db.all("score_entries"),
               db.all("criteria"),
@@ -2340,7 +2342,7 @@
         async function renderTeacherClass() {
           let data = await db.teacherClassWeek(state.yearId, state.weekId);
           const calendarDate = today(),
-            weeks = [...data.weeks].sort((a, b) =>
+            weeks = visibleSchoolWeeks(data.weeks, state.cache.years).sort((a, b) =>
               String(a.start_date || "").localeCompare(String(b.start_date || "")),
             ),
             currentWeek = weeks.find((week) =>
@@ -2350,6 +2352,12 @@
             initialWeek = currentWeek || previousWeek || weeks[0];
           if (!weeks.some((week) => week.id === state.weekId) && initialWeek && data.week?.id !== initialWeek.id)
             data = await db.teacherClassWeek(data.assignment.school_year_id, initialWeek.id);
+          data.weeks = weeks;
+          data.week = weeks.find((week) => week.id === data.week?.id) || null;
+          if (!data.week) {
+            data.ranking = null;
+            data.incidents = [];
+          }
           state.yearId = data.assignment.school_year_id;
           state.weekId = data.week?.id || "";
           const ranking = data.ranking,
