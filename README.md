@@ -152,7 +152,9 @@ All variables are optional:
 npm run check
 ```
 
-This command syntax-checks the main JavaScript files; the project does not currently include an automated behavior test suite.
+This command syntax-checks the main JavaScript files.
+
+Run `npm run test:unit` for dependency-free Node unit tests covering scoring, rankings, CSV utilities, backup integrity/encryption, sessions, and permissions. Run `npm test` to include the SQLite and API regression tests. These commands do not start a browser or use the runtime database; `npm run test:browser` remains a separate browser smoke check.
 
 ### API documentation
 

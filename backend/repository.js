@@ -23,6 +23,7 @@ const NO_OPERATION_JOURNAL_STORES = new Set([
 
 const now = () => new Date().toISOString();
 const ALLOW_CLASS_DELETION = Symbol("allowClassDeletion");
+const DEFER_GRADER_ASSIGNMENT_VALIDATION = Symbol("deferGraderAssignmentValidation");
 const RECORD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 const revisionConflict = (message) => {
@@ -584,11 +585,9 @@ export class SqliteRepository {
     const date = new Date(`${row.entry_date}T00:00:00Z`);
     if (
       Number.isNaN(date.getTime()) ||
-      date.toISOString().slice(0, 10) !== row.entry_date ||
-      date.getUTCDay() === 0 ||
-      date.getUTCDay() === 6
+      date.toISOString().slice(0, 10) !== row.entry_date
     ) {
-      const error = new Error("entry_date của điểm thi đua phải là ngày từ thứ Hai đến thứ Sáu.");
+      const error = new Error("Điểm thi đua hằng ngày phải có entry_date hợp lệ.");
       error.status = 400;
       throw error;
     }
@@ -620,6 +619,14 @@ export class SqliteRepository {
       (sheet.school_year_id || sheet.academic_year_id) !== yearId
     ) {
       const error = new Error("Điểm thi đua hằng ngày phải có bảng thi đua tuần tương ứng.");
+      error.status = 400;
+      throw error;
+    }
+    if (
+      date.getUTCDay() === 0 ||
+      (date.getUTCDay() === 6 && sheet.include_saturday !== true)
+    ) {
+      const error = new Error("entry_date phải từ thứ Hai đến thứ Sáu, hoặc thứ Bảy khi bảng thi đua tuần có bật chấm thứ Bảy.");
       error.status = 400;
       throw error;
     }
@@ -947,7 +954,7 @@ export class SqliteRepository {
     if (store === "class_groups") this.assertClassGroup(draft, validationRow);
     if (store === "weekly_score_sheets")
       this.assertWeeklyScoreSheet(draft, validationRow, current);
-    if (store === "score_grader_assignments")
+    if (store === "score_grader_assignments" && !options[DEFER_GRADER_ASSIGNMENT_VALIDATION])
       this.assertScoreGraderAssignment(draft, validationRow);
     if (store === "teacher_class_assignments")
       this.assertTeacherAssignment(draft, validationRow);
@@ -1052,9 +1059,16 @@ export class SqliteRepository {
       if (row.id) ids.add(row.id);
     }
     return this.mutate((draft) => {
+      const assignments = [];
       for (const row of rows) {
-        this.putInto(draft, store, row, { ...options, audit: false, journal: false });
+        const saved = this.putInto(draft, store, row, {
+          ...options, audit: false, journal: false,
+          [DEFER_GRADER_ASSIGNMENT_VALIDATION]: store === "score_grader_assignments",
+        });
+        if (store === "score_grader_assignments") assignments.push(saved);
       }
+      // Validate the final batch so transfers and swaps do not conflict with old owners.
+      for (const assignment of assignments) this.assertScoreGraderAssignment(draft, assignment);
       if (!NO_OPERATION_JOURNAL_STORES.has(store))
         draft.stores.operation_journal.push(
           this.normalize(
@@ -1495,7 +1509,9 @@ export class SqliteRepository {
       draft.stores.ranking_snapshots = draft.stores.ranking_snapshots.filter(
         (row) => row.school_profile_id !== schoolId || row.sheet_id !== sheet.id,
       );
-      const index = draft.stores.weekly_score_sheets.findIndex((row) => row.id === sheet.id);
+      const index = draft.stores.weekly_score_sheets.findIndex(
+        (row) => row.id === sheet.id && row.school_profile_id === schoolId,
+      );
       draft.stores.weekly_score_sheets[index] = this.normalize(
         {
           ...sheet,

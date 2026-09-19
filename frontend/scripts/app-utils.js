@@ -302,9 +302,6 @@
       if (source && !grader) errors.push("Lớp chấm phải gắn với đúng một tài khoản Sao đỏ đang hoạt động");
       if (cells.slice(2).some((value) => String(value ?? "").trim())) errors.push("Chỉ dùng hai cột");
       const current = assignments.find((item) => !item.deleted_at && item.school_year_id === schoolYearId && item.user_id === grader?.id);
-      if (target && assignments.some((item) => !item.deleted_at && item.school_year_id === schoolYearId &&
-          item.user_id !== grader?.id && item.class_ids?.includes(target.id)))
-        errors.push("Lớp đã giao cho Sao đỏ khác; bỏ phân công cũ trước khi nhập");
       const item = { row, source: source?.class_name || String(cells[0] ?? ""), target: target?.class_name || String(cells[1] ?? ""),
         username: grader?.username || "", errors };
       if (target) {
@@ -315,14 +312,21 @@
       }
       if (grader && target && !errors.length) {
         if (!changes.has(grader.id)) changes.set(grader.id, {
-          ...(current || {}), user_id: grader.id, school_year_id: schoolYearId, class_ids: [...(current?.class_ids || [])],
+          ...(current || {}), user_id: grader.id, school_year_id: schoolYearId, class_ids: [],
         });
         const change = changes.get(grader.id);
         if (!change.class_ids.includes(target.id)) change.class_ids.push(target.id);
       }
       return item;
     });
-    return { parsed, changes: parsed.some((item) => item.errors.length) ? [] : [...changes.values()] };
+    if (parsed.some((item) => item.errors.length)) return { parsed, changes: [] };
+    for (const assignment of assignments) {
+      if (assignment.deleted_at || assignment.school_year_id !== schoolYearId || changes.has(assignment.user_id)) continue;
+      const classIds = (assignment.class_ids || []).filter((id) => !seen.has(id));
+      if (classIds.length !== (assignment.class_ids || []).length)
+        changes.set(assignment.user_id, { ...assignment, class_ids: classIds });
+    }
+    return { parsed, changes: [...changes.values()] };
   }
   function defaultConfigColor(index) {
     return [

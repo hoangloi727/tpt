@@ -989,6 +989,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         );
       }
       if (request.method === "DELETE" && id) {
+        if (store === "audit_logs" && !isManager(user)) return forbidden(response);
         if (store !== "score_grader_assignments" && !destructiveAuthorized())
           return sendJson(response, 403, { error: "Cần xác nhận YES và mật khẩu hiện tại trước khi xóa." });
         if (url.searchParams.get("hard") === "1" && !isManager(user))

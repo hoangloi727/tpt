@@ -1554,7 +1554,19 @@
           grid-template-columns: 1fr;
         }
         .incident-row {
-          grid-template-columns: 1fr;
+          grid-template-columns: minmax(0, 1fr);
+        }
+        .incident-row .field {
+          min-width: 0;
+        }
+        .incident-row select {
+          max-width: 100%;
+        }
+        .score-day-picker {
+          grid-template-columns: repeat(auto-fit, minmax(min(110px, 100%), 1fr));
+        }
+        .score-day-picker button {
+          min-width: 0;
         }
         .ruleset-category-head {
           flex-direction: column;
