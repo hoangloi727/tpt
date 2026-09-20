@@ -2342,7 +2342,7 @@
         async function renderTeacherClass() {
           let data = await db.teacherClassWeek(state.yearId, state.weekId);
           const calendarDate = today(),
-            weeks = visibleSchoolWeeks(data.weeks, state.cache.years).sort((a, b) =>
+            weeks = visibleSchoolWeeks(data.weeks, data.year ? [data.year] : []).sort((a, b) =>
               String(a.start_date || "").localeCompare(String(b.start_date || "")),
             ),
             currentWeek = weeks.find((week) =>

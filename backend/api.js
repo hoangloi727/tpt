@@ -691,6 +691,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           );
         return sendJson(response, 200, {
           assignment: { school_year_id: assignment.school_year_id, class: schoolClass },
+          year: repository.get("school_years", assignment.school_year_id, user.selectedSchoolId),
           weeks,
           week: weeks.find((row) => row.id === weekId) || null,
           ranking,
