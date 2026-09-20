@@ -3348,6 +3348,9 @@
             valueLabel = (value) => labels[value] || value,
             logs = allLogs.filter((log) => {
               if (!["score_entries", "weekly_score_sheets"].includes(log.entity)) return false;
+              if (log.entity === "weekly_score_sheets" &&
+                ["create", "update", "sheet_status"].includes(log.action) &&
+                ["draft", "complete", "review", "approved"].includes(log.new_value || String(log.summary || "").match(/Chuyển trạng thái: (\w+)/)?.[1])) return false;
               const source = log.entity === "score_entries" ? entriesById.get(log.entity_id) : sheetsById.get(log.entity_id);
               const weekId = log.week_id || source?.week_id;
               const yearId = log.school_year_id || source?.school_year_id || source?.academic_year_id;

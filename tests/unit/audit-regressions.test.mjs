@@ -307,6 +307,16 @@ test("score history scopes to its week and combines action and actor filters", a
   await repository.put("score_entries", { id: "entry", value: 9 }, { ...options, actorId: "bob", actorName: "Bob" });
   await repository.remove("score_entries", "entry", true, { ...options, actorId: "alice", actorName: "Alice" });
   const logs = repository.all("audit_logs", false, "school");
+  for (const status of ["draft", "complete", "review", "approved"]) {
+    for (const legacy of [false, true]) logs.push({
+      entity: "weekly_score_sheets", entity_id: "sheet", week_id: "week",
+      action: legacy ? "sheet_status" : "update", actor_name: "Hidden actor",
+      summary: legacy ? `Chuyển trạng thái: ${status}` : "Trạng thái bảng",
+      ...(!legacy ? { new_value: status } : {}), created_at: "2026-09-15",
+    });
+  }
+  logs.push({ entity: "weekly_score_sheets", entity_id: "sheet", week_id: "week",
+    action: "update", new_value: "locked", summary: "Trạng thái bảng", created_at: "2026-09-15" });
   const changed = logs.find(row => row.actor_id === "bob");
   assert.equal(changed.week_id, "week");
   assert.equal(changed.old_value, 7);
@@ -322,6 +332,10 @@ test("score history scopes to its week and combines action and actor filters", a
   const ctx = { allClasses: [], criteria: [] };
   await context.renderScoreHistory(ctx);
   assert.match(elements["#scoreArea"].innerHTML, /Tất cả hành động/);
+  assert.doesNotMatch(elements["#scoreArea"].innerHTML, /Đã duyệt|Đã nhập đủ|Chưa nhập đủ|Chờ kiểm tra|Hidden actor/);
+  assert.doesNotMatch(elements["#scoreHistoryRows"].innerHTML, /Đã duyệt|Đã nhập đủ|Chưa nhập đủ|Chờ kiểm tra|Hidden actor/);
+  assert.match(elements["#scoreArea"].innerHTML, /Đã khóa/);
+  assert.match(elements["#scoreHistoryRows"].innerHTML, /Đã khóa/);
   assert.equal((elements["#scoreArea"].innerHTML.match(/<th>/g) || []).length, 3);
   assert.match(elements["#scoreHistoryRows"].innerHTML, /7 → 9/);
   elements["#scoreHistoryActor"].value = "bob";
