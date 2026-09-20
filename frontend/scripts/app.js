@@ -2401,7 +2401,7 @@
 
             ) +
               `
-      <div class="notice warn"><strong>${esc(ctx.set?.name || "Chưa có bộ tiêu chí")}</strong><br>${esc(ctx.set ? ctx.set.basis || "" : "Cần tạo bộ tiêu chí trước khi nhập điểm.")} ${ctx.set ? `Công thức: ${ctx.set.formula === "base" ? `Điểm chuẩn ${ctx.set.base_score || 0}, sau đó cộng/trừ` : "Cộng điểm từng nhóm"}.` : ""}</div>
+      <div class="notice${["approved", "locked"].includes(ctx.sheet?.status) ? "" : " warn"}"><strong>${esc(ctx.set?.name || "Chưa có bộ tiêu chí")}</strong><br>${esc(ctx.set ? ctx.set.basis || "" : "Cần tạo bộ tiêu chí trước khi nhập điểm.")} ${ctx.set ? `Công thức: ${ctx.set.formula === "base" ? `Điểm chuẩn ${ctx.set.base_score || 0}, sau đó cộng/trừ` : "Cộng điểm từng nhóm"}.` : ""}</div>
       <div class="toolbar"><strong>${esc(week?.name || "Chưa chọn tuần")}</strong><span>${week ? `${fmtDate(week.start_date)} – ${fmtDate(week.end_date)}` : ""}</span><span style="margin-left:auto">Trạng thái: ${ctx.sheet?.status === "draft" ? '<span class="badge">Chưa nhập đủ</span>' : statusBadge(ctx.sheet?.status || "Chưa tạo")}</span></div>
       <div class="tabs"><button data-score-tab="entry" class="${state.scoreTab === "entry" ? "active" : ""}">Nhập điểm</button>${manager ? `<button data-score-tab="ranking" class="${state.scoreTab === "ranking" ? "active" : ""}">Xếp hạng</button><button data-score-tab="anomaly" class="${state.scoreTab === "anomaly" ? "active" : ""}">Kiểm tra bất thường</button><button data-score-tab="history" class="${state.scoreTab === "history" ? "active" : ""}">Nhật ký điều chỉnh</button>` : ""}</div><div id="scoreArea"></div>`,
           );
