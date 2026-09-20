@@ -214,6 +214,17 @@
       this.destructiveAuthorization = "";
     }
 
+    unlockWeeklyScoreSheet(id, reason, currentPassword, revision) {
+      this.beforeWrite();
+      return this.request(`/score-sheets/${encodeURIComponent(id)}/unlock`, {
+        method: "POST",
+        body: JSON.stringify({ reason, currentPassword, revision }),
+      }).then((result) => {
+        this.onChange("weekly_score_sheets", id);
+        return result;
+      });
+    }
+
     deleteWeeklyScoreSheet(id) {
       this.beforeWrite();
       return this.request(`/score-sheets/${encodeURIComponent(id)}`, {

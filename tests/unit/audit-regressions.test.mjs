@@ -176,7 +176,8 @@ test("complete and reviewed sheets return to incomplete and must pass completene
   };
   context.scoreEntryCriterionId = row => row.criteria_id;
   for (const initialStatus of ["complete", "review"]) {
-    await repository.put("weekly_score_sheets", { id: "sheet", status: initialStatus }, options);
+    if (repository.get("weekly_score_sheets", "sheet", "school").status !== initialStatus)
+      await repository.put("weekly_score_sheets", { id: "sheet", status: initialStatus }, options);
     ctx.sheet = repository.get("weekly_score_sheets", "sheet", "school");
     await context.scoreWorkflow(ctx, true);
     assert.equal(repository.get("weekly_score_sheets", "sheet", "school").status, "draft");
@@ -291,7 +292,7 @@ test("fill missing cells records zero with no incidents across the week and pres
   beforeWrite = undefined;
   await context.fillMissingScoreCells();
   assert.equal(repository.all("score_entries", false, "school").length, 24);
-  for (const status of ["approved", "locked"]) {
+  for (const status of ["review", "approved", "locked"]) {
     await repository.put("weekly_score_sheets", { id: "sheet", status }, options);
     const previousWrites = writes;
     await context.fillMissingScoreCells();

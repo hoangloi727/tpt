@@ -24,6 +24,7 @@ const NO_OPERATION_JOURNAL_STORES = new Set([
 const now = () => new Date().toISOString();
 const ALLOW_CLASS_DELETION = Symbol("allowClassDeletion");
 const DEFER_GRADER_ASSIGNMENT_VALIDATION = Symbol("deferGraderAssignmentValidation");
+const ALLOW_SCORE_UNLOCK = Symbol("allowScoreUnlock");
 const ALLOW_LOCKED_SCORE_IMPORT = Symbol("allowLockedScoreImport");
 const RECORD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -560,8 +561,37 @@ export class SqliteRepository {
     }
   }
 
+  unlockWeeklyScoreSheet(id, reason, revision, options) {
+    return this.mutate((draft) => {
+      const sheet = this.findIn(draft, "weekly_score_sheets", id, options.schoolId);
+      if (!sheet || sheet.deleted_at || !["approved", "locked"].includes(sheet.status)) {
+        const error = new Error("Chỉ có thể mở khóa bảng đã duyệt hoặc đã khóa.");
+        error.status = 409;
+        throw error;
+      }
+      return this.putInto(draft, "weekly_score_sheets", {
+        ...sheet, revision, status: "unlocked", unlock_reason: reason,
+        unlocked_at: now(), reports_stale: true,
+      }, { ...options, reason, [ALLOW_SCORE_UNLOCK]: true });
+    });
+  }
+
+  assertNotInReview(sheet) {
+    if (sheet?.status === "review") {
+      const error = new Error("Bảng thi đua đang chờ kiểm tra và chỉ được xem. Hãy từ chối về chưa nhập đủ trước khi thay đổi dữ liệu.");
+      error.status = 409;
+      throw error;
+    }
+  }
+
+  assertScoreEvidenceWritable(draft, row) {
+    const entry = this.findIn(draft, "score_entries", row.entry_id, row.school_profile_id);
+    this.assertNotInReview(this.findIn(draft, "weekly_score_sheets", entry?.sheet_id, row.school_profile_id));
+  }
+
   assertScoreEntryWritable(draft, row) {
     const sheet = this.findIn(draft, "weekly_score_sheets", row.sheet_id, row.school_profile_id);
+    this.assertNotInReview(sheet);
     if (["approved", "locked"].includes(sheet?.status)) {
       const error = new Error("Bảng thi đua đã duyệt hoặc khóa và không thể sửa điểm.");
       error.status = 409;
@@ -790,6 +820,12 @@ export class SqliteRepository {
   }
 
   assertWeeklyScoreSheet(draft, row, existing = null) {
+    if (existing?.status === "review") {
+      const transitionFields = new Set(row.status === "approved" ? ["status", "approved_at"] : ["status"]);
+      if (!["draft", "approved"].includes(row.status) || Object.keys(row).some((key) =>
+        !transitionFields.has(key) && JSON.stringify(row[key]) !== JSON.stringify(existing[key]),
+      )) this.assertNotInReview(existing);
+    }
     const yearId = row.school_year_id || row.academic_year_id,
       week = this.findIn(draft, "school_weeks", row.week_id, row.school_profile_id),
       criteriaSet = this.findIn(
@@ -948,6 +984,7 @@ export class SqliteRepository {
       this.assertWritable(draft, store, current, options);
       if (store === "score_entries" && !options[ALLOW_LOCKED_SCORE_IMPORT])
         this.assertScoreEntryWritable(draft, current);
+      if (store === "score_evidence" && !options[ALLOW_LOCKED_SCORE_IMPORT]) this.assertScoreEvidenceWritable(draft, current);
     }
     if (
       store === "classes" &&
@@ -963,6 +1000,12 @@ export class SqliteRepository {
     this.assertWritable(draft, store, validationRow, options);
     this.assertDynamicCriterion(draft, store, validationRow, current);
     if (store === "class_groups") this.assertClassGroup(draft, validationRow);
+    if (store === "weekly_score_sheets" && ["approved", "locked"].includes(current?.status) &&
+      !["approved", "locked"].includes(validationRow.status) && !options[ALLOW_SCORE_UNLOCK] && !options[ALLOW_LOCKED_SCORE_IMPORT]) {
+      const error = new Error("Cần xác nhận mật khẩu và lý do để mở khóa bảng thi đua.");
+      error.status = 403;
+      throw error;
+    }
     if (store === "weekly_score_sheets")
       this.assertWeeklyScoreSheet(draft, validationRow, current);
     if (store === "score_grader_assignments" && !options[DEFER_GRADER_ASSIGNMENT_VALIDATION])
@@ -970,6 +1013,7 @@ export class SqliteRepository {
     if (store === "teacher_class_assignments")
       this.assertTeacherAssignment(draft, validationRow);
     if (store === "score_entries") this.assertDailyScoreEntry(draft, validationRow, options);
+    if (store === "score_evidence" && !options[ALLOW_LOCKED_SCORE_IMPORT]) this.assertScoreEvidenceWritable(draft, validationRow);
     const rows = draft.stores[store];
     if (store === "schools" && options.schoolId) {
       const tenantSchool = rows.find(
@@ -1122,6 +1166,8 @@ export class SqliteRepository {
       )
         return null;
       if (store === "score_entries") this.assertScoreEntryWritable(draft, rows[index]);
+      if (store === "score_evidence") this.assertScoreEvidenceWritable(draft, rows[index]);
+      if (store === "weekly_score_sheets") this.assertNotInReview(rows[index]);
       if (store === "classes") {
         const schoolClass = rows[index],
           schoolId = schoolClass.school_profile_id,
@@ -1260,6 +1306,9 @@ export class SqliteRepository {
   clear(store, schoolId = null, options = {}) {
     this.assertStore(store);
     return this.mutate((draft) => {
+      if (["score_entries", "score_evidence", "weekly_score_sheets"].includes(store))
+        for (const sheet of draft.stores.weekly_score_sheets)
+          if (!schoolId || sheet.school_profile_id === schoolId) this.assertNotInReview(sheet);
       if (store === "classes") {
         const classIds = new Set(
           draft.stores.classes
@@ -1368,6 +1417,8 @@ export class SqliteRepository {
 
   removeScoreSheetsFromDraft(draft, sheetIds, schoolId) {
     const ids = new Set(sheetIds);
+    for (const sheet of draft.stores.weekly_score_sheets)
+      if (sheet.school_profile_id === schoolId && ids.has(sheet.id)) this.assertNotInReview(sheet);
     const entryIds = new Set(
       draft.stores.score_entries
         .filter(
@@ -1472,6 +1523,7 @@ export class SqliteRepository {
         throw error;
       }
       const criteriaSet = this.findIn(draft, "criteria_sets", criteriaSetId, schoolId);
+      this.assertNotInReview(sheet);
       if (!criteriaSet || criteriaSet.deleted_at || criteriaSet.active === false || criteriaSet.status === "stopped") {
         const error = new Error("Bộ tiêu chí mới không hợp lệ hoặc đã ngừng sử dụng.");
         error.status = 400;
@@ -1748,10 +1800,18 @@ export class SqliteRepository {
     return payload;
   }
 
+  assertReviewImport(draft, payload, schoolId) {
+    if (["criteria_sets", "criteria_groups", "criteria", "weekly_score_sheets", "score_entries", "score_evidence", "ranking_snapshots"]
+      .some((store) => Array.isArray(payload.data[store])))
+      for (const sheet of draft.stores.weekly_score_sheets)
+        if (!schoolId || sheet.school_profile_id === schoolId) this.assertNotInReview(sheet);
+  }
+
   replaceAll(payload, options = {}) {
     this.assertImportPayload(payload);
     return this.mutate((draft) => {
       const schoolId = options.schoolId || null;
+      this.assertReviewImport(draft, payload, schoolId);
       for (const store of STORES) {
         if (
           EXTERNAL_BACKUP_EXCLUDED_STORES.has(store) ||
@@ -1824,6 +1884,7 @@ export class SqliteRepository {
           "weekly_score_sheets",
           "ranking_snapshots",
         ]);
+      this.assertReviewImport(draft, payload, schoolId);
       for (const store of STORES) {
         if (
           EXTERNAL_BACKUP_EXCLUDED_STORES.has(store) ||

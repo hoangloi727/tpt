@@ -2396,7 +2396,7 @@
             pageHead(
               "Thi đua lớp",
               "Nhập điểm từng ngày, duyệt, khóa và truy vết theo tuần.",
-              `${manager ? '<button class="btn" id="assignScoreGraders">Phân công Sao đỏ</button><button class="btn" id="criteriaConfig">Bộ tiêu chí</button>' : ""}<button class="btn" id="undoScore" ${state.lastScoreUndo ? "" : "disabled"}>↶ Hoàn tác</button>${manager && ctx.sheet ? '<button class="btn danger" id="replaceScoreCriteria">Thay bộ tiêu chí</button><button class="btn danger" id="deleteScoreSheet">Xóa bảng tuần</button>' : ""}${manager && ["complete", "review"].includes(ctx.sheet?.status) ? `<button class="btn danger" id="scoreIncomplete">${ctx.sheet.status === "review" ? "Từ chối, yêu cầu kiểm tra lại" : "Đánh dấu chưa nhập đủ"}</button>` : ""}${manager ? `<button class="btn primary" id="scoreWorkflow">${workflowLabel(ctx.sheet)}</button>` : ""}`,
+              `${manager ? '<button class="btn" id="assignScoreGraders">Phân công Sao đỏ</button><button class="btn" id="criteriaConfig">Bộ tiêu chí</button>' : ""}<button class="btn" id="undoScore" ${state.lastScoreUndo && !["review", "approved", "locked"].includes(ctx.sheet?.status) ? "" : "disabled"}>↶ Hoàn tác</button>${manager && ctx.sheet && ctx.sheet.status !== "review" ? '<button class="btn danger" id="replaceScoreCriteria">Thay bộ tiêu chí</button><button class="btn danger" id="deleteScoreSheet">Xóa bảng tuần</button>' : ""}${manager && ctx.sheet?.status === "approved" ? '<button class="btn danger" id="unlockScoreSheet">Mở khóa bảng</button>' : ""}${manager && ["complete", "review"].includes(ctx.sheet?.status) ? `<button class="btn danger" id="scoreIncomplete">${ctx.sheet.status === "review" ? "Từ chối, yêu cầu kiểm tra lại" : "Đánh dấu chưa nhập đủ"}</button>` : ""}${manager ? `<button class="btn primary" id="scoreWorkflow">${workflowLabel(ctx.sheet)}</button>` : ""}`,
 
 
             ) +
@@ -2425,6 +2425,8 @@
             $("#scoreIncomplete").onclick = () => scoreWorkflow(ctx, true).catch((error) => toast(error.message, "bad"));
           if ($("#deleteScoreSheet"))
             $("#deleteScoreSheet").onclick = () => deleteScoreSheet(ctx.sheet);
+          if ($("#unlockScoreSheet"))
+            $("#unlockScoreSheet").onclick = () => unlockSheet(ctx.sheet);
           if ($("#replaceScoreCriteria"))
             $("#replaceScoreCriteria").onclick = () => replaceScoreCriteria(ctx);
           $("#undoScore").onclick = undoScore;
@@ -2670,7 +2672,7 @@
             return (area.innerHTML =
               '<div class="empty">Tuần đang chọn chưa có ngày chấm điểm.</div>');
           const map = entryMap(ctx.selectedEntries),
-            locked = ["approved", "locked"].includes(ctx.sheet.status);
+            locked = ["review", "approved", "locked"].includes(ctx.sheet.status);
           area.innerHTML = `${canManageScores() && !locked ? '<div class="toolbar"><button type="button" class="btn" id="fillMissingScoreCells" title="Điền mọi ô còn trống của tất cả lớp trong tuần đang chọn với 0 điểm, không có sự việc.">Điền ô trống cả tuần: không có sự việc</button></div>' : ""}<div class="score-day-picker" aria-label="Chọn ngày nhập điểm">${ctx.days.map((day) => `<button type="button" data-score-date="${esc(day.date)}" class="${day.date === state.scoreDate ? "active" : ""}"><strong>${day.label}</strong><span>${fmtDate(day.date)}</span></button>`).join("")}</div><div class="score-wrap"><table class="score-table"><thead><tr><th style="min-width:110px">Lớp</th>${ctx.criteria.map((c) => `<th title="${esc(c.name)}">${esc(c.code)}<br><small>${esc(c.is_category ? c.name : c.group)}</small></th>`).join("")}<th>Điểm ngày</th><th>Tổng tuần</th><th>Trạng thái ngày</th></tr></thead><tbody>${ctx.classes
             .map((cl, ri) => {
               let filled = 0;
@@ -2740,8 +2742,8 @@
         async function fillMissingScoreCells() {
           if (!canManageScores()) return;
           const ctx = await scoreContext();
-          if (!ctx.sheet || ["approved", "locked"].includes(ctx.sheet.status))
-            return toast("Chỉ có thể điền ô trống khi bảng tuần chưa duyệt hoặc khóa.", "bad");
+          if (!ctx.sheet || ["review", "approved", "locked"].includes(ctx.sheet.status))
+            return toast("Không thể điền ô trống khi bảng đang chờ kiểm tra, đã duyệt hoặc khóa.", "bad");
           const filled = new Set(ctx.allEntries.map((entry) =>
               `${entry.entry_date}|${entry.class_id}|${scoreEntryCriterionId(entry)}`,
             )),
@@ -3100,10 +3102,10 @@
           const u = state.lastScoreUndo;
           if (!u) return;
           const ctx = await scoreContext();
-          if (["approved", "locked"].includes(ctx.sheet?.status)) {
+          if (["review", "approved", "locked"].includes(ctx.sheet?.status)) {
             state.lastScoreUndo = null;
             return toast(
-              "Bảng đã duyệt hoặc khóa; không thể hoàn tác điểm.",
+              "Bảng đang chờ kiểm tra, đã duyệt hoặc khóa; không thể hoàn tác điểm.",
               "bad",
             );
           }
@@ -3297,7 +3299,7 @@
         function unlockSheet(sheet) {
           openModal(
             "Mở khóa bảng thi đua",
-            `<div class="notice danger">Mở khóa cho phép sửa điểm đã khóa. Hệ thống sẽ ghi lại lý do, thời gian và đánh dấu báo cáo liên quan cần cập nhật.</div><div class="field"><label class="required">Lý do mở khóa</label><textarea id="unlockReason" maxlength="500" required></textarea></div>`,
+            `<div class="notice danger">Mở khóa cho phép sửa điểm đã duyệt hoặc đã khóa. Hệ thống sẽ ghi lại lý do, thời gian và đánh dấu báo cáo liên quan cần cập nhật.</div><div class="field"><label class="required">Lý do mở khóa</label><textarea id="unlockReason" maxlength="500" required></textarea></div><div class="field mt"><label class="required" for="unlockPassword">Mật khẩu hiện tại</label><input id="unlockPassword" type="password" autocomplete="current-password" required></div>`,
             `<button class="btn" id="cancelUnlock">Hủy</button><button class="btn danger" id="confirmUnlock">Mở khóa</button>`,
           );
           $("#cancelUnlock").onclick = closeModal;
@@ -3305,29 +3307,24 @@
             const reason = $("#unlockReason").value.trim();
             if (reason.length < 5)
               return toast("Hãy nhập lý do cụ thể, tối thiểu 5 ký tự.", "bad");
-            await createInternalSnapshot(
-              `Trước mở khóa bảng thi đua ${sheet.week_id}`,
-              {
-                tier: "protected",
-                protectedSnapshot: true,
-                reason: "before-score-unlock",
-                yearId: state.yearId,
-              },
-            );
-            await db.put("weekly_score_sheets", {
-              ...sheet,
-              status: "unlocked",
-              unlock_reason: reason,
-              unlocked_at: now(),
-              reports_stale: true,
-            });
-            await db.put("audit_logs", {
-              action: "sheet_unlock",
-              entity: "weekly_score_sheets",
-              entity_id: sheet.id,
-              summary: "Mở khóa bảng thi đua",
-              reason,
-            });
+            const passwordInput = $("#unlockPassword"), password = passwordInput.value;
+            if (!password) return toast("Hãy nhập mật khẩu hiện tại.", "bad");
+            const button = $("#confirmUnlock");
+            button.disabled = true;
+            try {
+              await createInternalSnapshot(
+                `Trước mở khóa bảng thi đua ${sheet.week_id}`,
+                { tier: "protected", protectedSnapshot: true, reason: "before-score-unlock", yearId: state.yearId },
+              );
+              await db.unlockWeeklyScoreSheet(sheet.id, reason, password, sheet.revision);
+            } catch (error) {
+              toast(error.message, "bad");
+              return;
+            } finally {
+              button.disabled = false;
+              passwordInput.value = "";
+            }
+            state.lastScoreUndo = null;
             closeModal();
             toast("Đã mở khóa và lưu lý do");
             renderScores();

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { hasPermission } from "./auth.js";
 import { readAccountWorkbook } from "./account-import.js";
 
@@ -398,6 +399,17 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           request.headers["x-destructive-authorization"],
         );
 
+      if (request.method === "POST" && url.pathname === "/api/checksums/sha256") {
+        const body = await readJson(request);
+        assertObject(body);
+        if (typeof body.data !== "string")
+          return sendJson(response, 400, { error: "Dữ liệu băm phải là base64." });
+        const bytes = Buffer.from(body.data, "base64");
+        if (bytes.toString("base64") !== body.data)
+          return sendJson(response, 400, { error: "Dữ liệu base64 không hợp lệ." });
+        return sendJson(response, 200, { checksum: createHash("sha256").update(bytes).digest("hex") });
+      }
+
       if (request.method === "POST" && url.pathname === "/api/destructive-confirmations") {
         const body = await readJson(request);
         assertObject(body);
@@ -749,6 +761,25 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           200,
           { normalized: await repository.normalizeEnhancedData(user.selectedSchoolId) },
         );
+      }
+      const scoreSheetUnlockMatch = url.pathname.match(/^\/api\/score-sheets\/([^/]+)\/unlock$/);
+      if (scoreSheetUnlockMatch) {
+        if (!isManager(user)) return forbidden(response);
+        if (request.method !== "POST")
+          return sendJson(response, 405, { error: "Phương thức không được phép." });
+        const body = await readJson(request);
+        assertObject(body);
+        const reason = typeof body.reason === "string" ? body.reason.trim() : "";
+        if (reason.length < 5 || reason.length > 500)
+          return sendJson(response, 400, { error: "Lý do mở khóa phải có từ 5 đến 500 ký tự." });
+        if (!Number.isInteger(body.revision) || body.revision < 1)
+          return sendJson(response, 400, { error: "Thiếu phiên bản bảng thi đua." });
+        if (!(await users.verifyPassword(user.id, body.currentPassword)))
+          return sendJson(response, 403, { error: "Mật khẩu hiện tại không đúng." });
+        return sendJson(response, 200, await repository.unlockWeeklyScoreSheet(
+          decodePathPart(scoreSheetUnlockMatch[1]), reason, body.revision,
+          { schoolId: user.selectedSchoolId, actorId: user.id, actorName: user.displayName || user.username },
+        ));
       }
       const scoreSheetMatch = url.pathname.match(/^\/api\/score-sheets\/([^/]+)$/);
       if (scoreSheetMatch) {

@@ -78,17 +78,30 @@
         .join(",")}}`;
     return JSON.stringify(value);
   };
-  async function sha256Text(text) {
-    const hash = await crypto.subtle.digest(
-      "SHA-256",
-      new TextEncoder().encode(text),
-    );
+  async function sha256Bytes(bytes) {
+    if (!globalThis.crypto?.subtle) {
+      const response = await fetch("/api/checksums/sha256", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: b64(new Uint8Array(bytes)) }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Không thể tính mã kiểm tra dữ liệu.");
+      if (!/^[a-f0-9]{64}$/.test(result.checksum || ""))
+        throw new Error("Mã kiểm tra dữ liệu không hợp lệ.");
+      return result.checksum;
+    }
+    const hash = await crypto.subtle.digest("SHA-256", bytes);
     return [...new Uint8Array(hash)]
       .map((x) => x.toString(16).padStart(2, "0"))
       .join("");
   }
+  async function sha256Text(text) {
+    return sha256Bytes(new TextEncoder().encode(text));
+  }
   async function sha256Blob(blob) {
-    if (typeof Worker !== "undefined" && blob.size > 2 * 1024 * 1024) {
+    if (globalThis.crypto?.subtle && typeof Worker !== "undefined" && blob.size > 2 * 1024 * 1024) {
       const workerSource = `self.onmessage=async(event)=>{try{const hash=await crypto.subtle.digest("SHA-256",await event.data.arrayBuffer());const text=[...new Uint8Array(hash)].map(x=>x.toString(16).padStart(2,"0")).join("");self.postMessage({text})}catch(error){self.postMessage({error:error.message})}}`,
         workerUrl = URL.createObjectURL(
           new Blob([workerSource], { type: "text/javascript" }),
@@ -111,14 +124,9 @@
         URL.revokeObjectURL(workerUrl);
       }
     }
-    const hash = await crypto.subtle.digest(
-      "SHA-256",
-      await blob.arrayBuffer(),
-    );
-    return [...new Uint8Array(hash)]
-      .map((x) => x.toString(16).padStart(2, "0"))
-      .join("");
+    return sha256Bytes(await blob.arrayBuffer());
   }
+
   async function blobToBase64(
     blob,
     signal = null,
