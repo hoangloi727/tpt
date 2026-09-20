@@ -252,6 +252,13 @@
       return this.request(`/teacher/class-week?${query}`);
     }
 
+    pruneSnapshots() {
+      return this.write("/snapshots/prune", {}, {
+        silent: true,
+        change: { store: "internal_snapshots", id: "pruned" },
+      });
+    }
+
     async open() {
       const result = await this.request("/health");
       this.upgradedFrom = Number(result.previousSchema ?? result.schema ?? this.schema);

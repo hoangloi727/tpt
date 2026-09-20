@@ -24,6 +24,7 @@ const NO_OPERATION_JOURNAL_STORES = new Set([
 const now = () => new Date().toISOString();
 const ALLOW_CLASS_DELETION = Symbol("allowClassDeletion");
 const DEFER_GRADER_ASSIGNMENT_VALIDATION = Symbol("deferGraderAssignmentValidation");
+const ALLOW_LOCKED_SCORE_IMPORT = Symbol("allowLockedScoreImport");
 const RECORD_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
 const revisionConflict = (message) => {
@@ -559,7 +560,16 @@ export class SqliteRepository {
     }
   }
 
-  assertDailyScoreEntry(draft, row) {
+  assertScoreEntryWritable(draft, row) {
+    const sheet = this.findIn(draft, "weekly_score_sheets", row.sheet_id, row.school_profile_id);
+    if (["approved", "locked"].includes(sheet?.status)) {
+      const error = new Error("Bảng thi đua đã duyệt hoặc khóa và không thể sửa điểm.");
+      error.status = 409;
+      throw error;
+    }
+  }
+
+  assertDailyScoreEntry(draft, row, options = {}) {
     const yearId = row.school_year_id || row.academic_year_id,
       schoolClass = this.findIn(
         draft,
@@ -630,11 +640,7 @@ export class SqliteRepository {
       error.status = 400;
       throw error;
     }
-    if (["approved", "locked"].includes(sheet.status)) {
-      const error = new Error("Bảng thi đua đã duyệt hoặc khóa và không thể sửa điểm.");
-      error.status = 409;
-      throw error;
-    }
+    if (!options[ALLOW_LOCKED_SCORE_IMPORT]) this.assertScoreEntryWritable(draft, row);
     const grouped = Boolean(row.criteria_group_id);
     if (grouped) {
       const group = this.findIn(
@@ -931,13 +937,18 @@ export class SqliteRepository {
     if (store === "audit_logs" && options.actorId)
       row = {
         ...row,
-        actor_id: row.actor_id || options.actorId,
-        actor_name: row.actor_name || options.actorName || "",
+        actor_id: options.actorId,
+        actor_name: options.actorName || "",
       };
     const current = row.id
       ? this.findIn(draft, store, row.id, options.schoolId || null)
       : null;
     let validationRow = current ? { ...current, ...row } : row;
+    if (current) {
+      this.assertWritable(draft, store, current, options);
+      if (store === "score_entries" && !options[ALLOW_LOCKED_SCORE_IMPORT])
+        this.assertScoreEntryWritable(draft, current);
+    }
     if (
       store === "classes" &&
       row.deleted_at &&
@@ -958,7 +969,7 @@ export class SqliteRepository {
       this.assertScoreGraderAssignment(draft, validationRow);
     if (store === "teacher_class_assignments")
       this.assertTeacherAssignment(draft, validationRow);
-    if (store === "score_entries") this.assertDailyScoreEntry(draft, validationRow);
+    if (store === "score_entries") this.assertDailyScoreEntry(draft, validationRow, options);
     const rows = draft.stores[store];
     if (store === "schools" && options.schoolId) {
       const tenantSchool = rows.find(
@@ -1110,22 +1121,7 @@ export class SqliteRepository {
         rows[index].school_profile_id !== options.schoolId
       )
         return null;
-      if (store === "score_entries") {
-        const entry = rows[index],
-          sheet = this.findIn(
-            draft,
-            "weekly_score_sheets",
-            entry.sheet_id,
-            entry.school_profile_id,
-          );
-        if (["approved", "locked"].includes(sheet?.status)) {
-          const error = new Error(
-            "Bảng thi đua đã duyệt hoặc khóa và không thể xóa điểm.",
-          );
-          error.status = 409;
-          throw error;
-        }
-      }
+      if (store === "score_entries") this.assertScoreEntryWritable(draft, rows[index]);
       if (store === "classes") {
         const schoolClass = rows[index],
           schoolId = schoolClass.school_profile_id,
@@ -1659,6 +1655,36 @@ export class SqliteRepository {
     });
   }
 
+  pruneSnapshots(schoolId, actorId, actorName = "") {
+    return this.mutate((draft) => {
+      const settings = this.findIn(draft, "app_settings", "seed_state", schoolId) || {},
+        removedIds = new Set();
+      for (const [tier, fallback] of Object.entries({ daily: 7, weekly: 4, monthly: 12 })) {
+        const retention = Math.max(1, Math.floor(Number(settings[`snapshot_${tier}`]) || fallback));
+        const expired = draft.stores.internal_snapshots
+          .filter((row) => row.school_profile_id === schoolId && row.tier === tier && !row.protected)
+          .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
+          .slice(retention);
+        for (const row of expired) removedIds.add(row.id);
+      }
+      draft.stores.internal_snapshots = draft.stores.internal_snapshots.filter(
+        (row) => row.school_profile_id !== schoolId || !removedIds.has(row.id),
+      );
+      if (removedIds.size)
+        draft.stores.operation_journal.push(this.normalize({
+          operation_id: randomUUID(),
+          operation: "snapshot_retention",
+          entity: "internal_snapshots",
+          item_count: removedIds.size,
+          status: "committed",
+          committed_at: now(),
+          actor_id: actorId,
+          actor_name: actorName,
+        }, null, { preserveMetadata: true, schoolId }));
+      return removedIds.size;
+    });
+  }
+
   exportAll(schoolId = null) {
     const data = Object.fromEntries(
       STORES.map((store) => [
@@ -1828,6 +1854,7 @@ export class SqliteRepository {
             schoolId,
             preserveMetadata: true,
             allowArchivedYear: true,
+            [ALLOW_LOCKED_SCORE_IMPORT]: true,
             audit: false,
             journal: false,
           });

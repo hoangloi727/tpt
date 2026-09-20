@@ -259,7 +259,7 @@ Chỉ dành cho `superadmin` hoặc `admin` theo cùng các quy tắc phạm vi.
 
 #### `GET /api/export`
 
-Cần quyền `data:export` (vai trò `admin`/`superadmin` mặc nhiên bỏ qua các kiểm tra quyền thông thường). Xuất tất cả store, bao gồm cả bản ghi đã soft-delete, trong phạm vi trường đang chọn:
+Chỉ dành cho `admin`/`superadmin`; Teacher và Sao đỏ không được phép, kể cả khi còn khóa quyền cũ. Xuất tất cả store, bao gồm cả bản ghi đã soft-delete, trong phạm vi trường đang chọn:
 
 ```json
 {
@@ -277,9 +277,13 @@ Cần quyền `data:export` (vai trò `admin`/`superadmin` mặc nhiên bỏ qua
 
 Payload export có thể chứa tài liệu, attachment, nhật ký và dữ liệu nhạy cảm của trường. Hãy bảo vệ payload như một bản sao lưu riêng tư; không đưa vào Git hoặc cung cấp công khai.
 
+#### `POST /api/snapshots/prune`
+
+Chỉ Admin/Superadmin. Body `{}`. Dọn snapshot tự động của trường đang chọn theo `snapshot_daily`, `snapshot_weekly`, `snapshot_monthly` trong `app_settings/seed_state` (mặc định 7/4/12). Giữ snapshot được bảo vệ và snapshot thủ công. Trả `{ "removed": N }`. Không cần xác nhận xóa vì máy chủ tự giới hạn việc dọn theo chính sách lưu giữ; xóa snapshot cụ thể vẫn cần xác nhận.
+
 #### `POST /api/import/replace`
 
-Cần quyền `data:import`. Body chỉ là `{ "payload": ... }`. Đây là thao tác thay thế dữ liệu của trường đang chọn, không phải merge:
+Chỉ dành cho `admin`/`superadmin`. Body chỉ là `{ "payload": ... }`. Đây là thao tác thay thế dữ liệu của trường đang chọn, không phải merge:
 
 ```json
 {
@@ -302,7 +306,7 @@ backup_handles
 
 #### `POST /api/import/merge`
 
-Cần quyền `data:import`. Body chỉ là:
+Chỉ dành cho `admin`/`superadmin`. Body chỉ là:
 
 ```json
 {
@@ -995,7 +999,7 @@ Changing the password or disabling an account revokes that account's sessions. C
 
 #### `GET /api/export`
 
-Requires `data:export` (`admin`/`superadmin` roles bypass normal permission checks). Exports every store, including soft-deleted records, in the selected school scope:
+Requires the `admin` or `superadmin` role; Teacher and Sao đỏ cannot access it even with retained permission keys. Exports every store, including soft-deleted records, in the selected school scope:
 
 ```json
 {
@@ -1013,9 +1017,13 @@ Requires `data:export` (`admin`/`superadmin` roles bypass normal permission chec
 
 An export may contain documents, attachments, logs, and sensitive school data. Protect it as a private backup; do not add it to Git or serve it publicly.
 
+#### `POST /api/snapshots/prune`
+
+Admin/Superadmin only. Body `{}`. Prunes the selected school's scheduled snapshots using `snapshot_daily`, `snapshot_weekly`, and `snapshot_monthly` in `app_settings/seed_state` (defaults: 7/4/12). Protected and manual snapshots are retained. Returns `{ "removed": N }`. No destructive confirmation is required for this server-bounded retention operation; deleting a specific snapshot still requires confirmation.
+
 #### `POST /api/import/replace`
 
-Requires `data:import`. The body is only `{ "payload": ... }`. This replaces data for the selected school; it is not a merge:
+Requires the `admin` or `superadmin` role. The body is only `{ "payload": ... }`. This replaces data for the selected school; it is not a merge:
 
 ```json
 {
@@ -1038,7 +1046,7 @@ backup_handles
 
 #### `POST /api/import/merge`
 
-Requires `data:import`. Its only body is:
+Requires the `admin` or `superadmin` role. Its only body is:
 
 ```json
 {

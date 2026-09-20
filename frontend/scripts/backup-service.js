@@ -76,21 +76,7 @@
       return snapshot;
     }
     async function pruneSnapshots() {
-      const retention = {
-          daily: Number(await setting("snapshot_daily")) || 7,
-          weekly: Number(await setting("snapshot_weekly")) || 4,
-          monthly: Number(await setting("snapshot_monthly")) || 12,
-        },
-        rows = (await db.all("internal_snapshots")).sort((a, b) =>
-          String(b.created_at).localeCompare(String(a.created_at)),
-        );
-      for (const tier of Object.keys(retention)) {
-        const removable = rows
-          .filter((row) => row.tier === tier && !row.protected)
-          .slice(retention[tier]);
-        for (const row of removable)
-          await db.hardDelete("internal_snapshots", row.id);
-      }
+      return db.pruneSnapshots();
     }
     async function ensureScheduledSnapshots() {
       const rows = await db.all("internal_snapshots"),

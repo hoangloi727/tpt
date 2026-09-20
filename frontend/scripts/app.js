@@ -2396,13 +2396,13 @@
             pageHead(
               "Thi đua lớp",
               "Nhập điểm từng ngày, duyệt, khóa và truy vết theo tuần.",
-              `${manager ? '<button class="btn" id="assignScoreGraders">Phân công Sao đỏ</button><button class="btn" id="criteriaConfig">Bộ tiêu chí</button>' : ""}<button class="btn" id="undoScore" ${state.lastScoreUndo ? "" : "disabled"}>↶ Hoàn tác</button>${manager && ctx.sheet ? '<button class="btn danger" id="replaceScoreCriteria">Thay bộ tiêu chí</button><button class="btn danger" id="deleteScoreSheet">Xóa bảng tuần</button>' : ""}${manager ? `<button class="btn primary" id="scoreWorkflow">${workflowLabel(ctx.sheet)}</button>` : ""}`,
+              `${manager ? '<button class="btn" id="assignScoreGraders">Phân công Sao đỏ</button><button class="btn" id="criteriaConfig">Bộ tiêu chí</button>' : ""}<button class="btn" id="undoScore" ${state.lastScoreUndo ? "" : "disabled"}>↶ Hoàn tác</button>${manager && ctx.sheet ? '<button class="btn danger" id="replaceScoreCriteria">Thay bộ tiêu chí</button><button class="btn danger" id="deleteScoreSheet">Xóa bảng tuần</button>' : ""}${manager && ["complete", "review"].includes(ctx.sheet?.status) ? `<button class="btn danger" id="scoreIncomplete">${ctx.sheet.status === "review" ? "Từ chối, yêu cầu kiểm tra lại" : "Đánh dấu chưa nhập đủ"}</button>` : ""}${manager ? `<button class="btn primary" id="scoreWorkflow">${workflowLabel(ctx.sheet)}</button>` : ""}`,
 
 
             ) +
               `
       <div class="notice warn"><strong>${esc(ctx.set?.name || "Chưa có bộ tiêu chí")}</strong><br>${esc(ctx.set?.basis || "Cần tạo bộ tiêu chí trước khi nhập điểm.")} ${ctx.set ? `Công thức: ${ctx.set.formula === "base" ? `Điểm chuẩn ${ctx.set.base_score || 0}, sau đó cộng/trừ` : "Cộng điểm từng nhóm"}.` : ""}</div>
-      <div class="toolbar"><strong>${esc(week?.name || "Chưa chọn tuần")}</strong><span>${week ? `${fmtDate(week.start_date)} – ${fmtDate(week.end_date)}` : ""}</span><span style="margin-left:auto">Trạng thái: ${statusBadge(ctx.sheet?.status || "Chưa tạo")}</span></div>
+      <div class="toolbar"><strong>${esc(week?.name || "Chưa chọn tuần")}</strong><span>${week ? `${fmtDate(week.start_date)} – ${fmtDate(week.end_date)}` : ""}</span><span style="margin-left:auto">Trạng thái: ${ctx.sheet?.status === "draft" ? '<span class="badge">Chưa nhập đủ</span>' : statusBadge(ctx.sheet?.status || "Chưa tạo")}</span></div>
       <div class="tabs"><button data-score-tab="entry" class="${state.scoreTab === "entry" ? "active" : ""}">Nhập điểm</button>${manager ? `<button data-score-tab="ranking" class="${state.scoreTab === "ranking" ? "active" : ""}">Xếp hạng</button><button data-score-tab="anomaly" class="${state.scoreTab === "anomaly" ? "active" : ""}">Kiểm tra bất thường</button><button data-score-tab="history" class="${state.scoreTab === "history" ? "active" : ""}">Nhật ký điều chỉnh</button>` : ""}</div><div id="scoreArea"></div>`,
           );
           if (state.scoreTab === "entry") renderScoreEntry(ctx);
@@ -2420,7 +2420,9 @@
             $("#assignScoreGraders").onclick = showScoreGraderAssignments;
           if ($("#criteriaConfig")) $("#criteriaConfig").onclick = showRulesetConfig;
           if ($("#scoreWorkflow"))
-            $("#scoreWorkflow").onclick = () => scoreWorkflow(ctx);
+            $("#scoreWorkflow").onclick = () => scoreWorkflow(ctx).catch((error) => toast(error.message, "bad"));
+          if ($("#scoreIncomplete"))
+            $("#scoreIncomplete").onclick = () => scoreWorkflow(ctx, true).catch((error) => toast(error.message, "bad"));
           if ($("#deleteScoreSheet"))
             $("#deleteScoreSheet").onclick = () => deleteScoreSheet(ctx.sheet);
           if ($("#replaceScoreCriteria"))
@@ -2669,7 +2671,7 @@
               '<div class="empty">Tuần đang chọn chưa có ngày chấm điểm.</div>');
           const map = entryMap(ctx.selectedEntries),
             locked = ["approved", "locked"].includes(ctx.sheet.status);
-          area.innerHTML = `<div class="score-day-picker" aria-label="Chọn ngày nhập điểm">${ctx.days.map((day) => `<button type="button" data-score-date="${esc(day.date)}" class="${day.date === state.scoreDate ? "active" : ""}"><strong>${day.label}</strong><span>${fmtDate(day.date)}</span></button>`).join("")}</div><div class="score-wrap"><table class="score-table"><thead><tr><th style="min-width:110px">Lớp</th>${ctx.criteria.map((c) => `<th title="${esc(c.name)}">${esc(c.code)}<br><small>${esc(c.is_category ? c.name : c.group)}</small></th>`).join("")}<th>Điểm ngày</th><th>Tổng tuần</th><th>Trạng thái ngày</th></tr></thead><tbody>${ctx.classes
+          area.innerHTML = `${canManageScores() && !locked ? '<div class="toolbar"><button type="button" class="btn" id="fillMissingScoreCells" title="Điền mọi ô còn trống của tất cả lớp trong tuần đang chọn với 0 điểm, không có sự việc.">Điền ô trống cả tuần: không có sự việc</button></div>' : ""}<div class="score-day-picker" aria-label="Chọn ngày nhập điểm">${ctx.days.map((day) => `<button type="button" data-score-date="${esc(day.date)}" class="${day.date === state.scoreDate ? "active" : ""}"><strong>${day.label}</strong><span>${fmtDate(day.date)}</span></button>`).join("")}</div><div class="score-wrap"><table class="score-table"><thead><tr><th style="min-width:110px">Lớp</th>${ctx.criteria.map((c) => `<th title="${esc(c.name)}">${esc(c.code)}<br><small>${esc(c.is_category ? c.name : c.group)}</small></th>`).join("")}<th>Điểm ngày</th><th>Tổng tuần</th><th>Trạng thái ngày</th></tr></thead><tbody>${ctx.classes
             .map((cl, ri) => {
               let filled = 0;
               const cells = ctx.criteria
@@ -2706,6 +2708,18 @@
             .join(
               "",
             )}</tbody></table></div><div class="notice mt">Điểm tuần = điểm chuẩn một lần + tổng điều chỉnh từ các ngày chấm điểm trong tuần. Ô trống = chưa nhập; nhập <strong>0</strong> = có dữ liệu bằng 0; nhập <strong>KAD</strong> = không áp dụng; nhập <strong>MIỄN</strong> = được miễn. Có thể dán một vùng dữ liệu từ Excel bắt đầu tại ô đang chọn.</div>`;
+          if ($("#fillMissingScoreCells"))
+            $("#fillMissingScoreCells").onclick = async (event) => {
+              const button = event.currentTarget;
+              button.disabled = true;
+              try {
+                await fillMissingScoreCells();
+              } catch (error) {
+                toast(error.message, "bad");
+              } finally {
+                button.disabled = false;
+              }
+            };
           $$('[data-score-date]').forEach(
             (button) =>
               (button.onclick = () => {
@@ -2722,6 +2736,42 @@
             (button) =>
               (button.onclick = () => openCategoryScoreEntry(button)),
           );
+        }
+        async function fillMissingScoreCells() {
+          if (!canManageScores()) return;
+          const ctx = await scoreContext();
+          if (!ctx.sheet || ["approved", "locked"].includes(ctx.sheet.status))
+            return toast("Chỉ có thể điền ô trống khi bảng tuần chưa duyệt hoặc khóa.", "bad");
+          const filled = new Set(ctx.allEntries.map((entry) =>
+              `${entry.entry_date}|${entry.class_id}|${scoreEntryCriterionId(entry)}`,
+            )),
+            rows = [];
+          for (const day of ctx.days)
+            for (const schoolClass of ctx.allClasses)
+              for (const criterion of ctx.criteria) {
+                if (filled.has(`${day.date}|${schoolClass.id}|${criterion.id}`)) continue;
+                rows.push({
+                  id: uid(),
+                  sheet_id: ctx.sheet.id,
+                  school_year_id: ctx.sheet.school_year_id || ctx.sheet.academic_year_id,
+                  week_id: ctx.sheet.week_id,
+                  campus_id: schoolClass.campus_id,
+                  class_id: schoolClass.id,
+                  ...(criterion.is_category
+                    ? { criteria_group_id: criterion.id }
+                    : { criteria_id: criterion.id }),
+                  entry_date: day.date,
+                  entry_state: "value",
+                  value: 0,
+                  incidents: [],
+                  reason: "Điền ô trống hàng loạt: không có sự việc",
+                });
+              }
+          if (!rows.length) return toast("Tất cả ô trong tuần đã có dữ liệu.");
+          await db.bulkPut("score_entries", rows);
+          state.lastScoreUndo = null;
+          toast(`Đã điền ${rows.length} ô trống trong tuần: không có sự việc, 0 điểm.`);
+          await renderScores();
         }
         async function openCategoryScoreEntry(button) {
           const ctx = await scoreContext(),
@@ -3002,7 +3052,6 @@
           try {
             const ctx = await scoreContext(),
               matrix = text
-                .trim()
                 .split(/\r?\n/)
                 .map((r) => r.split("\t")),
               startR = Number(e.currentTarget.dataset.row),
@@ -3120,7 +3169,8 @@
             `<div class="field mt"><label>Bộ tiêu chí mới</label><select id="replacementCriteriaSet">${alternatives.map((set) => `<option value="${esc(set.id)}">${esc(set.name)} • v${esc(set.version || "1.0")}</option>`).join("")}</select></div>`,
           );
         }
-        async function scoreWorkflow(ctx) {
+        async function scoreWorkflow(ctx, returnToIncomplete = false) {
+          if (!canManageScores()) return;
           if (!ctx.sheet) {
             const availableSets = ctx.sets.filter(
               (set) => set.status !== "stopped" && set.active !== false,
@@ -3163,8 +3213,11 @@
             };
             return;
           }
-          const sheet = ctx.sheet;
-          if (sheet.status === "draft") {
+          const sheet = { ...ctx.sheet };
+          if (returnToIncomplete) {
+            if (!["complete", "review"].includes(sheet.status)) return;
+            sheet.status = "draft";
+          } else if (sheet.status === "draft") {
             if (!ctx.allClasses.length || !ctx.criteria.length || !ctx.days.length)
               return toast("Chưa đủ lớp, tiêu chí hoặc ngày học để hoàn tất bảng.", "bad");
             const expected =

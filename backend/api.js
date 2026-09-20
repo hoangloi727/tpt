@@ -637,17 +637,23 @@ export const createApiHandler = ({ repository, sessions, users }) =>
       }
 
       if (request.method === "GET" && url.pathname === "/api/export") {
-        if (!hasPermission(user, "data:export")) return forbidden(response);
+        if (!isManager(user)) return forbidden(response);
         return sendJson(response, 200, repository.exportAll(user.selectedSchoolId));
       }
       if (request.method === "GET" && url.pathname === "/api/teacher/class-week") {
         if (user.role !== "teacher") return forbidden(response);
         const yearId = String(url.searchParams.get("schoolYearId") || "").trim();
         const assignments = repository.all("teacher_class_assignments", false, user.selectedSchoolId);
+        const years = repository.all("school_years", false, user.selectedSchoolId)
+          .sort((a, b) => Number(!!b.is_current) - Number(!!a.is_current) ||
+            String(b.start_date || b.name || "").localeCompare(String(a.start_date || a.name || "")));
+        const assignedYears = new Set(assignments.filter((row) => row.user_id === user.id)
+          .map((row) => row.school_year_id || row.academic_year_id));
+        const selectedYearId = yearId || years.find((year) => assignedYears.has(year.id))?.id;
         const assignment = assignments.find(
           (row) =>
             row.user_id === user.id &&
-            (!yearId || (row.school_year_id || row.academic_year_id) === yearId),
+            (!selectedYearId || (row.school_year_id || row.academic_year_id) === selectedYearId),
         );
         if (!assignment) return sendJson(response, 404, { error: "Chưa được phân công lớp cho năm học này." });
         const weeks = repository
@@ -690,8 +696,8 @@ export const createApiHandler = ({ repository, sessions, users }) =>
             })),
           );
         return sendJson(response, 200, {
-          assignment: { school_year_id: assignment.school_year_id, class: schoolClass },
-          year: repository.get("school_years", assignment.school_year_id, user.selectedSchoolId),
+          assignment: { school_year_id: assignment.school_year_id || assignment.academic_year_id, class: schoolClass },
+          year: years.find((year) => year.id === (assignment.school_year_id || assignment.academic_year_id)) || null,
           weeks,
           week: weeks.find((row) => row.id === weekId) || null,
           ranking,
@@ -700,7 +706,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         });
       }
       if (request.method === "POST" && url.pathname === "/api/import/replace") {
-        if (!hasPermission(user, "data:import")) return forbidden(response);
+        if (!isManager(user)) return forbidden(response);
         const body = await readJson(request);
         assertObject(body);
         assertSafeWriteBody(body);
@@ -713,7 +719,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         );
       }
       if (request.method === "POST" && url.pathname === "/api/import/merge") {
-        if (!hasPermission(user, "data:import")) return forbidden(response);
+        if (!isManager(user)) return forbidden(response);
         const body = await readJson(request);
         assertObject(body);
         assertSafeWriteBody(body);
@@ -724,6 +730,13 @@ export const createApiHandler = ({ repository, sessions, users }) =>
             schoolId: user.selectedSchoolId,
           }),
         );
+      }
+      if (request.method === "POST" && url.pathname === "/api/snapshots/prune") {
+        if (!isManager(user)) return forbidden(response);
+        await readJson(request);
+        return sendJson(response, 200, {
+          removed: await repository.pruneSnapshots(user.selectedSchoolId, user.id, user.displayName || user.username),
+        });
       }
       if (
         request.method === "POST" &&
@@ -864,7 +877,9 @@ export const createApiHandler = ({ repository, sessions, users }) =>
       }
 
       const assignedGrader =
-          !isManager(user) && graderAssignments(repository, user).length > 0,
+          user.role === "user" && graderAssignments(repository, user).length > 0,
+        canAppendScoreAudit = (row) => row.entity === "score_entries" &&
+          (!row.id || !repository.get("audit_logs", row.id, user.selectedSchoolId)),
         canWriteScoreRow = (row) => {
           if (!canGrade(repository, user, row)) return false;
           const existing = row.id
@@ -936,7 +951,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         if (
           store === "audit_logs" &&
           !isManager(user) &&
-          (body.rows || []).some((row) => row.entity !== "score_entries")
+          (body.rows || []).some((row) => !canAppendScoreAudit(row))
         )
           return forbidden(response);
         return sendJson(
@@ -976,7 +991,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
             !canWriteScoreRow(body.row || {})) ||
           (store === "audit_logs" &&
             !isManager(user) &&
-            body.row?.entity !== "score_entries")
+            !canAppendScoreAudit(body.row))
         )
           return forbidden(response);
         return sendJson(
