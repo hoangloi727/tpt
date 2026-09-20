@@ -73,6 +73,7 @@
             scoreEntryCriterionId,
             entryMap,
             rankClasses,
+            groupRankings,
             scoreAnomalyItems,
           } = MODULES.score,
           {
@@ -386,6 +387,7 @@
             fmtDateTime,
             statusLabel,
             simpleTable,
+            groupRankings,
             csvSafe,
             scoped,
             campusName,
@@ -1325,15 +1327,13 @@
       </div>
       <div class="grid-2 mt">
         <div class="card"><div class="card-head"><h2>Hoạt động sắp tới</h2><span class="meta">Theo lịch</span></div><div class="card-body"><ul class="compact-list">${upcoming.map((e) => `<li><span class="badge blue">${fmtDate(e.date)}</span><div class="main"><strong>${esc(e.title)}</strong><small>${esc(e.location || "Chưa có địa điểm")} • ${esc(campusName(e.campus_id))}</small></div></li>`).join("") || '<li class="muted">Chưa có hoạt động sắp tới.</li>'}</ul></div></div>
-        <div class="card"><div class="card-head"><h2>Xếp hạng tạm thời theo nhóm</h2><span class="meta">Chỉ để theo dõi nội bộ</span></div><div class="card-body"><ul class="compact-list">${
-          rankings
-            .filter((row) => row.rank <= 3)
-            .map(
-              (r, i) =>
-                `<li><span class="badge ${r.rank <= 3 ? "yellow" : ""}">#${r.rank}</span><div class="main"><strong>${esc(r.class_name)}</strong><small>${esc(r.class_group_name)} • ${esc(campusName(r.campus_id))}</small></div><strong>${r.total.toFixed(1)} điểm</strong></li>`,
-            )
-            .join("") || '<li class="muted">Chưa đủ dữ liệu để xếp hạng.</li>'
-        }</ul></div></div>
+        <div class="card"><div class="card-head"><h2>Xếp hạng tạm thời theo nhóm</h2><span class="meta">Chỉ để theo dõi nội bộ</span></div><div class="card-body">${
+          groupRankings(rankings.filter((row) => row.rank <= 3)).map((group) =>
+            `<section><h3>${esc(group.name)}</h3><ul class="compact-list">${group.rows.map((r) =>
+              `<li><span class="badge yellow">#${r.rank}</span><div class="main"><strong>${esc(r.class_name)}</strong><small>${esc(campusName(r.campus_id))}</small></div><strong>${r.total.toFixed(1)} điểm</strong></li>`,
+            ).join("")}</ul></section>`,
+          ).join("") || '<p class="muted">Chưa đủ dữ liệu để xếp hạng.</p>'
+        }</div></div>
       </div>`,
           );
           bindCommonActions();

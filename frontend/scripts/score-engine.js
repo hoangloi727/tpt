@@ -10,6 +10,16 @@
 
   const { localISO } = modules.utils;
 
+  function groupRankings(rows) {
+    const groups = new Map();
+    for (const row of rows) {
+      const id = row.class_group_id || "__ungrouped__";
+      if (!groups.has(id)) groups.set(id, { name: row.class_group_name || "Chưa phân nhóm", rows: [] });
+      groups.get(id).rows.push(row);
+    }
+    return [...groups.values()];
+  }
+
   function workflowLabel(sheet) {
     if (!sheet) return "Khởi tạo bảng tuần";
     return (
@@ -302,6 +312,7 @@
   }
 
   modules.score = Object.freeze({
+    groupRankings,
     workflowLabel,
     parseScoreInput,
     criterionScore,

@@ -129,3 +129,44 @@ test("encrypted backups restore Unicode and reject wrong passwords or tampering"
   bytes[0] ^= 1;
   await assert.rejects(codec.decryptText({ ...encrypted, data: bytes.toString("base64") }, password));
 });
+
+test("weekly score reports and dashboard render separate class-group sections", async () => {
+  vm.runInContext(await readFile(new URL("../../frontend/scripts/report-formatters.js", import.meta.url), "utf8"), context);
+  const rows = [
+    { class_group_id: "primary", class_group_name: "Tiểu học", class_name: "1A", rank: 1 },
+    { class_group_id: "secondary", class_group_name: "THCS", class_name: "6A", rank: 1 },
+    { class_group_id: "primary", class_group_name: "Tiểu học", class_name: "2A", rank: 2 },
+    { class_group_id: "primary", class_group_name: "Tiểu học", class_name: "3A", rank: 4 },
+    { class_name: "Ungrouped", rank: 1 },
+  ].map(row => ({ ...row, total: 400, daily: { "2026-09-14": 400 } }));
+  const before = JSON.stringify(rows);
+  const controller = context.window.TPTAppModules.reportFormatters.createController({
+    esc: utils.esc, groupRankings: score.groupRankings, simpleTable: utils.simpleTable,
+    fmtDateTime: () => "Today", campusName: () => "School", state: {}, now: () => "",
+  });
+  const data = { rank: rows, ctx: { sheet: { status: "approved" }, days: [{ date: "2026-09-14", label: "Thứ 2" }] } };
+  const report = await controller.reportHTML("scores", data);
+  const sections = report.match(/<section>[\s\S]*?<\/section>/g);
+  assert.equal(sections.length, 3);
+  assert.match(sections[0], /Tiểu học/);
+  assert.match(sections[0], /1A/);
+  assert.match(sections[0], /2A/);
+  assert.match(sections[0], /3A/);
+  assert.doesNotMatch(sections[0], /6A/);
+  assert.match(sections[1], /THCS/);
+  assert.match(sections[1], /6A/);
+  assert.match(sections[2], /Chưa phân nhóm/);
+  assert.equal((report.match(/<table/g) || []).length, 3);
+  const app = await readFile(new URL("../../frontend/scripts/app.js", import.meta.url), "utf8");
+  const start = app.indexOf('<div class="card"><div class="card-head"><h2>Xếp hạng tạm thời theo nhóm');
+  const template = app.slice(start, app.indexOf('\n      </div>`,', start));
+  const dashboard = vm.runInNewContext('`' + template + '`', {
+    rankings: rows, groupRankings: score.groupRankings, esc: utils.esc, campusName: () => "School",
+  });
+  assert.equal((dashboard.match(/<section>/g) || []).length, 3);
+  assert.equal((dashboard.match(/<ul/g) || []).length, 3);
+  assert.doesNotMatch(dashboard, /3A/);
+  assert.equal(JSON.stringify(rows), before);
+  data.ctx.sheet.status = "review";
+  assert.doesNotMatch(await controller.reportHTML("scores", data), /<section>/);
+});

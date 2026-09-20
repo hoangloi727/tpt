@@ -8,6 +8,7 @@
       fmtDateTime,
       statusLabel,
       simpleTable,
+      groupRankings,
       csvSafe,
       scoped,
       campusName,
@@ -45,26 +46,24 @@
       if (type === "scores")
         body = !["approved", "locked"].includes(d.ctx.sheet?.status)
           ? '<div class="notice warn">Bảng tuần chưa được duyệt nên chưa có xếp hạng chính thức.</div>'
-          : simpleTable(
+          : groupRankings(d.rank).map((group) => `<section><h3>${esc(group.name)}</h3>${simpleTable(
               [
                 "Hạng trong nhóm",
                 "Lớp",
-                "Nhóm lớp",
                 "Cơ sở",
                 ...d.ctx.days.map((day) => day.label),
                 "Tổng tuần",
               ],
-              d.rank.map((x) => [
+              group.rows.map((x) => [
                 x.rank,
                 x.class_name,
-                x.class_group_name,
                 campusName(x.campus_id),
                 ...d.ctx.days.map((day) =>
                   Number(x.daily[day.date] || 0).toFixed(1),
                 ),
                 x.total.toFixed(1),
               ]),
-            );
+            )}</section>`).join("") || '<p class="muted">Chưa có dữ liệu xếp hạng.</p>';
       if (type === "tasks")
         body = simpleTable(
           ["Công việc", "Nhóm", "Cơ sở", "Hạn", "Trạng thái", "Tiến độ"],
