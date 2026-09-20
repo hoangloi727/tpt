@@ -299,3 +299,45 @@ test("fill missing cells records zero with no incidents across the week and pres
     assert.equal(writes, previousWrites);
   }
 });
+
+test("score history scopes to its week and combines action and actor filters", async () => {
+  const repository = await openRepository();
+  await seedScores(repository);
+  await repository.put("score_entries", { id: "entry", value: 7 }, { ...options, actorId: "alice", actorName: "Alice" });
+  await repository.put("score_entries", { id: "entry", value: 9 }, { ...options, actorId: "bob", actorName: "Bob" });
+  await repository.remove("score_entries", "entry", true, { ...options, actorId: "alice", actorName: "Alice" });
+  const logs = repository.all("audit_logs", false, "school");
+  const changed = logs.find(row => row.actor_id === "bob");
+  assert.equal(changed.week_id, "week");
+  assert.equal(changed.old_value, 7);
+  assert.equal(changed.new_value, 9);
+  const elements = Object.fromEntries(["#scoreArea", "#scoreHistoryRows", "#scoreHistoryAction", "#scoreHistoryActor"].map(id => [id, { innerHTML: "", value: "" }]));
+  const context = vm.createContext({
+    db: { all: async () => logs, listUsers: async () => [], allIncludingDeleted: async store => repository.all(store, true, "school") },
+    state: { weekId: "week", yearId: "year" }, $: id => elements[id],
+    fmtDateTime: value => value, fmtDate: value => value,
+    esc: value => String(value ?? "").replaceAll("<", "&lt;"),
+  });
+  vm.runInContext(appSource.slice(appSource.indexOf("async function renderScoreHistory("), appSource.indexOf("async function reportData(")), context);
+  const ctx = { allClasses: [], criteria: [] };
+  await context.renderScoreHistory(ctx);
+  assert.match(elements["#scoreArea"].innerHTML, /Tất cả hành động/);
+  assert.equal((elements["#scoreArea"].innerHTML.match(/<th>/g) || []).length, 3);
+  assert.match(elements["#scoreHistoryRows"].innerHTML, /7 → 9/);
+  elements["#scoreHistoryActor"].value = "bob";
+  elements["#scoreHistoryActor"].onchange();
+  assert.match(elements["#scoreHistoryRows"].innerHTML, /Bob/);
+  assert.doesNotMatch(elements["#scoreHistoryRows"].innerHTML, /Alice/);
+  elements["#scoreHistoryAction"].value = "Xóa điểm";
+  elements["#scoreHistoryAction"].onchange();
+  assert.match(elements["#scoreHistoryRows"].innerHTML, /Không có thay đổi phù hợp/);
+  elements["#scoreHistoryActor"].value = "alice";
+  elements["#scoreHistoryActor"].onchange();
+  assert.match(elements["#scoreHistoryRows"].innerHTML, /9 → Chưa nhập/);
+  context.state.weekId = "next-week";
+  elements["#scoreHistoryAction"].value = "";
+  elements["#scoreHistoryActor"].value = "";
+  await context.renderScoreHistory(ctx);
+  assert.doesNotMatch(elements["#scoreHistoryRows"].innerHTML, /Alice|Bob|7 → 9/);
+  assert.doesNotMatch(elements["#scoreArea"].innerHTML, /Alice|Bob/);
+});

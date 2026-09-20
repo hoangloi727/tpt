@@ -561,6 +561,26 @@ export class SqliteRepository {
     }
   }
 
+  scoreAuditDetails(draft, store, row, previous = null) {
+    if (!["score_entries", "weekly_score_sheets"].includes(store)) return {};
+    const value = (entry) => !entry || entry.deleted_at ? "Chưa nhập" :
+      entry.entry_state === "na" ? "Không áp dụng" : entry.entry_state === "exempt" ? "Miễn" :
+      entry.value ?? "Chưa nhập";
+    const schoolClass = this.findIn(draft, "classes", row.class_id, row.school_profile_id);
+    const criterion = this.findIn(draft, row.criteria_group_id ? "criteria_groups" : "criteria",
+      row.criteria_group_id || row.criteria_id, row.school_profile_id);
+    return {
+      week_id: row.week_id,
+      school_year_id: row.school_year_id || row.academic_year_id,
+      sheet_id: store === "weekly_score_sheets" ? row.id : row.sheet_id,
+      summary: store === "weekly_score_sheets" ? "Trạng thái bảng" :
+        [row.entry_date, schoolClass?.name || schoolClass?.class_name || "Lớp", criterion?.name || "Điểm"].filter(Boolean).join(" · "),
+      old_value: store === "weekly_score_sheets" ? previous?.status : value(previous),
+      new_value: store === "weekly_score_sheets" ? row.status : value(row),
+      ...(store === "score_entries" && Array.isArray(row.incidents) ? { incident_count: row.incidents.length } : {}),
+    };
+  }
+
   unlockWeeklyScoreSheet(id, reason, revision, options) {
     return this.mutate((draft) => {
       const sheet = this.findIn(draft, "weekly_score_sheets", id, options.schoolId);
@@ -1062,7 +1082,8 @@ export class SqliteRepository {
             entity: store,
             entity_id: record.id,
             summary: record.name || record.title || record.code || record.class_name || "",
-            reason: options.reason || undefined,
+            ...this.scoreAuditDetails(draft, store, record, existing),
+            reason: options.reason || (store === "score_entries" && !existing ? record.reason : undefined),
             actor_id: options.actorId || undefined,
             actor_name: options.actorName || undefined,
           },
@@ -1263,6 +1284,7 @@ export class SqliteRepository {
                   removed.code ||
                   removed.class_name ||
                   "",
+                ...this.scoreAuditDetails(draft, store, { ...removed, deleted_at: now() }, removed),
                 reason: options.reason || undefined,
                 actor_id: options.actorId || undefined,
                 actor_name: options.actorName || undefined,
@@ -1471,8 +1493,9 @@ export class SqliteRepository {
             action: "score_sheet_delete",
             entity: "weekly_score_sheets",
             entity_id: sheet.id,
-            summary: `Xóa bảng tuần ${sheet.week_id}: ${counts.entries} dòng điểm, ${counts.snapshots} snapshot xếp hạng.`,
-            reason: `Người thực hiện: ${actorId}; trạng thái trước khi xóa: ${sheet.status || "draft"}.`,
+            week_id: sheet.week_id, school_year_id: sheet.school_year_id,
+            summary: `Xóa bảng tuần và ${counts.entries} ô điểm.`,
+            reason: undefined,
             actor_id: actorId || undefined,
             actor_name: actorName || undefined,
           },
@@ -1582,8 +1605,9 @@ export class SqliteRepository {
             action: "score_sheet_criteria_replace",
             entity: "weekly_score_sheets",
             entity_id: sheet.id,
-            summary: `Đổi bộ tiêu chí ${previousCriteriaSetId} thành ${criteriaSet.id}; xóa ${counts.entries} dòng điểm và ${counts.snapshots} snapshot.`,
-            reason: `Người thực hiện: ${actorId}; bảng tuần được đặt lại về draft.`,
+            week_id: sheet.week_id, school_year_id: sheet.school_year_id,
+            summary: `Đổi sang bộ tiêu chí ${criteriaSet.name || "mới"}; xóa ${counts.entries} ô điểm.`,
+            reason: "Bảng tuần được đặt lại về chưa nhập đủ.",
             actor_id: actorId || undefined,
             actor_name: actorName || undefined,
           },

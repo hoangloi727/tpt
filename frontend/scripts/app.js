@@ -2401,7 +2401,7 @@
 
             ) +
               `
-      <div class="notice warn"><strong>${esc(ctx.set?.name || "Chưa có bộ tiêu chí")}</strong><br>${esc(ctx.set?.basis || "Cần tạo bộ tiêu chí trước khi nhập điểm.")} ${ctx.set ? `Công thức: ${ctx.set.formula === "base" ? `Điểm chuẩn ${ctx.set.base_score || 0}, sau đó cộng/trừ` : "Cộng điểm từng nhóm"}.` : ""}</div>
+      <div class="notice warn"><strong>${esc(ctx.set?.name || "Chưa có bộ tiêu chí")}</strong><br>${esc(ctx.set ? ctx.set.basis || "" : "Cần tạo bộ tiêu chí trước khi nhập điểm.")} ${ctx.set ? `Công thức: ${ctx.set.formula === "base" ? `Điểm chuẩn ${ctx.set.base_score || 0}, sau đó cộng/trừ` : "Cộng điểm từng nhóm"}.` : ""}</div>
       <div class="toolbar"><strong>${esc(week?.name || "Chưa chọn tuần")}</strong><span>${week ? `${fmtDate(week.start_date)} – ${fmtDate(week.end_date)}` : ""}</span><span style="margin-left:auto">Trạng thái: ${ctx.sheet?.status === "draft" ? '<span class="badge">Chưa nhập đủ</span>' : statusBadge(ctx.sheet?.status || "Chưa tạo")}</span></div>
       <div class="tabs"><button data-score-tab="entry" class="${state.scoreTab === "entry" ? "active" : ""}">Nhập điểm</button>${manager ? `<button data-score-tab="ranking" class="${state.scoreTab === "ranking" ? "active" : ""}">Xếp hạng</button><button data-score-tab="anomaly" class="${state.scoreTab === "anomaly" ? "active" : ""}">Kiểm tra bất thường</button><button data-score-tab="history" class="${state.scoreTab === "history" ? "active" : ""}">Nhật ký điều chỉnh</button>` : ""}</div><div id="scoreArea"></div>`,
           );
@@ -2868,15 +2868,6 @@
             $("#deleteIncidentEntry").onclick = async () => {
               confirmDestructive("Ghi nhận này sẽ bị xóa.", async () => {
                 await db.remove("score_entries", existing.id);
-                await db.put("audit_logs", {
-                  action: "score_clear",
-                  entity: "score_entries",
-                  entity_id: existing.id,
-                  summary: `${state.scoreDate}|${schoolClass.id}|${category.id}`,
-                  old_value: existing.value,
-                  new_value: null,
-                  reason: "Xóa ghi nhận theo danh mục",
-                });
                 state.lastScoreUndo = { type: "restore", row: existing };
                 toast("Đã xóa dữ liệu ghi nhận");
                 renderScores();
@@ -2937,15 +2928,6 @@
                   reason: existing?.reason || "",
                 },
               );
-              await db.put("audit_logs", {
-                action: existing ? "score_update" : "score_create",
-                entity: "score_entries",
-                entity_id: saved.id,
-                summary: `${state.scoreDate}|${schoolClass.id}|${category.id}`,
-                old_value: existing?.value ?? existing?.entry_state ?? null,
-                new_value: value ?? entryState,
-                reason: `Ghi nhận ${rows.length} sự việc theo danh mục`,
-              });
               state.lastScoreUndo = existing
                 ? { type: "restore", row: existing }
                 : { type: "delete", id: saved.id };
@@ -2970,15 +2952,6 @@
               if (old) {
                 confirmDestructive(`Xóa giá trị điểm ${old.value}?`, async () => {
                   await db.remove("score_entries", old.id);
-                  await db.put("audit_logs", {
-                    action: "score_clear",
-                    entity: "score_entries",
-                    entity_id: old.id,
-                    summary: `Xóa giá trị ${old.value}`,
-                    old_value: old.value,
-                    new_value: null,
-                    reason: "Người dùng xóa ô",
-                  });
                   state.lastScoreUndo = { type: "restore", row: old };
                   renderScores();
                 }, "Xóa điểm");
@@ -3018,15 +2991,6 @@
                 reason: old?.reason || "",
               },
             );
-            await db.put("audit_logs", {
-              action: old ? "score_update" : "score_create",
-              entity: "score_entries",
-              entity_id: saved.id,
-              summary: `${state.scoreDate}|${i.dataset.class}|${i.dataset.criterion}`,
-              old_value: old?.value ?? old?.entry_state ?? null,
-              new_value: value ?? entry_state,
-              reason: "Nhập trực tiếp điểm ngày",
-            });
             state.lastScoreUndo = old
               ? { type: "restore", row: old }
               : { type: "delete", id: saved.id };
@@ -3085,12 +3049,6 @@
               }
             if (batch.length) {
               await db.bulkPut("score_entries", batch);
-              await db.put("audit_logs", {
-                action: "score_bulk_paste",
-                entity: "score_entries",
-                summary: `Dán ${batch.length} ô điểm`,
-                reason: "Dán vùng dữ liệu từ bảng tính",
-              });
               toast(`Đã dán ${batch.length} ô dữ liệu`);
               renderScores();
             } else toast("Không có ô hợp lệ để nhập.", "bad");
@@ -3122,13 +3080,6 @@
             });
           }
           state.lastScoreUndo = null;
-          await db.put("audit_logs", {
-            action: "score_undo",
-            entity: "score_entries",
-            entity_id: u.id || u.row.id,
-            summary: "Hoàn tác thay đổi điểm",
-            reason: "Người dùng hoàn tác",
-          });
           toast("Đã hoàn tác thay đổi gần nhất");
           renderScores();
         }
@@ -3286,13 +3237,6 @@
           } else if (sheet.status === "locked") return unlockSheet(sheet);
           await db.put("weekly_score_sheets", sheet);
           state.lastScoreUndo = null;
-          await db.put("audit_logs", {
-            action: "sheet_status",
-            entity: "weekly_score_sheets",
-            entity_id: sheet.id,
-            summary: `Chuyển trạng thái: ${sheet.status}`,
-            reason: "Quy trình thi đua",
-          });
           toast("Đã cập nhật trạng thái bảng tuần");
           renderScores();
         }
@@ -3393,34 +3337,61 @@
             `<div class="notice">Cảnh báo chỉ yêu cầu kiểm tra, không tự kết luận sai phạm.</div><div class="card"><div class="card-body"><ul class="compact-list">${items.map((x) => `<li><span class="badge ${x.level}">${x.level === "red" ? "Kiểm tra" : "Lưu ý"}</span><div class="main">${esc(x.text)}</div></li>`).join("") || '<li class="muted">Chưa phát hiện bất thường theo các quy tắc đang bật.</li>'}</ul></div></div>`;
         }
         async function renderScoreHistory(ctx) {
-          const [allLogs, users] = await Promise.all([
-              db.all("audit_logs"),
-              db.listUsers(),
-            ]),
-            usersById = new Map(users.map((user) => [user.id, user])),
-            logs = allLogs
-              .filter((x) =>
-                ["score_entries", "weekly_score_sheets"].includes(x.entity),
-              )
-              .sort((a, b) => b.created_at.localeCompare(a.created_at)),
-            actorFor = (log) => {
-              const legacyId = String(log.reason || "").match(
-                /Người thực hiện:\s*([^;]+)/,
-              )?.[1];
-              const actor = usersById.get(log.actor_id || legacyId);
-              return log.actor_name || actor?.displayName || actor?.username || "—";
+          const [allLogs, users, entries, sheets] = await Promise.all([
+            db.all("audit_logs"), db.listUsers(),
+            db.allIncludingDeleted("score_entries"), db.allIncludingDeleted("weekly_score_sheets"),
+          ]);
+          const usersById = new Map(users.map((user) => [user.id, user])),
+            entriesById = new Map(entries.map((row) => [row.id, row])),
+            sheetsById = new Map(sheets.map((row) => [row.id, row])),
+            labels = { draft: "Chưa nhập đủ", complete: "Đã nhập đủ", review: "Chờ kiểm tra", approved: "Đã duyệt", locked: "Đã khóa", unlocked: "Đã mở khóa", value: "Có dữ liệu", na: "Không áp dụng", exempt: "Miễn" },
+            valueLabel = (value) => labels[value] || value,
+            logs = allLogs.filter((log) => {
+              if (!["score_entries", "weekly_score_sheets"].includes(log.entity)) return false;
+              const source = log.entity === "score_entries" ? entriesById.get(log.entity_id) : sheetsById.get(log.entity_id);
+              const weekId = log.week_id || source?.week_id;
+              const yearId = log.school_year_id || source?.school_year_id || source?.academic_year_id;
+              return weekId === state.weekId && (!yearId || yearId === state.yearId) &&
+                (log.week_id || String(log.action).startsWith("score_") || String(log.action).startsWith("sheet_"));
+            }).sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+          const actorId = (log) => log.actor_id || String(log.reason || "").match(/Người thực hiện:\s*([^;]+)/)?.[1] || log.actor_name || "unknown",
+            actorName = (log) => {
+              const actor = usersById.get(actorId(log));
+              return log.actor_name || actor?.displayName || actor?.username || "Không rõ";
             },
-            reasonFor = (log) => {
-              const legacyId = String(log.reason || "").match(
-                /Người thực hiện:\s*([^;]+)/,
-              )?.[1];
-              const actor = usersById.get(log.actor_id || legacyId);
-              return legacyId && actor
-                ? String(log.reason).replace(legacyId, actor.displayName || actor.username)
-                : log.reason || "—";
-            };
-          $("#scoreArea").innerHTML =
-            `<div class="table-wrap"><table><thead><tr><th>Thời gian</th><th>Người thực hiện</th><th>Hành động</th><th>Nội dung</th><th>Giá trị cũ</th><th>Giá trị mới</th><th>Lý do</th></tr></thead><tbody>${logs.map((x) => `<tr><td>${fmtDateTime(x.created_at)}</td><td>${esc(actorFor(x))}</td><td>${esc({ score_clear: "Xóa điểm", score_update: "Cập nhật điểm", score_create: "Tạo điểm", score_bulk_paste: "Dán điểm hàng loạt", score_undo: "Hoàn tác điểm", sheet_status: "Đổi trạng thái bảng", sheet_unlock: "Mở khóa bảng" }[x.action] || x.action)}</td><td>${esc(x.summary)}</td><td>${esc({ value: "Có dữ liệu", na: "Không áp dụng", exempt: "Được miễn" }[x.old_value] || (x.old_value ?? "—"))}</td><td>${esc({ value: "Có dữ liệu", na: "Không áp dụng", exempt: "Được miễn" }[x.new_value] || (x.new_value ?? "—"))}</td><td class="wrap">${esc(reasonFor(x))}</td></tr>`).join("") || '<tr><td colspan="7" class="empty">Chưa có điều chỉnh.</td></tr>'}</tbody></table></div>`;
+            actionFor = (log) => {
+              if (log.entity === "weekly_score_sheets") {
+                if (log.action === "score_sheet_delete") return "Xóa bảng tuần";
+                if (log.action === "score_sheet_criteria_replace") return "Thay bộ tiêu chí";
+                const status = log.new_value || String(log.summary || "").match(/Chuyển trạng thái: (\w+)/)?.[1];
+                return labels[status] || (log.action === "sheet_unlock" ? "Đã mở khóa" : "Thay đổi bảng tuần");
+              }
+              return { create: "Nhập điểm", score_create: "Nhập điểm", update: "Sửa điểm", score_update: "Sửa điểm", soft_delete: "Xóa điểm", hard_delete: "Xóa điểm", score_clear: "Xóa điểm", restore: "Khôi phục điểm", score_undo: "Hoàn tác", score_bulk_paste: "Dán điểm" }[log.action] || "Cập nhật điểm";
+            },
+            actors = new Map(logs.map((log) => [actorId(log), actorName(log)])),
+            actions = [...new Set(logs.map(actionFor))];
+          $("#scoreArea").innerHTML = `<div class="toolbar"><div class="field"><label for="scoreHistoryAction">Hành động</label><select id="scoreHistoryAction"><option value="">Tất cả hành động</option>${actions.map((action) => `<option value="${esc(action)}">${esc(action)}</option>`).join("")}</select></div><div class="field"><label for="scoreHistoryActor">Người thực hiện</label><select id="scoreHistoryActor"><option value="">Tất cả người thực hiện</option>${[...actors].map(([id, name]) => `<option value="${esc(id)}">${esc(name)}</option>`).join("")}</select></div></div><div class="table-wrap"><table><thead><tr><th>Thời gian</th><th>Người thực hiện</th><th>Thay đổi</th></tr></thead><tbody id="scoreHistoryRows"></tbody></table></div>`;
+          const renderRows = () => {
+            const action = $("#scoreHistoryAction").value, actor = $("#scoreHistoryActor").value;
+            $("#scoreHistoryRows").innerHTML = logs.filter((log) =>
+              (!action || actionFor(log) === action) && (!actor || actorId(log) === actor),
+            ).map((log) => {
+              const parts = String(log.summary || "").split("|"),
+                schoolClass = ctx.allClasses.find((row) => row.id === parts[1]),
+                criterion = ctx.criteria.find((row) => row.id === parts[2]);
+              let summary = parts.length === 3
+                ? [fmtDate(parts[0]), schoolClass?.name || schoolClass?.class_name || "Lớp", criterion?.name || "Điểm"].join(" · ")
+                : String(log.summary || "Cập nhật điểm").replace(/Chuyển trạng thái: (\w+)/, (_, status) => valueLabel(status));
+              if (log.old_value != null || log.new_value != null)
+                summary += `: ${valueLabel(log.old_value ?? "Chưa nhập")} → ${valueLabel(log.new_value ?? "Đã xóa")}`;
+              if (log.incident_count != null) summary += log.incident_count ? ` · ${log.incident_count} sự việc` : " · Không có sự việc";
+              const reason = String(log.reason || "").replace(/Người thực hiện:[^;]+;?\s*/g, "").trim();
+              return `<tr><td>${fmtDateTime(log.created_at)}</td><td>${esc(actorName(log))}</td><td class="wrap">${esc(summary)}${reason && !["Quy trình thi đua", "Nhập trực tiếp điểm ngày", "Người dùng hoàn tác"].includes(reason) ? `<br><small>${esc(reason)}</small>` : ""}</td></tr>`;
+            }).join("") || '<tr><td colspan="3" class="empty">Không có thay đổi phù hợp trong tuần này.</td></tr>';
+          };
+          $("#scoreHistoryAction").onchange = renderRows;
+          $("#scoreHistoryActor").onchange = renderRows;
+          renderRows();
         }
 
         async function reportData() {
