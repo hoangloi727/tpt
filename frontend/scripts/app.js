@@ -3439,12 +3439,12 @@
               "Tổng hợp số liệu đã xác nhận và truy ngược về bản ghi gốc.",
               `<button class="btn" id="exportReportPackage">Gói báo cáo chốt</button><button class="btn" id="exportReportCsv">Xuất CSV</button><button class="btn" onclick="window.print()">In/Lưu PDF</button><button class="btn" id="saveReportDraft">Lưu nháp</button><button class="btn primary" id="finalizeReport">Chốt báo cáo</button>`,
             ) +
-              `<div class="toolbar no-print"><select id="reportType"><option value="week">Báo cáo công tác tuần</option><option value="scores">Tổng hợp thi đua lớp</option><option value="tasks">Tiến độ công việc</option><option value="activities">Báo cáo hoạt động</option><option value="equipment">Báo cáo thiết bị</option></select><select id="reportPaper"><option value="landscape">A4 ngang</option><option value="portrait">A4 dọc</option></select><input id="reportRecipient" placeholder="Nơi nhận (tùy chọn)"><select id="reportSubmission"><option value="not_submitted">Chưa gửi</option><option value="submitted">Đã gửi</option><option value="accepted">Đã tiếp nhận</option></select><span class="muted">Số liệu nguồn không sửa tại báo cáo</span></div><div class="notice warn no-print"><strong>Nháp</strong> có thể tạo lại; <strong>báo cáo chốt</strong> lưu nội dung tĩnh, phiên bản, bộ lọc, mã kiểm tra và trạng thái gửi. Muốn sửa sau chốt phải tạo phiên bản mới.</div><article class="card" id="reportPreview"><div class="card-body">${await reportHTML("week", d)}</div></article><div class="card mt no-print"><div class="card-head"><h2>Phiên bản báo cáo đã lưu</h2><span class="meta">${saved.length} phiên bản</span></div><div class="card-body"><ul class="compact-list">${
+              `<div class="toolbar no-print"><select id="reportType"><option value="week">Báo cáo công tác tuần</option><option value="scores">Tổng hợp thi đua lớp</option><option value="faults">Chi tiết lỗi theo lớp</option><option value="fault-frequency">Thống kê tần suất lỗi</option><option value="tasks">Tiến độ công việc</option><option value="activities">Báo cáo hoạt động</option><option value="equipment">Báo cáo thiết bị</option></select><select id="reportPaper"><option value="landscape">A4 ngang</option><option value="portrait">A4 dọc</option></select><input id="reportRecipient" placeholder="Nơi nhận (tùy chọn)"><select id="reportSubmission"><option value="not_submitted">Chưa gửi</option><option value="submitted">Đã gửi</option><option value="accepted">Đã tiếp nhận</option></select><span class="muted">Số liệu nguồn không sửa tại báo cáo</span></div><div class="notice warn no-print"><strong>Nháp</strong> có thể tạo lại; <strong>báo cáo chốt</strong> lưu nội dung tĩnh, phiên bản, bộ lọc, mã kiểm tra và trạng thái gửi. Muốn sửa sau chốt phải tạo phiên bản mới.</div><article class="card" id="reportPreview"><div class="card-body">${await reportHTML("week", d)}</div></article><div class="card mt no-print"><div class="card-head"><h2>Phiên bản báo cáo đã lưu</h2><span class="meta">${saved.length} phiên bản</span></div><div class="card-body"><ul class="compact-list">${
                 saved
                   .slice(0, 30)
                   .map(
                     (r) =>
-                      `<li><div class="main"><strong>${esc(r.name)}</strong><small>${fmtDateTime(r.generated_at || r.created_at)} • ${esc({ week: "Công tác tuần", scores: "Thi đua lớp", tasks: "Tiến độ công việc", activities: "Hoạt động", equipment: "Thiết bị", "year-final": "Tổng kết năm học" }[r.type] || r.type)} • v${Number(r.version || 1)} • ${r.status === "finalized" ? "đã chốt" : "bản nháp"} • ${statusLabel(r.submission_status)}</small></div><span class="badge ${r.status === "finalized" ? "green" : "yellow"}">${r.status === "finalized" ? "Bất biến" : "Nháp"}</span><button class="link-btn" data-open-report="${esc(r.id)}">Mở lại</button></li>`,
+                      `<li><div class="main"><strong>${esc(r.name)}</strong><small>${fmtDateTime(r.generated_at || r.created_at)} • ${esc({ week: "Công tác tuần", scores: "Thi đua lớp", faults: "Lỗi theo lớp", "fault-frequency": "Tần suất lỗi", tasks: "Tiến độ công việc", activities: "Hoạt động", equipment: "Thiết bị", "year-final": "Tổng kết năm học" }[r.type] || r.type)} • v${Number(r.version || 1)} • ${r.status === "finalized" ? "đã chốt" : "bản nháp"} • ${statusLabel(r.submission_status)}</small></div><span class="badge ${r.status === "finalized" ? "green" : "yellow"}">${r.status === "finalized" ? "Bất biến" : "Nháp"}</span><button class="link-btn" data-open-report="${esc(r.id)}">Mở lại</button></li>`,
                   )
                   .join("") ||
                 '<li class="muted">Chưa lưu phiên bản báo cáo.</li>'
@@ -3501,6 +3501,7 @@
               events: data.events,
               activities: data.activities,
               ranking: data.rank,
+              ...(["faults", "fault-frequency"].includes(type) ? { score_entries: data.ctx.entries, classes: data.ctx.classes } : {}),
             },
             sourceChecksum = await sha256Text(stableJSON(source)),
             existing = (await db.all("generated_reports")).filter(
@@ -3527,7 +3528,8 @@
               data.tasks.length +
               data.events.length +
               data.activities.length +
-              data.rank.length,
+              data.rank.length +
+              (["faults", "fault-frequency"].includes(type) ? data.ctx.entries.length : 0),
             config_snapshot: {
               criteria_set_id: data.ctx?.set?.id || null,
               criteria_set_version: data.ctx?.set?.version || null,

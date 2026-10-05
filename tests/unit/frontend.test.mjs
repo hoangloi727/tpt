@@ -170,3 +170,38 @@ test("weekly score reports and dashboard render separate class-group sections", 
   data.ctx.sheet.status = "review";
   assert.doesNotMatch(await controller.reportHTML("scores", data), /<section>/);
 });
+
+test("fault reports export all deductions by class and rank occurrence counts", async () => {
+  vm.runInContext(await readFile(new URL("../../frontend/scripts/report-formatters.js", import.meta.url), "utf8"), context);
+  let csv;
+  const controller = context.window.TPTAppModules.reportFormatters.createController({
+    esc: utils.esc, simpleTable: utils.simpleTable, csvSafe: utils.csvSafe,
+    fmtDateTime: () => "Today", campusName: (id) => id, state: {}, now: () => "",
+    today: () => "2026-10-05", download: (content) => { csv = content; },
+  });
+  const fault = (id, points = -1) => ({ criteria_id: id, rule_code: id, rule_name: id === "late" ? "Late" : "Uniform", person_name: "<Student>", points });
+  const entry = (class_id, incidents, entry_state = "value") => ({ class_id, incidents, entry_state, entry_date: "2026-10-05" });
+  const data = { ctx: {
+    classes: [{ id: "b", class_name: "10A", campus_id: "North" }, { id: "a", class_name: "2A", campus_id: "South" }],
+    entries: [entry("b", [fault("late"), fault("uniform", -5)]), entry("a", [fault("late"), fault("bonus", 2), fault("zero", 0)]),
+      entry("outside", [fault("late")]), entry("a", [fault("uniform")], "exempt")],
+    sheet: { status: "review" },
+  } };
+  const before = JSON.stringify(data);
+  controller.exportReportCSV("faults", data);
+  assert.equal(csv.split("\r\n").length, 4);
+  assert.ok(csv.indexOf("2A") < csv.indexOf("10A"));
+  assert.doesNotMatch(csv, /bonus|zero/);
+  controller.exportReportCSV("fault-frequency", data);
+  assert.equal(csv.split("\r\n").length, 3);
+  assert.match(csv.split("\r\n")[1], /late.*Late.*2/);
+  assert.match(csv.split("\r\n")[2], /uniform.*Uniform.*1/);
+  const html = await controller.reportHTML("faults", data);
+  assert.match(html, /&lt;Student&gt;/);
+  assert.match(html, /số liệu tạm thời/);
+  assert.equal(JSON.stringify(data), before);
+  data.ctx.entries = [];
+  assert.match(await controller.reportHTML("fault-frequency", data), /Chưa có lỗi/);
+  controller.exportReportCSV("faults", data);
+  assert.equal(csv.split("\r\n").length, 1);
+});

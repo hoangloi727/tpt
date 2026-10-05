@@ -18,15 +18,53 @@
       download,
     } = deps;
 
+    function faultTable(type, d) {
+      const classes = new Map(d.ctx.classes.map((row) => [row.id, row]));
+      const faults = d.ctx.entries.flatMap((entry) => {
+        const schoolClass = classes.get(entry.class_id);
+        if (!schoolClass || entry.entry_state !== "value") return [];
+        return (entry.incidents || []).filter((item) => Number(item.points) < 0)
+          .map((item) => ({ ...item, schoolClass, date: entry.entry_date }));
+      });
+      if (type === "fault-frequency") {
+        const counts = new Map();
+        for (const fault of faults) {
+          const key = fault.criteria_id || fault.rule_code || fault.rule_name;
+          if (!counts.has(key)) counts.set(key, { code: fault.rule_code || "", name: fault.rule_name || "Chưa rõ nội dung", count: 0 });
+          counts.get(key).count++;
+        }
+        return {
+          head: ["Mã lỗi", "Nội dung lỗi", "Số lần xảy ra"],
+          rows: [...counts.values()].sort((a, b) => b.count - a.count || a.name.localeCompare(b.name, "vi"))
+            .map((row) => [row.code, row.name, row.count]),
+        };
+      }
+      faults.sort((a, b) => String(a.schoolClass.class_name).localeCompare(String(b.schoolClass.class_name), "vi", { numeric: true }) ||
+        a.schoolClass.id.localeCompare(b.schoolClass.id) || a.date.localeCompare(b.date));
+      return {
+        head: ["Lớp", "Cơ sở", "Ngày", "Họ và tên", "Mã lỗi", "Nội dung lỗi", "Điểm"],
+        rows: faults.map((row) => [row.schoolClass.class_name, campusName(row.schoolClass.campus_id), row.date,
+          row.person_name || "", row.rule_code || "", row.rule_name || "Chưa rõ nội dung", Number(row.points)]),
+      };
+    }
+
     async function reportHTML(type, d) {
       const title = {
         week: "BÁO CÁO CÔNG TÁC TUẦN",
         scores: "TỔNG HỢP THI ĐUA LỚP",
+        faults: "CHI TIẾT LỖI THEO LỚP",
+        "fault-frequency": "THỐNG KÊ TẦN SUẤT LỖI",
         tasks: "BÁO CÁO TIẾN ĐỘ CÔNG VIỆC",
         activities: "BÁO CÁO HOẠT ĐỘNG ĐỘI",
         equipment: "BÁO CÁO THIẾT BỊ ĐỘI",
       }[type];
       let body = "";
+      if (type === "faults" || type === "fault-frequency") {
+        const table = faultTable(type, d);
+        body = '<p>Mỗi ghi nhận trừ điểm được tính là một lần xảy ra, trong tuần và cơ sở đã chọn.</p>' +
+          (!["approved", "locked"].includes(d.ctx.sheet?.status) ? '<div class="notice warn">Bảng tuần chưa duyệt; số liệu tạm thời.</div>' : "") +
+          (table.rows.length ? simpleTable(table.head, table.rows) : '<p class="muted">Chưa có lỗi trong phạm vi đã chọn.</p>');
+      }
       if (type === "week")
         body = `<h3>I. Kết quả thực hiện</h3><p>Đã hoàn thành <strong>${d.completed.length}</strong>/${d.tasks.length} công việc; còn <strong>${d.overdue.length}</strong> việc quá hạn.</p>${simpleTable(
           ["Công việc", "Trạng thái", "Hạn"],
@@ -105,7 +143,9 @@
     function exportReportCSV(type, d) {
       let head = [],
         rows = [];
-      if (type === "scores") {
+      if (type === "faults" || type === "fault-frequency") {
+        ({ head, rows } = faultTable(type, d));
+      } else if (type === "scores") {
         head = [
           "Hạng trong nhóm",
           "Lớp",
