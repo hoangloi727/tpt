@@ -41,10 +41,20 @@
       }
       faults.sort((a, b) => String(a.schoolClass.class_name).localeCompare(String(b.schoolClass.class_name), "vi", { numeric: true }) ||
         a.schoolClass.id.localeCompare(b.schoolClass.id) || a.date.localeCompare(b.date));
+      const groups = new Map();
+      const rows = faults.map((row) => {
+        const values = [row.schoolClass.class_name, campusName(row.schoolClass.campus_id), row.date,
+          row.person_name || "", row.rule_code || "", row.rule_name || "Chưa rõ nội dung", Number(row.points)];
+        if (!groups.has(row.schoolClass.id)) groups.set(row.schoolClass.id, {
+          name: row.schoolClass.class_name, campus: values[1], rows: [],
+        });
+        groups.get(row.schoolClass.id).rows.push(values);
+        return values;
+      });
       return {
         head: ["Lớp", "Cơ sở", "Ngày", "Họ và tên", "Mã lỗi", "Nội dung lỗi", "Điểm"],
-        rows: faults.map((row) => [row.schoolClass.class_name, campusName(row.schoolClass.campus_id), row.date,
-          row.person_name || "", row.rule_code || "", row.rule_name || "Chưa rõ nội dung", Number(row.points)]),
+        rows,
+        groups: [...groups.values()],
       };
     }
 
@@ -63,7 +73,9 @@
         const table = faultTable(type, d);
         body = '<p>Mỗi ghi nhận trừ điểm được tính là một lần xảy ra, trong tuần và cơ sở đã chọn.</p>' +
           (!["approved", "locked"].includes(d.ctx.sheet?.status) ? '<div class="notice warn">Bảng tuần chưa duyệt; số liệu tạm thời.</div>' : "") +
-          (table.rows.length ? simpleTable(table.head, table.rows) : '<p class="muted">Chưa có lỗi trong phạm vi đã chọn.</p>');
+          (table.rows.length ? (type === "faults"
+            ? table.groups.map((group) => `<section><h3>Lớp ${esc(group.name)} • ${esc(group.campus)}</h3>${simpleTable(table.head.slice(2), group.rows.map((row) => row.slice(2)))}</section>`).join("")
+            : simpleTable(table.head, table.rows)) : '<p class="muted">Chưa có lỗi trong phạm vi đã chọn.</p>');
       }
       if (type === "week")
         body = `<h3>I. Kết quả thực hiện</h3><p>Đã hoàn thành <strong>${d.completed.length}</strong>/${d.tasks.length} công việc; còn <strong>${d.overdue.length}</strong> việc quá hạn.</p>${simpleTable(
@@ -144,7 +156,16 @@
       let head = [],
         rows = [];
       if (type === "faults" || type === "fault-frequency") {
-        ({ head, rows } = faultTable(type, d));
+        const table = faultTable(type, d);
+        ({ head, rows } = table);
+        if (type === "faults" && table.groups.length) {
+          const sections = table.groups.flatMap((group, index) => [
+            ...(index ? [[]] : []),
+            ["Lớp", group.name, "Cơ sở", group.campus], head,
+            ...group.rows,
+          ]);
+          [head, ...rows] = sections;
+        }
       } else if (type === "scores") {
         head = [
           "Hạng trong nhóm",

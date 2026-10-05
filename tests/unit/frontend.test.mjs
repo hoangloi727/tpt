@@ -189,7 +189,13 @@ test("fault reports export all deductions by class and rank occurrence counts", 
   } };
   const before = JSON.stringify(data);
   controller.exportReportCSV("faults", data);
-  assert.equal(csv.split("\r\n").length, 4);
+  assert.equal(csv.split("\r\n").length, 8);
+  const csvSections = csv.split("\r\n\r\n");
+  assert.equal(csvSections.length, 2);
+  assert.match(csvSections[0], /2A/);
+  assert.doesNotMatch(csvSections[0], /10A|Uniform/);
+  assert.match(csvSections[1], /10A/);
+  assert.doesNotMatch(csvSections[1], /2A/);
   assert.ok(csv.indexOf("2A") < csv.indexOf("10A"));
   assert.doesNotMatch(csv, /bonus|zero/);
   controller.exportReportCSV("fault-frequency", data);
@@ -197,6 +203,13 @@ test("fault reports export all deductions by class and rank occurrence counts", 
   assert.match(csv.split("\r\n")[1], /late.*Late.*2/);
   assert.match(csv.split("\r\n")[2], /uniform.*Uniform.*1/);
   const html = await controller.reportHTML("faults", data);
+  const sections = html.match(/<section>[\s\S]*?<\/section>/g);
+  assert.equal(sections.length, 2);
+  assert.match(sections[0], /Lớp 2A/);
+  assert.doesNotMatch(sections[0], /10A|Uniform/);
+  assert.match(sections[1], /Lớp 10A/);
+  assert.match(sections[1], /Uniform/);
+  assert.equal((html.match(/<table/g) || []).length, 2);
   assert.match(html, /&lt;Student&gt;/);
   assert.match(html, /số liệu tạm thời/);
   assert.equal(JSON.stringify(data), before);
