@@ -263,6 +263,14 @@
       return this.request(`/teacher/class-week?${query}`);
     }
 
+    snapshotMetadata() {
+      return this.request("/snapshots/metadata");
+    }
+
+    snapshotPayload(yearId = null) {
+      return this.request(`/snapshots/payload${yearId ? `?yearId=${encodeURIComponent(yearId)}` : ""}`);
+    }
+
     pruneSnapshots() {
       return this.write("/snapshots/prune", {}, {
         silent: true,

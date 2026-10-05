@@ -6,7 +6,6 @@
       db,
       APP,
       STORES,
-      SNAPSHOT_EXCLUDED_STORES,
       EXTERNAL_BACKUP_EXCLUDED_STORES,
       DEVICE_ID,
       tabCoordinator,
@@ -22,21 +21,7 @@
     } = deps;
 
     async function snapshotPayload(yearId = null) {
-      const data = {},
-        counts = {};
-      for (const store of STORES) {
-        if (SNAPSHOT_EXCLUDED_STORES.has(store)) continue;
-        let rows = await db.allIncludingDeleted(store);
-        if (yearId)
-          rows = rows.filter(
-            (row) =>
-              !(row.school_year_id || row.academic_year_id) ||
-              (row.school_year_id || row.academic_year_id) === yearId,
-          );
-        data[store] = rows.map(({ blob, ...row }) => row);
-        counts[store] = data[store].length;
-      }
-      return { data, counts };
+      return db.snapshotPayload(yearId);
     }
     async function createInternalSnapshot(
       name,
@@ -46,9 +31,10 @@
         reason = "manual",
         yearId = null,
       } = {},
+      preparedPayload = null,
     ) {
       tabCoordinator.assertWritable();
-      const payload = await snapshotPayload(yearId),
+      const payload = preparedPayload || await snapshotPayload(yearId),
         serialized = stableJSON(payload.data),
         checksum = await sha256Text(serialized),
         snapshot = await db.put(
@@ -79,28 +65,22 @@
       return db.pruneSnapshots();
     }
     async function ensureScheduledSnapshots() {
-      const rows = await db.all("internal_snapshots"),
+      const rows = await db.snapshotMetadata(),
         hasSince = (tier, days) =>
           rows.some(
             (row) =>
               row.tier === tier &&
               Date.now() - Date.parse(row.created_at) < days * 86400000,
           );
-      if (!hasSince("daily", 1))
-        await createInternalSnapshot("Tự động hằng ngày", {
-          tier: "daily",
-          reason: "scheduled",
-        });
-      if (!hasSince("weekly", 7))
-        await createInternalSnapshot("Tự động hằng tuần", {
-          tier: "weekly",
-          reason: "scheduled",
-        });
-      if (!hasSince("monthly", 28))
-        await createInternalSnapshot("Tự động hằng tháng", {
-          tier: "monthly",
-          reason: "scheduled",
-        });
+      const due = [
+        ["daily", 1, "Tự động hằng ngày"],
+        ["weekly", 7, "Tự động hằng tuần"],
+        ["monthly", 28, "Tự động hằng tháng"],
+      ].filter(([tier, days]) => !hasSince(tier, days));
+      if (!due.length) return;
+      const payload = await snapshotPayload();
+      for (const [tier, , name] of due)
+        await createInternalSnapshot(name, { tier, reason: "scheduled" }, payload);
     }
     async function ensureScheduledDirectoryBackup() {
       if (!(await setting("backup_directory_auto"))) return;

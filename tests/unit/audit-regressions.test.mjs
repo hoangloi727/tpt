@@ -355,3 +355,77 @@ test("score history scopes to its week and combines action and actor filters", a
   assert.doesNotMatch(elements["#scoreHistoryRows"].innerHTML, /Alice|Bob|7 → 9/);
   assert.doesNotMatch(elements["#scoreArea"].innerHTML, /Alice|Bob/);
 });
+
+test("snapshot reads are manager-only, school-scoped, and preserve the previous payload format", async () => {
+  const repository = await openRepository();
+  await repository.put("internal_snapshots", { id: "snapshot", tier: "daily", payload: { secret: "restore data" } }, options);
+  await repository.put("internal_snapshots", { id: "other", tier: "daily" }, { schoolId: "other-school" });
+  for (const row of [
+    { id: "current", school_year_id: "year", blob: "omit" },
+    { id: "legacy", academic_year_id: "year", deleted_at: "2026-01-01" },
+    { id: "global" }, { id: "old", school_year_id: "old" },
+  ]) await repository.put("tasks", row, options);
+  await repository.put("tasks", { id: "other" }, { schoolId: "other-school" });
+  const context = vm.createContext({ window: {} });
+  vm.runInContext(await readFile(new URL("../../frontend/scripts/app-schema.js", import.meta.url), "utf8"), context);
+  const { STORES, SNAPSHOT_EXCLUDED_STORES } = context.window.TPTAppModules.schema;
+  for (const role of ["teacher", "user"])
+    for (const path of ["/snapshots/metadata", "/snapshots/payload"])
+      assert.equal((await apiRequest(repository, { role, permissions: ["*"] }, path)).status, 403);
+  for (const role of ["admin", "superadmin"]) {
+    const metadata = await apiRequest(repository, { role }, "/snapshots/metadata");
+    assert.equal(metadata.status, 200);
+    assert.deepEqual(metadata.result, [{ id: "snapshot", tier: "daily", created_at: repository.get("internal_snapshots", "snapshot", "school").created_at }]);
+    for (const yearId of [null, "year"]) {
+      const expected = { data: {}, counts: {} };
+      for (const store of STORES) {
+        if (SNAPSHOT_EXCLUDED_STORES.has(store)) continue;
+        expected.data[store] = repository.all(store, true, "school")
+          .filter(row => !yearId || !(row.school_year_id || row.academic_year_id) || (row.school_year_id || row.academic_year_id) === yearId)
+          .map(({ blob, ...row }) => row);
+        expected.counts[store] = expected.data[store].length;
+      }
+      const response = await apiRequest(repository, { role }, `/snapshots/payload${yearId ? `?yearId=${yearId}` : ""}`);
+      assert.equal(response.status, 200);
+      assert.deepEqual(response.result, expected);
+    }
+    const full = await apiRequest(repository, { role }, "/stores/internal_snapshots/snapshot");
+    assert.deepEqual(full.result.payload, { secret: "restore data" });
+  }
+});
+
+test("scheduled snapshots fetch one payload for all due tiers and no payload when current", async () => {
+  const repository = await openRepository();
+  await repository.put("tasks", { id: "task", title: "Preserve me" }, options);
+  const context = vm.createContext({ window: {}, TextEncoder, Blob, crypto: (await import("node:crypto")).webcrypto });
+  for (const file of ["app-schema.js", "backup-codec.js", "api-data-provider.js", "backup-service.js"])
+    vm.runInContext(await readFile(new URL(`../../frontend/scripts/${file}`, import.meta.url), "utf8"), context);
+  const modules = context.window.TPTAppModules;
+  const db = new context.window.ApiDataProvider({ stores: modules.schema.STORES, schema: 15, beforeWrite() {}, onSave() {}, onChange() {} });
+  const requests = [];
+  db.request = async (path, request = {}) => {
+    requests.push(path);
+    const response = await apiRequest(repository, { role: "admin" }, path, request.body ? JSON.parse(request.body) : undefined, request.method || "GET");
+    assert.equal(response.status, 200);
+    return response.result;
+  };
+  const service = modules.backupService.createService({ ...modules.schema, ...modules.backupCodec, db, tabCoordinator: { assertWritable() {} }, now: () => new Date().toISOString() });
+  await service.ensureScheduledSnapshots();
+  assert.equal(requests.length, 8);
+  assert.equal(requests.filter(path => path === "/snapshots/payload").length, 1);
+  const rows = repository.all("internal_snapshots", false, "school");
+  assert.deepEqual(rows.map(row => row.tier).sort(), ["daily", "monthly", "weekly"]);
+  for (const row of rows) {
+    assert.equal(row.payload.tasks[0].title, "Preserve me");
+    assert.equal(row.counts.tasks, 1);
+    assert.equal(row.checksum, await modules.backupCodec.sha256Text(modules.backupCodec.stableJSON(row.payload)));
+  }
+  requests.length = 0;
+  await service.ensureScheduledSnapshots();
+  assert.deepEqual(requests, ["/snapshots/metadata"]);
+  repository.state.stores.internal_snapshots.find(row => row.tier === "daily").created_at = "2020-01-01";
+  requests.length = 0;
+  await service.ensureScheduledSnapshots();
+  assert.equal(requests.length, 4);
+  assert.equal(repository.all("internal_snapshots", false, "school").filter(row => row.tier === "daily").length, 2);
+});

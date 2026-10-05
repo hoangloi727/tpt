@@ -75,6 +75,12 @@ export const HARD_DELETE_STORES = new Set([
   "app_settings",
 ]);
 
+export const SNAPSHOT_EXCLUDED_STORES = new Set([
+  "operation_journal", "internal_snapshots", "form_drafts", "restore_staging",
+  "backup_handles", "backup_records", "migration_logs", "audit_logs",
+  "license_events", "attachments", "file_versions",
+]);
+
 export const EXTERNAL_BACKUP_EXCLUDED_STORES = new Set([
   "operation_journal",
   "internal_snapshots",

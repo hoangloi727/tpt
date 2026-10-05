@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import {
   EXTERNAL_BACKUP_EXCLUDED_STORES,
   HARD_DELETE_STORES,
+  SNAPSHOT_EXCLUDED_STORES,
   STORES,
 } from "./stores.js";
 
@@ -1729,6 +1730,25 @@ export class SqliteRepository {
         ...scoreCounts,
       };
     });
+  }
+
+  snapshotMetadata(schoolId) {
+    return this.state.stores.internal_snapshots
+      .filter((row) => row.school_profile_id === schoolId && !row.deleted_at)
+      .map(({ id, tier, created_at }) => ({ id, tier, created_at }));
+  }
+
+  snapshotPayload(schoolId, yearId = null) {
+    const data = {}, counts = {};
+    for (const store of STORES) {
+      if (SNAPSHOT_EXCLUDED_STORES.has(store)) continue;
+      data[store] = this.all(store, true, schoolId)
+        .filter((row) => !yearId || !(row.school_year_id || row.academic_year_id) ||
+          (row.school_year_id || row.academic_year_id) === yearId)
+        .map(({ blob, ...row }) => row);
+      counts[store] = data[store].length;
+    }
+    return { data, counts };
   }
 
   pruneSnapshots(schoolId, actorId, actorName = "") {

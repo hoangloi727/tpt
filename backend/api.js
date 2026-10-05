@@ -743,6 +743,16 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           }),
         );
       }
+      if (request.method === "GET" && url.pathname === "/api/snapshots/metadata") {
+        if (!isManager(user)) return forbidden(response);
+        return sendJson(response, 200, repository.snapshotMetadata(user.selectedSchoolId));
+      }
+      if (request.method === "GET" && url.pathname === "/api/snapshots/payload") {
+        if (!isManager(user)) return forbidden(response);
+        return sendJson(response, 200, repository.snapshotPayload(
+          user.selectedSchoolId, url.searchParams.get("yearId"),
+        ));
+      }
       if (request.method === "POST" && url.pathname === "/api/snapshots/prune") {
         if (!isManager(user)) return forbidden(response);
         await readJson(request);
