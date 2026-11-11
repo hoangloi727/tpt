@@ -1832,10 +1832,10 @@
         }
 
         async function renderTasks() {
-          let rows = await scoped("tasks");
-          const [configuredStatuses, configuredPriorities] = await Promise.all([
-              configItems("task_status"), configItems("priority"),
-            ]),
+          let [rows, configuredStatuses, configuredPriorities] = await Promise.all([
+            scoped("tasks"), configItems("task_status"), configItems("priority"),
+          ]);
+          const
             statusOptions = [
               ["todo", "Chưa làm"],
               ["doing", "Đang làm"],
@@ -3561,7 +3561,7 @@
           $("#reportType").onchange = async () =>
             ($("#reportPreview .card-body").innerHTML = await reportHTML(
               $("#reportType").value,
-              await reportData(),
+              d,
             ));
           $("#exportReportCsv").onclick = () =>
             exportReportCSV($("#reportType").value, d);
@@ -6122,8 +6122,9 @@
             return ($("#manageCriteria").onclick = showRulesetConfig);
           }
           if (tab === "appearance") {
-            const paper = (await setting("paper_orientation")) || "landscape",
-              compact = (await setting("compact_mode")) !== false;
+            const preferences = await db.get("app_settings", "seed_state"),
+              paper = preferences?.paper_orientation || "landscape",
+              compact = preferences?.compact_mode !== false;
             panel.innerHTML = `<div class="card"><div class="card-head"><h2>Giao diện và in</h2></div><div class="card-body"><div class="form-grid"><div class="field"><label>Khổ in báo cáo</label><select id="paperOrientation"><option value="landscape" ${paper === "landscape" ? "selected" : ""}>A4 ngang</option><option value="portrait" ${paper === "portrait" ? "selected" : ""}>A4 dọc</option></select></div><label class="check-row"><input id="compactMode" type="checkbox" ${compact ? "checked" : ""}> Chế độ hiển thị gọn</label></div><button class="btn primary mt" id="saveAppearance">Lưu giao diện</button></div></div>`;
             return ($("#saveAppearance").onclick = async () => {
               await setting("paper_orientation", $("#paperOrientation").value);

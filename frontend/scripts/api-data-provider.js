@@ -165,6 +165,7 @@
       if (options.body !== undefined && !headers.has("Content-Type")) {
         headers.set("Content-Type", "application/json");
       }
+      const started = performance.now();
       const response = await fetch(`${this.baseUrl}${path}`, {
         ...options,
         headers,
@@ -180,6 +181,10 @@
         error.name = payload?.name || "ApiError";
         error.status = response.status;
         throw error;
+      }
+      if (["/reports/data", "/dashboard/data", "/startup", "/scores/data"].some(route => path.split("?")[0] === route)) {
+        const bytes = new TextEncoder().encode(JSON.stringify(payload)).byteLength;
+        console.info(`[API] ${path.split("?")[0]}: ${Math.round(performance.now() - started)} ms, ${bytes} bytes JSON`);
       }
       return decodeBinary(payload);
     }

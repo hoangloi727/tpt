@@ -86,7 +86,7 @@ test("cancelling during snapshot hashing prevents writes while manual snapshots 
 
 test("startup reads share one batch and a write invalidates it", async () => {
   let requests = 0;
-  const context = vm.createContext({ window: {}, structuredClone, Headers, Blob, fetch: async () => {
+  const context = vm.createContext({ window: {}, structuredClone, Headers, Blob, performance, TextEncoder, console, fetch: async () => {
     requests++;
     return { ok: true, status: 200, json: async () => ({ stores: { tasks: [{ id: "task", title: "Original" }] }, pending: [] }) };
   } });
@@ -126,7 +126,7 @@ test("dashboard revisits fetch one fresh batch, startup reuses its batch and fai
 
 test("page reads deduplicate sequential requests, refresh after writes and on the next page", async () => {
   let requests = 0;
-  const context = vm.createContext({ window: {}, structuredClone, Headers, Blob, fetch: async () => {
+  const context = vm.createContext({ window: {}, structuredClone, Headers, Blob, performance, TextEncoder, console, fetch: async () => {
     requests++;
     return { ok:true,status:200,json:async()=>[{id:"row",value:requests}] };
   } });

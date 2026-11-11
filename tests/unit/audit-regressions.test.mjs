@@ -582,7 +582,19 @@ test("score batches filter selected week and page batches have distinct payloads
   assert.equal(dashboard.result.stores.generated_reports,undefined);
   assert.equal(dashboard.result.stores.score_entries.length,1);
   const reports = await apiRequest(repository,{role:"admin"},"/reports/data?yearId=year&weekId=week");
-  assert.equal(reports.result.stores.score_entries.length,2);
+  assert.equal(reports.result.stores.score_entries.length,1);
+  assert.equal((await apiRequest(repository,{role:"admin"},"/reports/data?yearId=year&weekId=week&scope=year")).result.stores.score_entries.length,2);
   assert.ok(reports.result.stores.generated_reports);
   assert.equal((await apiRequest(repository,{role:"user"},"/reports/data")).status,403);
+});
+
+test("report list batch omits saved report bodies while individual read retains them", async () => {
+  const repository = await openRepository();
+  await repository.put("generated_reports", {id:"report", name:"Saved",html:"<p>Full report</p>",source_data:{private:"large"},school_year_id:"year"}, options);
+  const result = await apiRequest(repository,{role:"admin"},"/reports/data?yearId=year");
+  assert.equal(result.result.stores.generated_reports[0].name,"Saved");
+  assert.equal(result.result.stores.generated_reports[0].html,undefined);
+  assert.equal(result.result.stores.generated_reports[0].source_data,undefined);
+  const full = await apiRequest(repository,{role:"admin"},"/stores/generated_reports/report");
+  assert.equal(full.result.html,"<p>Full report</p>");
 });

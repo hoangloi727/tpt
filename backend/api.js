@@ -804,8 +804,10 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           repository.all(store, false, user.selectedSchoolId).filter(row => {
             const year = row.school_year_id || row.academic_year_id;
             if (yearId && year && year !== yearId) return false;
-            return url.pathname === "/api/reports/data" || !weekId || !["score_entries", "weekly_score_sheets", "ranking_snapshots"].includes(store) || row.week_id === weekId;
-          }),
+            return url.searchParams.get("scope") === "year" || !weekId || !["score_entries", "weekly_score_sheets", "ranking_snapshots"].includes(store) || row.week_id === weekId;
+          }).map(row => store === "generated_reports" ? Object.fromEntries(
+            ["id", "name", "type", "version", "status", "submission_status", "generated_at", "created_at", "school_year_id", "academic_year_id", "semester_id", "campus_id"].filter(key => key in row).map(key => [key, row[key]]),
+          ) : row),
         ])) });
       }
       if (request.method === "GET" && url.pathname === "/api/startup") {
