@@ -525,3 +525,45 @@ test("snapshot retention never automatically deletes old snapshots", async () =>
   assert.deepEqual(repository.all("internal_snapshots").map(row => row.id).sort(), ["manual-old", "old", "protected-old", "recent"]);
   assert.equal(await repository.pruneSnapshots("school", "admin"), 0);
 });
+
+test("score batch preserves school and grader class restrictions", async () => {
+  const repository = await openRepository();
+  await repository.put("classes", {id:"assigned",school_year_id:"year"}, options);
+  await repository.put("classes", {id:"unassigned"}, options);
+  await repository.put("classes", {id:"foreign"}, {schoolId:"other"});
+  await repository.put("score_grader_assignments", {id:"assignment",user_id:"grader", school_year_id:"year", class_ids:["assigned"]}, options);
+  const response = await apiRequest(repository, {role:"user", id:"grader"}, "/scores/data");
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.result.stores.classes.map(row => row.id), ["assigned"]);
+  assert.equal(response.result.stores.ranking_snapshots, undefined);
+  assert.equal((await apiRequest(repository, {role:"teacher"}, "/scores/data")).status, 403);
+  assert.deepEqual((await apiRequest(repository, {role:"admin"}, "/scores/data")).result.stores.classes.map(row => row.id), ["assigned","unassigned"]);
+});
+
+test("backup overview omits snapshot payloads and export batches retain deleted school records", async () => {
+  const repository = await openRepository();
+  await repository.put("tasks", { id: "task", deleted_at: "2026-01-01" }, options);
+  await repository.put("tasks", { id: "foreign" }, { schoolId: "other" });
+  await repository.put("internal_snapshots", { id: "snapshot", payload: { tasks: [{id:"secret"}] } }, options);
+  const overview = await apiRequest(repository, { role: "admin" }, "/backup/overview");
+  assert.equal(overview.status, 200);
+  assert.equal(overview.result.snapshots[0].payload, undefined);
+  assert.equal(overview.result.snapshots[0].id, "snapshot");
+  const data = await apiRequest(repository, { role: "admin" }, "/backup/data");
+  assert.deepEqual(data.result.tasks.map(row => row.id), ["task"]);
+  assert.equal(data.result.internal_snapshots, undefined);
+  for (const role of ["user", "teacher"])
+    for (const path of ["/backup/overview", "/backup/data"])
+      assert.equal((await apiRequest(repository, { role }, path)).status, 403);
+});
+
+test("attachment listing omits binary content and preserves school isolation", async () => {
+  const repository = await openRepository();
+  await repository.put("attachments",{id:"local",size:20,blob:{__type:"Blob",data:"private"}},options);
+  await repository.put("attachments",{id:"foreign"},{schoolId:"other"});
+  const response = await apiRequest(repository,{role:"admin"},"/attachments/metadata");
+  assert.equal(response.status,200);
+  assert.deepEqual(response.result.map(row=>row.id),["local"]);
+  assert.equal(response.result[0].blob,undefined);
+  assert.equal((await apiRequest(repository,{role:"user"},"/attachments/metadata")).status,403);
+});

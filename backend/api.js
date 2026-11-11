@@ -1,3 +1,4 @@
+import { STORES, EXTERNAL_BACKUP_EXCLUDED_STORES } from "./stores.js";
 import { createHash } from "node:crypto";
 import { hasPermission } from "./auth.js";
 import { readAccountWorkbook } from "./account-import.js";
@@ -750,9 +751,44 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           }),
         );
       }
+      if (request.method === "GET" && url.pathname === "/api/scores/data") {
+        const stores = ["criteria_sets", "weekly_score_sheets", "criteria", "criteria_groups", "classes", "class_groups", "score_entries", "score_grader_assignments"];
+        if (isManager(user)) stores.push("ranking_snapshots");
+        if (!stores.every(store => canReadStore(user, store))) return forbidden(response);
+        const classIds = new Set(graderAssignments(repository, user).flatMap(row => row.class_ids || []));
+        return sendJson(response, 200, { stores: Object.fromEntries(stores.map(store => [store,
+          repository.all(store, false, user.selectedSchoolId).filter(row => {
+            if (user.role !== "user") return true;
+            if (store === "score_grader_assignments") return row.user_id === user.id;
+            if (store === "classes") return classIds.has(row.id);
+            if (store === "score_entries") return classIds.has(row.class_id);
+            return true;
+          }),
+        ])) });
+      }
+      if (request.method === "GET" && url.pathname === "/api/attachments/metadata") {
+        if (!canReadStore(user, "attachments")) return forbidden(response);
+        return sendJson(response, 200, repository.state.stores.attachments
+          .filter(row => row.school_profile_id === user.selectedSchoolId)
+          .map(({ blob, ...metadata }) => metadata));
+      }
+      if (request.method === "GET" && url.pathname === "/api/backup/overview") {
+        if (!isManager(user)) return forbidden(response);
+        const rows = store => repository.state.stores[store].filter(row => row.school_profile_id === user.selectedSchoolId && !row.deleted_at);
+        return sendJson(response, 200, {
+          recordCount: STORES.filter(store => !EXTERNAL_BACKUP_EXCLUDED_STORES.has(store)).reduce((n, store) => n + repository.state.stores[store].filter(row => row.school_profile_id === user.selectedSchoolId).length, 0),
+          attachmentCount: rows("attachments").length,
+          snapshots: rows("internal_snapshots").map(({payload, ...metadata}) => metadata),
+          backupRecords: rows("backup_records"), directoryRecords: rows("backup_handles"), preferences: rows("app_settings").find(row => row.id === "seed_state") || {},
+        });
+      }
+      if (request.method === "GET" && url.pathname === "/api/backup/data") {
+        if (!isManager(user)) return forbidden(response);
+        return sendJson(response, 200, Object.fromEntries(STORES.filter(store => !EXTERNAL_BACKUP_EXCLUDED_STORES.has(store)).map(store => [store, repository.all(store, true, user.selectedSchoolId)])));
+      }
       if (request.method === "GET" && url.pathname === "/api/startup") {
         if (!isManager(user)) return forbidden(response);
-        const stores = ["schools", "school_years", "semesters", "school_weeks", "campuses", "app_settings", "tasks", "task_check_items", "calendar_events", "classes", "weekly_score_sheets", "score_entries", "criteria_sets", "criteria", "criteria_groups", "class_groups", "ranking_snapshots"];
+        const stores = ["schools", "school_years", "semesters", "school_weeks", "campuses", "app_settings", "tasks", "task_check_items", "calendar_events", "classes", "weekly_score_sheets", "score_entries", "criteria_sets", "criteria", "criteria_groups", "class_groups", "ranking_snapshots", "activities", "equipment", "generated_reports"];
         return sendJson(response, 200, {
           stores: Object.fromEntries(stores.map((store) => [store, repository.all(store, false, user.selectedSchoolId)])),
           pending: repository.pendingOperations(user.selectedSchoolId),

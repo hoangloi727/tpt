@@ -102,3 +102,45 @@ test("startup reads share one batch and a write invalidates it", async () => {
   await db.request("/test", { method: "POST", body: "{}" });
   assert.equal(db.startupData, null);
 });
+
+test("dashboard revisits fetch one fresh batch, startup reuses its batch and failures release it", async () => {
+  let loads = 0, renders = 0, fail = false;
+  const db = { startupData: null, async prepareStartup() { loads++; this.startupData = {}; } };
+  const context = vm.createContext({ db, state: { user: { role: "admin" } }, canManageScores: () => true,
+    renderDashboardData: async () => { renders++; assert.ok(db.startupData); if (fail) throw Error("render failed"); },
+  });
+  vm.runInContext(source.slice(source.indexOf("        async function renderDashboard()"), source.indexOf("        async function renderDashboardData()")), context);
+  await context.renderDashboard();
+  await context.renderDashboard();
+  assert.equal(loads, 2);
+  assert.equal(db.startupData, null);
+  db.startupData = {};
+  await context.renderDashboard();
+  assert.equal(loads, 2);
+  db.startupData = null;
+  fail = true;
+  await assert.rejects(context.renderDashboard(), /render failed/);
+  assert.equal(db.startupData, null);
+  assert.equal(renders, 4);
+});
+
+test("page reads deduplicate sequential requests, refresh after writes and on the next page", async () => {
+  let requests = 0;
+  const context = vm.createContext({ window: {}, structuredClone, Headers, Blob, fetch: async () => {
+    requests++;
+    return { ok:true,status:200,json:async()=>[{id:"row",value:requests}] };
+  } });
+  vm.runInContext(await readFile(new URL("../../frontend/scripts/api-data-provider.js",import.meta.url),"utf8"),context);
+  const db = new context.window.ApiDataProvider({});
+  db.currentUser = {id:"a",selectedSchoolId:"school"};
+  const scope = db.beginReadScope();
+  const first = await db.all("tasks"); first[0].value = -1;
+  assert.equal((await db.all("tasks"))[0].value,1);
+  assert.equal(requests,1);
+  await db.request("/write",{method:"POST",body:"{}"});
+  await db.all("tasks"); assert.equal(requests,3);
+  db.currentUser = {id:"a",selectedSchoolId:"other"};
+  await db.all("tasks"); assert.equal(requests,4);
+  db.endReadScope(scope);
+  await db.all("tasks"); assert.equal(requests,5);
+});

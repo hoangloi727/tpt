@@ -1214,11 +1214,16 @@
             users: renderUserManagement,
             settings: renderSettings,
           };
+          const renderStarted = performance.now(),
+            readScope = db.beginReadScope();
           try {
             await renderers[page]();
           } catch (e) {
             console.error(e);
             content.innerHTML = `<div class="notice danger"><strong>Không thể hiển thị dữ liệu.</strong><br>${esc(e.message)}</div>`;
+          } finally {
+            db.endReadScope(readScope);
+            console.info(`[Trang] ${page}: ${Math.round(performance.now() - renderStarted)} ms`);
           }
           if (focus) content.focus();
         }
@@ -1304,6 +1309,15 @@
         }
         async function renderDashboard() {
           if (state.user?.role === "user") return renderSaoDoScoreDashboard();
+          const loadBatch = canManageScores() && !db.startupData;
+          if (loadBatch) await db.prepareStartup();
+          try {
+            await renderDashboardData();
+          } finally {
+            if (loadBatch) db.startupData = null;
+          }
+        }
+        async function renderDashboardData() {
           const [tasks, events, classes, sheets, entries] = await Promise.all([
             scoped("tasks"),
             scoped("calendar_events"),
@@ -2446,6 +2460,15 @@
           };
         }
         async function renderScores() {
+          const loadBatch = !db.startupData;
+          if (loadBatch) await db.prepareScores();
+          try {
+            await renderScoresData();
+          } finally {
+            if (loadBatch) db.startupData = null;
+          }
+        }
+        async function renderScoresData() {
           await loadScoreAssignment();
           const ctx = await scoreContext(),
             week = state.cache.weeks.find((x) => x.id === state.weekId),
@@ -2465,7 +2488,7 @@
       <div class="tabs"><button data-score-tab="entry" class="${state.scoreTab === "entry" ? "active" : ""}">Nhập điểm</button>${manager ? `<button data-score-tab="ranking" class="${state.scoreTab === "ranking" ? "active" : ""}">Xếp hạng</button><button data-score-tab="anomaly" class="${state.scoreTab === "anomaly" ? "active" : ""}">Kiểm tra bất thường</button><button data-score-tab="history" class="${state.scoreTab === "history" ? "active" : ""}">Nhật ký điều chỉnh</button>` : ""}</div><div id="scoreArea"></div>`,
           );
           if (state.scoreTab === "entry") renderScoreEntry(ctx);
-          if (state.scoreTab === "ranking") renderScoreRanking(ctx);
+          if (state.scoreTab === "ranking") await renderScoreRanking(ctx);
           if (state.scoreTab === "anomaly") renderScoreAnomalies(ctx);
           if (state.scoreTab === "history") await renderScoreHistory(ctx);
           $$("[data-score-tab]").forEach(
@@ -3333,8 +3356,8 @@
             renderScores();
           };
         }
-        async function calculateRanking(official = true, wholeSchool = false) {
-          const ctx = await scoreContext();
+        async function calculateRanking(official = true, wholeSchool = false, preparedContext = null) {
+          const ctx = preparedContext || await scoreContext();
           if (
             !ctx.sheet ||
             (official && !["approved", "locked"].includes(ctx.sheet.status))
@@ -3370,7 +3393,7 @@
         async function renderScoreRanking(ctx) {
           const area = $("#scoreArea"),
             official = ["approved", "locked"].includes(ctx.sheet?.status),
-            allRanks = await calculateRanking(official),
+            allRanks = await calculateRanking(official, false, ctx),
             groups = new Map(
               allRanks.map((row) => [row.class_group_id, row.class_group_name]),
             );
@@ -3464,9 +3487,9 @@
               scoped("activities"),
               scoped("equipment"),
             ]),
-            rank = await calculateRanking(true),
-            classes = await scoped("classes"),
             ctx = await scoreContext(),
+            rank = await calculateRanking(true, false, ctx),
+            classes = await scoped("classes"),
             week = state.cache.weeks.find((x) => x.id === state.weekId);
           return {
             school,
@@ -3486,6 +3509,15 @@
           };
         }
         async function renderReports() {
+          const loadBatch = canManageScores() && !db.startupData;
+          if (loadBatch) await db.prepareStartup();
+          try {
+            await renderReportsData();
+          } finally {
+            if (loadBatch) db.startupData = null;
+          }
+        }
+        async function renderReportsData() {
           const d = await reportData(),
             saved = (await scoped("generated_reports")).sort((a, b) =>
               String(b.generated_at || b.created_at).localeCompare(
@@ -5148,22 +5180,14 @@
         }
 
         async function renderBackup() {
-          const quick = await exportBusinessData(false),
-            last = await setting("last_backup_at"),
-            attachmentCount = (
-              await db.allIncludingDeleted("attachments")
-            ).filter((x) => !x.deleted_at).length,
-            snapshots = (await db.all("internal_snapshots")).sort((a, b) =>
-              String(b.created_at).localeCompare(String(a.created_at)),
-            ),
-            backupRecords = (await db.all("backup_records")).sort((a, b) =>
-              String(b.completed_at || b.created_at).localeCompare(
-                String(a.completed_at || a.created_at),
-              ),
-            ),
-            [directoryRecord] = await db.all("backup_handles"),
+          const overview = await db.request("/backup/overview"),
+            last = overview.preferences.last_backup_at,
+            attachmentCount = overview.attachmentCount,
+            snapshots = overview.snapshots.sort((a, b) => String(b.created_at).localeCompare(String(a.created_at))),
+            backupRecords = overview.backupRecords.sort((a, b) => String(b.completed_at || b.created_at).localeCompare(String(a.completed_at || a.created_at))),
+            [directoryRecord] = overview.directoryRecords,
             directoryHandle = state.directoryHandle || directoryRecord?.handle || null,
-            directoryAuto = !!(await setting("backup_directory_auto")),
+            directoryAuto = !!overview.preferences.backup_directory_auto,
             directorySupported = platform.capabilities().filesystem_directory,
             directoryGranted = directoryHandle
               ? await platform.permission(directoryHandle, false)
@@ -5174,7 +5198,7 @@
               "Xuất, kiểm tra và khôi phục dữ liệu lưu trên máy chủ.",
               `<button class="btn primary" id="backupNow">Tạo bản sao lưu</button>`,
             ) +
-              `<div class="grid-3"><div class="card"><div class="card-head"><h2>Sao lưu gần nhất</h2></div><div class="card-body"><strong>${last ? fmtDateTime(last) : "Chưa có"}</strong><p>${quick.manifest.record_count.toLocaleString("vi-VN")} bản ghi • ${attachmentCount} tệp</p><button class="btn small" id="verifyLastBackup" ${backupRecords.length ? "" : "disabled"}>Kiểm tra bản đã ghi nhận</button></div></div><div class="card"><div class="card-head"><h2>Phục hồi an toàn</h2></div><div class="card-body"><p>Kiểm tra định dạng, định danh, phiên bản và mã kiểm tra trước khi ghi.</p><button class="btn" id="restoreFile">Chọn tệp phục hồi</button></div></div><div class="card"><div class="card-head"><h2>Lưu trữ chính</h2></div><div class="card-body"><span class="badge blue">SQLite qua API máy chủ</span><p>Dữ liệu nghiệp vụ được lưu tập trung trên máy chủ.</p><small class="muted">Tệp xuất và thư mục sao lưu là các bản sao độc lập để phục hồi khi cần.</small></div></div></div><div class="notice warn mt"><strong>Phân biệt:</strong> tự lưu ghi lên máy chủ; điểm khôi phục bảo vệ trạng thái dữ liệu; bản sao lưu ngoài là tệp hoặc thư mục cục bộ; báo cáo chốt là hồ sơ nghiệp vụ bất biến.</div><div class="card mt"><div class="card-head"><h2>Ba phạm vi sao lưu ngoài</h2></div><div class="card-body">${simpleTable(
+              `<div class="grid-3"><div class="card"><div class="card-head"><h2>Sao lưu gần nhất</h2></div><div class="card-body"><strong>${last ? fmtDateTime(last) : "Chưa có"}</strong><p>${overview.recordCount.toLocaleString("vi-VN")} bản ghi • ${attachmentCount} tệp</p><button class="btn small" id="verifyLastBackup" ${backupRecords.length ? "" : "disabled"}>Kiểm tra bản đã ghi nhận</button></div></div><div class="card"><div class="card-head"><h2>Phục hồi an toàn</h2></div><div class="card-body"><p>Kiểm tra định dạng, định danh, phiên bản và mã kiểm tra trước khi ghi.</p><button class="btn" id="restoreFile">Chọn tệp phục hồi</button></div></div><div class="card"><div class="card-head"><h2>Lưu trữ chính</h2></div><div class="card-body"><span class="badge blue">SQLite qua API máy chủ</span><p>Dữ liệu nghiệp vụ được lưu tập trung trên máy chủ.</p><small class="muted">Tệp xuất và thư mục sao lưu là các bản sao độc lập để phục hồi khi cần.</small></div></div></div><div class="notice warn mt"><strong>Phân biệt:</strong> tự lưu ghi lên máy chủ; điểm khôi phục bảo vệ trạng thái dữ liệu; bản sao lưu ngoài là tệp hoặc thư mục cục bộ; báo cáo chốt là hồ sơ nghiệp vụ bất biến.</div><div class="card mt"><div class="card-head"><h2>Ba phạm vi sao lưu ngoài</h2></div><div class="card-body">${simpleTable(
                 ["Chế độ", "Nội dung", "Phù hợp"],
                 [
                   [
@@ -6956,9 +6980,9 @@ async function removeClass(id) {
         }
 
         async function renderDocuments() {
-          const allDocs = await db.allIncludingDeleted("documents"),
-            folders = await db.all("document_folders"),
-            attachments = await db.allIncludingDeleted("attachments"),
+          const [allDocs, folders, attachments] = await Promise.all([
+              db.allIncludingDeleted("documents"), db.all("document_folders"), db.request("/attachments/metadata"),
+            ]),
             trash = state.documentFolderId === "trash",
             activeFolder = trash ? null : state.documentFolderId,
             query = state.documentSearch || "",

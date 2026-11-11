@@ -145,10 +145,11 @@
         stores = STORES.filter(
           (store) => !EXTERNAL_BACKUP_EXCLUDED_STORES.has(store),
         );
+      const sourceData = await db.request("/backup/data");
       let storeIndex = 0;
       for (const store of stores) {
         if (signal?.aborted) throw new DOMException("Đã hủy", "AbortError");
-        let rows = await db.allIncludingDeleted(store);
+        let rows = sourceData[store] || [];
         if (yearId)
           rows = rows.filter(
             (row) =>

@@ -126,7 +126,37 @@
       this.currentUser = null;
     }
 
+    beginReadScope() {
+      this.readScope = new Map();
+      return this.readScope;
+    }
+
+    endReadScope(scope) {
+      if (this.readScope === scope) this.readScope = null;
+    }
+
     async request(path, options = {}) {
+      if (options.method && options.method !== "GET") {
+        this.readScope?.clear();
+        return this.fetchRequest(path, options);
+      }
+      const scope = this.readScope;
+      if (!scope || options.signal || options.headers) return this.fetchRequest(path, options);
+      const key = JSON.stringify([this.currentUser?.id, this.currentUser?.selectedSchoolId, path]);
+      let pending = scope.get(key);
+      if (!pending) {
+        pending = this.fetchRequest(path, options);
+        scope.set(key, pending);
+      }
+      try {
+        return structuredClone(await pending);
+      } catch (error) {
+        if (scope.get(key) === pending) scope.delete(key);
+        throw error;
+      }
+    }
+
+    async fetchRequest(path, options = {}) {
       if (options.method && options.method !== "GET") this.startupData = null;
       const headers = new Headers(options.headers || {});
       if (this.destructiveAuthorization) {
@@ -287,6 +317,10 @@
       this.upgradedTo = Number(result.schema ?? this.schema);
       this.db = { remote: true };
       return this;
+    }
+
+    async prepareScores() {
+      this.startupData = await this.request("/scores/data");
     }
 
     async prepareStartup() {
