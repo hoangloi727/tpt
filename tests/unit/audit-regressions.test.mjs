@@ -125,14 +125,14 @@ test("snapshot retention runs without destructive confirmation and preserves pro
   const repository = await openRepository();
   await repository.put("app_settings", { id: "seed_state", snapshot_daily: 2 }, options);
   for (let day = 1; day <= 4; day++)
-    await repository.put("internal_snapshots", { id: `daily-${day}`, tier: "daily", created_at: `2026-09-0${day}T00:00:00.000Z` }, options);
+    await repository.put("internal_snapshots", { id: `daily-${day}`, tier: "daily", created_at: new Date(Date.now() - (5 - day) * 86400000).toISOString() }, options);
   for (const row of [{ id: "protected", tier: "daily", protected: true }, { id: "manual", tier: "manual" }])
     await repository.put("internal_snapshots", row, options);
   await repository.put("internal_snapshots", { id: "other", tier: "daily" }, { schoolId: "other-school" });
   for (const role of ["teacher", "user"])
     assert.equal((await apiRequest(repository, { role, permissions: ["*"] }, "/snapshots/prune", {})).status, 403);
   assert.equal((await apiRequest(repository, { role: "admin" }, "/snapshots/prune", {})).status, 200);
-  assert.deepEqual(repository.all("internal_snapshots").map(row => row.id).sort(), ["daily-3", "daily-4", "manual", "other", "protected"]);
+  assert.deepEqual(repository.all("internal_snapshots").map(row => row.id).sort(), ["daily-1", "daily-2", "daily-3", "daily-4", "manual", "other", "protected"]);
   assert.equal((await apiRequest(repository, { role: "admin" }, "/stores/internal_snapshots/protected", undefined, "DELETE")).status, 403);
 });
 
@@ -415,14 +415,15 @@ test("scheduled snapshots fetch one payload for all due tiers and no payload whe
   assert.equal(requests.filter(path => path === "/snapshots/payload").length, 1);
   const rows = repository.all("internal_snapshots", false, "school");
   assert.deepEqual(rows.map(row => row.tier).sort(), ["daily", "monthly", "weekly"]);
-  for (const row of rows) {
+  for (const stored of rows) {
+    const row = repository.get("internal_snapshots", stored.id, "school");
     assert.equal(row.payload.tasks[0].title, "Preserve me");
     assert.equal(row.counts.tasks, 1);
     assert.equal(row.checksum, await modules.backupCodec.sha256Text(modules.backupCodec.stableJSON(row.payload)));
   }
   requests.length = 0;
   await service.ensureScheduledSnapshots();
-  assert.deepEqual(requests, ["/snapshots/metadata"]);
+  assert.deepEqual(requests, ["/snapshots/metadata", "/snapshots/prune"]);
   repository.state.stores.internal_snapshots.find(row => row.tier === "daily").created_at = "2020-01-01";
   requests.length = 0;
   await service.ensureScheduledSnapshots();
@@ -511,4 +512,16 @@ test("startup batch is manager-only and contains only the selected school's reco
   assert.equal(response.result.stores.auth_users, undefined);
   for (const role of ["user", "teacher"])
     assert.equal((await apiRequest(repository, { role }, "/startup")).status, 403);
+});
+
+test("snapshot retention never automatically deletes old snapshots", async () => {
+  const repository = await openRepository();
+  for (const row of [
+    { id: "old", tier: "weekly" }, { id: "protected-old", tier: "weekly", protected: true },
+    { id: "manual-old", tier: "manual" },
+  ]) await repository.put("internal_snapshots", { ...row, created_at: new Date(Date.now() - 15 * 86400000).toISOString() }, options);
+  await repository.put("internal_snapshots", { id: "recent", tier: "weekly" }, options);
+  assert.equal(await repository.pruneSnapshots("school", "admin"), 0);
+  assert.deepEqual(repository.all("internal_snapshots").map(row => row.id).sort(), ["manual-old", "old", "protected-old", "recent"]);
+  assert.equal(await repository.pruneSnapshots("school", "admin"), 0);
 });

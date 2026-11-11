@@ -162,3 +162,7 @@ Run `npm run test:unit` for dependency-free Node unit tests covering scoring, ra
 Backend dùng `better-sqlite3` để ghi transaction trực tiếp xuống `SQLITE_FILE`, với `synchronous=FULL`. Node 20 vẫn được hỗ trợ; chạy `npm install` trên máy triển khai để cài native module đúng nền tảng. `sql.js` chỉ còn dùng trong kiểm tra tương thích.
 
 Tệp SQLite hiện có được mở trực tiếp, không cần đổi schema hoặc nhập lại tài khoản. Trước khi nâng cấp, dừng máy chủ và sao lưu tệp SQLite; sau đó cài dependencies và chạy `npm start`. Chỉ chạy một tiến trình ứng dụng với mỗi database vì backend giữ trạng thái trong bộ nhớ. Muốn quay lại bản cũ, dừng bản mới trước rồi khởi động bản cũ với cùng tệp SQLite; giữ nguyên các tệp JSON nguồn rollback. Không sao chép riêng tệp database khi máy chủ đang ghi; dùng chức năng sao lưu của ứng dụng hoặc dừng máy chủ trước.
+
+### Điểm khôi phục gia tăng
+
+Điểm đầu tiên trong mỗi trường/phạm vi năm học và phiên bản schema lưu đầy đủ; các điểm tiếp theo lưu phần bản ghi thêm/sửa/xóa so với điểm trước. API đọc một điểm sẽ ghép lại toàn bộ dữ liệu để giao diện kiểm tra checksum và phục hồi như trước. Không tự dọn theo tuổi hoặc số lượng; không xóa riêng bản gốc/phần giữa chuỗi. Bản ứng dụng cũ không hiểu chuỗi gia tăng: cần xuất bản sao lưu đầy đủ bằng bản mới trước khi hạ phiên bản. Hiện phần tạo điểm vẫn truyền dữ liệu đầy đủ từ trình duyệt đến backend để tính chênh lệch; tối ưu này giảm phần lưu trong database.

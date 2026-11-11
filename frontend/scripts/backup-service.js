@@ -81,7 +81,11 @@
         ["weekly", 7, "Tự động hằng tuần"],
         ["monthly", 28, "Tự động hằng tháng"],
       ].filter(([tier, days]) => !hasSince(tier, days));
-      if (!due.length) return;
+      if (!due.length) {
+        signal?.throwIfAborted();
+        await pruneSnapshots();
+        return;
+      }
       signal?.throwIfAborted();
       const payload = await snapshotPayload();
       signal?.throwIfAborted();

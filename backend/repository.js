@@ -1,3 +1,4 @@
+import { compressSnapshot, expandSnapshot } from "./snapshot-codec.js";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import {
@@ -214,7 +215,7 @@ export class SqliteRepository {
         item.id === id &&
         (!schoolId || item.school_profile_id === schoolId),
     );
-    return row ? structuredClone(row) : null;
+    return row ? (store === "internal_snapshots" ? expandSnapshot(row, this.state.stores.internal_snapshots) : structuredClone(row)) : null;
   }
 
   listSchools() {
@@ -1074,7 +1075,9 @@ export class SqliteRepository {
     ) {
       throw revisionConflict("Bản ghi đã thay đổi ở nơi khác; dữ liệu chưa được ghi đè.");
     }
-    const record = this.normalize(validationRow, existing, options);
+    const normalized = this.normalize(validationRow, existing, options);
+    const record = store === "internal_snapshots" && !existing
+      ? compressSnapshot(normalized, draft.stores.internal_snapshots) : normalized;
     if (index >= 0) rows[index] = record;
     else rows.push(record);
 
@@ -1765,34 +1768,8 @@ export class SqliteRepository {
     return { data, counts };
   }
 
-  pruneSnapshots(schoolId, actorId, actorName = "") {
-    return this.mutate((draft) => {
-      const settings = this.findIn(draft, "app_settings", "seed_state", schoolId) || {},
-        removedIds = new Set();
-      for (const [tier, fallback] of Object.entries({ daily: 7, weekly: 4, monthly: 12 })) {
-        const retention = Math.max(1, Math.floor(Number(settings[`snapshot_${tier}`]) || fallback));
-        const expired = draft.stores.internal_snapshots
-          .filter((row) => row.school_profile_id === schoolId && row.tier === tier && !row.protected)
-          .sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)))
-          .slice(retention);
-        for (const row of expired) removedIds.add(row.id);
-      }
-      draft.stores.internal_snapshots = draft.stores.internal_snapshots.filter(
-        (row) => row.school_profile_id !== schoolId || !removedIds.has(row.id),
-      );
-      if (removedIds.size)
-        draft.stores.operation_journal.push(this.normalize({
-          operation_id: randomUUID(),
-          operation: "snapshot_retention",
-          entity: "internal_snapshots",
-          item_count: removedIds.size,
-          status: "committed",
-          committed_at: now(),
-          actor_id: actorId,
-          actor_name: actorName,
-        }, null, { preserveMetadata: true, schoolId }));
-      return removedIds.size;
-    });
+  pruneSnapshots() {
+    return Promise.resolve(0);
   }
 
   exportAll(schoolId = null) {
