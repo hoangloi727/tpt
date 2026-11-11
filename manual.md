@@ -155,8 +155,6 @@ Một quyền trang không tự động bảo đảm quyền đọc/ghi API. Quy
 
 Thanh bên chứa 19 trang đối với Admin/Superadmin; User chỉ thấy các trang được cấp quyền. Chọn biểu tượng menu để thu gọn/mở rộng thanh bên. Trên màn hình nhỏ, nút phạm vi mở hộp chọn ngữ cảnh.
 
-Trang **API nội bộ** chỉ hiển thị cho Admin và Superadmin. Trang này là tài liệu tham chiếu chỉ đọc, có bộ lọc endpoint và chuyển đổi tiếng Việt/English; trang không gửi thử request để tránh thao tác ghi hoặc xóa ngoài ý muốn. Tài liệu đầy đủ nằm trong [`api.md`](api.md) của mã nguồn.
-
 Thiết lập phạm vi trước khi nhập dữ liệu:
 
 1. `Superadmin` chọn **Trường** nếu cần chuyển trường.
@@ -615,13 +613,13 @@ Giới hạn tệp tài liệu mặc định là 25 MB/tệp và có thể đổ
 
 ### Xóa dữ liệu thi đua
 
-Mọi thao tác xóa yêu cầu nhập `YES` và mật khẩu hiện tại. Chỉ Admin/Superadmin có thể xóa dữ liệu thi đua. **Xóa bảng tuần** xóa toàn bộ điểm và snapshot xếp hạng của tuần đang chọn cho mọi lớp. **Xóa bộ tiêu chí** chỉ hỏi một lần rồi xóa cả lịch sử bảng tuần dùng bộ đó. Nhật ký kiểm toán vẫn được giữ.
+Mọi thao tác xóa yêu cầu nhập mật khẩu hiện tại. Chỉ Admin/Superadmin có thể xóa dữ liệu thi đua. **Xóa bảng tuần** xóa toàn bộ điểm và snapshot xếp hạng của tuần đang chọn cho mọi lớp. **Xóa bộ tiêu chí** chỉ hỏi một lần rồi xóa cả lịch sử bảng tuần dùng bộ đó. Nhật ký kiểm toán vẫn được giữ.
 
 Tài khoản **Teacher** chỉ mở trang **Lớp chủ nhiệm** và **Tài khoản của tôi**. Teacher xem xếp hạng chính thức và các ghi nhận có tên của lớp được giao theo tuần, rồi chọn **In/Lưu PDF** để tạo bản in dễ đọc.
 
 Khi đăng nhập, tuần chứa ngày hiện tại được chọn tự động. Dùng **Tuần hiện tại** để quay về tuần này hoặc **Tuần trước (xem lại)** để xem tuần học gần nhất đã kết thúc, bỏ qua tuần nghỉ. Nếu đang nghỉ hoặc ngoài lịch học, ứng dụng mở tuần học gần nhất đã kết thúc (hoặc tuần đầu tiên nếu năm học chưa bắt đầu); nút **Tuần hiện tại** bị vô hiệu hóa khi không có tuần phù hợp.
 
-Mỗi tuần chỉ dùng một bộ tiêu chí cho toàn bộ lớp. Chỉ Admin/Superadmin được chọn bộ tiêu chí trước khi khởi tạo bảng tuần. Sao đỏ chỉ nhập/chấm điểm cho lớp được giao và không thể chọn hay sửa bộ tiêu chí. Nếu phải thay bộ tiêu chí sau khi đã tạo bảng, Admin/Superadmin xác nhận bằng `YES` và mật khẩu hiện tại; hệ thống xóa toàn bộ điểm, minh chứng và snapshot xếp hạng của tuần rồi đặt bảng về `draft`.
+Mỗi tuần chỉ dùng một bộ tiêu chí cho toàn bộ lớp. Chỉ Admin/Superadmin được chọn bộ tiêu chí trước khi khởi tạo bảng tuần. Sao đỏ chỉ nhập/chấm điểm cho lớp được giao và không thể chọn hay sửa bộ tiêu chí. Nếu phải thay bộ tiêu chí sau khi đã tạo bảng, Admin/Superadmin xác nhận bằng mật khẩu hiện tại; hệ thống xóa toàn bộ điểm, minh chứng và snapshot xếp hạng của tuần rồi đặt bảng về `draft`.
 
 ---
 ## English
@@ -707,8 +705,6 @@ A page permission alone does not guarantee API read/write permission. Data impor
 ## 6. Data scope and navigation
 
 The sidebar contains 19 pages for Admin/Superadmin; a User sees only granted pages. Use the menu icon to collapse or expand it. On small screens, the context button opens the scope selectors.
-
-The **Private API** page is visible only to Admin and Superadmin. It is a read-only reference with endpoint filters and a Vietnamese/English toggle; it intentionally has no request executor, preventing accidental writes or deletion. The complete reference is available in the source repository as [`api.md`](api.md).
 
 Set scope before entering data:
 
@@ -1166,10 +1162,10 @@ The default document limit is 25 MB per file and can be configured from 1 to 250
 
 ### Competition-data deletion
 
-Every deletion requires `YES` and the current password. Only Admin/Superadmin can delete competition data. **Delete weekly sheet** removes every class score and ranking snapshot for the selected week. **Delete criteria set** asks once and also removes the history of every weekly sheet using that set. Audit history remains.
+Every deletion requires the current password. Only Admin/Superadmin can delete competition data. **Delete weekly sheet** removes every class score and ranking snapshot for the selected week. **Delete criteria set** asks once and also removes the history of every weekly sheet using that set. Audit history remains.
 
 A **Teacher** account can open only **Homeroom class** and **My account**. It shows the official ranking and named incidents for the assigned class and selected week; choose **Print/Save PDF** for a readable report.
 
 Login automatically selects the week containing today's local date. Use **Current week** to return to it or **Previous week (review)** to view the most recent completed teaching week, skipping holiday gaps. During a break or outside the teaching calendar, the latest completed week opens instead (or the first week before the year starts); **Current week** is disabled when no teaching week contains today.
 
-Each week uses one criteria set for all classes. Only Admin/Superadmin selects the criteria set before initializing a weekly sheet. Sao đỏ only enters/scores assigned classes and cannot select or edit criteria. To replace criteria after a sheet exists, Admin/Superadmin confirms with `YES` and the current password; the system deletes all weekly scores, evidence, and ranking snapshots, then resets the sheet to `draft`.
+Each week uses one criteria set for all classes. Only Admin/Superadmin selects the criteria set before initializing a weekly sheet. Sao đỏ only enters/scores assigned classes and cannot select or edit criteria. To replace criteria after a sheet exists, Admin/Superadmin confirms with the current password; the system deletes all weekly scores, evidence, and ranking snapshots, then resets the sheet to `draft`.

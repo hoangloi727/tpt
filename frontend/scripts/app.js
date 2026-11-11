@@ -11,8 +11,7 @@
           !MODULES?.backupService ||
           !MODULES?.customFields ||
           !MODULES?.pwaRuntime ||
-          !MODULES?.reportFormatters ||
-          !MODULES?.apiReference
+          !MODULES?.reportFormatters
         )
           throw new Error(
             "Thiếu mô-đun giao diện bắt buộc. Hãy tải lại ứng dụng.",
@@ -90,8 +89,7 @@
             MODULES.customFields,
           { createController: createPwaRuntimeController } = MODULES.pwaRuntime,
           { createController: createReportFormattersController } =
-            MODULES.reportFormatters,
-          { renderApiReference } = MODULES.apiReference;
+            MODULES.reportFormatters;
         const DEVICE_ID = getDeviceId(APP.appId, uid);
         const withoutBinary = (record) =>
           Object.fromEntries(
@@ -458,9 +456,7 @@
         function canAccessPage(page) {
           if (page === "account") return true;
           if (state.user?.role === "teacher") return page === "teacher";
-          if (page === "teacher") return state.user?.role === "teacher";
-          if (page === "api")
-            return ["superadmin", "admin"].includes(state.user?.role);
+          if (page === "teacher") return ["teacher", "admin", "superadmin"].includes(state.user?.role);
           if (["superadmin", "admin"].includes(state.user?.role)) return true;
           if (state.user?.role === "user")
             return (
@@ -519,21 +515,25 @@
           };
           $("#activationForm").onsubmit = async (e) => {
             e.preventDefault();
+            if ($("#activateButton").disabled) return;
+            $("#activateButton").disabled = true;
+            $("#activationStatus").textContent = "Đang xác thực tài khoản…";
             const button = $("#activateButton"),
               status = $("#activationStatus"),
               passwordInput = $("#activationCode"),
               confirmInput = $("#confirmActivationCode"),
-              result = await sessionLock.verify({
+              result = await startupStep("Đang xác thực tài khoản…", () => sessionLock.verify({
                 username: $("#activationUsername").value,
                 password: passwordInput.value,
                 displayName: $("#displayName").value,
                 confirmPassword: confirmInput.value,
                 schoolId: $("#activationSchool").value,
                 schoolName: $("#activationSchoolName").value,
-              });
+              }));
             passwordInput.value = "";
             confirmInput.value = "";
             if (!result.ok) {
+              button.disabled = false;
               status.style.color = "var(--red)";
               status.textContent = result.wait
                 ? `Mật khẩu không đúng. Thử lại sau ${result.wait} giây.`
@@ -618,6 +618,15 @@
           $("#confirmActivationCode").value = "";
           setTimeout(() => $("#activationUsername").focus(), 30);
         }
+        async function startupStep(label, action) {
+          $("#activationStatus").textContent = label;
+          const started = performance.now();
+          try {
+            return await action();
+          } finally {
+            console.info(`[Khởi động] ${label}: ${Math.round(performance.now() - started)} ms`);
+          }
+        }
         async function launchApp() {
           if (!db.db) {
             await tabCoordinator.start();
@@ -631,19 +640,22 @@
             !tabCoordinator.readOnly &&
             ["superadmin", "admin"].includes(state.user?.role)
           ) {
-            await recoverInterruptedOperations();
-            await ensureSeed();
-            await migrateEnhancedData();
-            await generateRecurringTasks();
-            await ensureStorageProtection();
-            await ensureScheduledSnapshots();
-            await ensureScheduledDirectoryBackup();
+            await startupStep("Kiểm tra thao tác chưa hoàn tất…", recoverInterruptedOperations);
+            await startupStep("Kiểm tra dữ liệu ban đầu…", ensureSeed);
+            await startupStep("Kiểm tra phiên bản dữ liệu…", migrateEnhancedData);
+            await startupStep("Tạo công việc định kỳ…", generateRecurringTasks);
+            await startupStep("Kiểm tra dung lượng lưu trữ…", ensureStorageProtection);
+            await startupStep("Tạo điểm khôi phục định kỳ…", ensureScheduledSnapshots);
+            await startupStep("Sao lưu vào thư mục…", ensureScheduledDirectoryBackup);
           }
-          if (state.user?.role !== "teacher") {
-            await loadContext();
-            await loadScoreAssignment();
-          }
-          const branding = await db.schoolBranding();
+          const manager = ["superadmin", "admin"].includes(state.user?.role),
+            [branding, preferences] = await Promise.all([
+              db.schoolBranding(),
+              manager ? db.get("app_settings", "seed_state") : null,
+              state.user?.role !== "teacher"
+                ? loadContext().then(() => loadScoreAssignment())
+                : null,
+            ]);
           state.schoolLogo = branding.brand_logo || null;
           updateSchoolBranding();
           renderNav();
@@ -652,9 +664,8 @@
               ? 10
               : state.user?.role === "user"
                 ? 10
-                : Number(await setting("auto_lock_minutes")) || 10,
+                : Number(preferences?.auto_lock_minutes) || 10,
           );
-          const manager = ["superadmin", "admin"].includes(state.user?.role);
           $("#quickAdd").classList.toggle("hidden", !manager);
           $$("#yearSelect, #semesterSelect, #weekSelect, #campusSelect, #mobileContext, .topbar .searchbox").forEach(
             (control) => control.classList.toggle("hidden", state.user?.role === "teacher"),
@@ -664,7 +675,7 @@
               ? "portrait"
               : state.user?.role === "user"
                 ? "landscape"
-                : (await setting("paper_orientation")) || "landscape";
+                : preferences?.paper_orientation || "landscape";
           const route = location.hash.replace(/^#/, ""),
             initialPage = NAV.some(([id]) => id === route) && canAccessPage(route)
               ? route
@@ -673,7 +684,7 @@
                 : "dashboard";
           if (!location.hash)
             history.replaceState(null, "", `#${initialPage}`);
-          await go(initialPage, false, true);
+          await startupStep("Tải trang làm việc…", () => go(initialPage, false, true));
           $("#activationScreen").classList.add("hidden");
           $("#appShell").classList.remove("hidden");
           $("#appShell").removeAttribute("inert");
@@ -681,7 +692,7 @@
           if (
             state.user?.role === "superadmin" &&
             !tabCoordinator.readOnly &&
-            !(await setting("onboarded"))
+            !preferences?.onboarded
           )
             showOnboarding();
         }
@@ -1117,7 +1128,8 @@
         }
         function renderNav() {
           $("#nav").replaceChildren(
-            ...NAV.filter(([id]) => canAccessPage(id)).map(([id, ico, label]) => {
+            ...NAV.filter(([id]) => canAccessPage(id)).map(([id, ico, navLabel]) => {
+              const label = id === "teacher" && ["admin", "superadmin"].includes(state.user?.role) ? "Lỗi học sinh theo lớp" : navLabel;
               const b = document.createElement("button");
               b.dataset.page = id;
               b.className = id === state.page ? "active" : "";
@@ -1161,7 +1173,6 @@
             account: renderAccount,
             users: renderUserManagement,
             settings: renderSettings,
-            api: () => renderApiReference({ setContent, pageHead, esc }),
           };
           try {
             await renderers[page]();
@@ -1679,20 +1690,18 @@
         function confirmDestructive(message, action, title = "Xác nhận xóa", button = "Xóa", content = "") {
           openModal(
             title,
-            `<div class="notice danger">${esc(message)}</div>${content}<p>Nhập chính xác <code>YES</code> và mật khẩu hiện tại để tiếp tục.</p><div class="field"><label>Xác nhận</label><input id="destructiveConfirmation" autocomplete="off" spellcheck="false" placeholder="YES"></div><div class="field mt"><label>Mật khẩu hiện tại</label><input id="destructivePassword" type="password" autocomplete="current-password"></div>`,
+            `<div class="notice danger">${esc(message)}</div>${content}<p>Nhập mật khẩu hiện tại để tiếp tục.</p><div class="field mt"><label>Mật khẩu hiện tại</label><input id="destructivePassword" type="password" autocomplete="current-password"></div>`,
             `<button class="btn" id="cancelDestructive">Hủy</button><button class="btn danger" id="doDestructive" disabled>${esc(button)}</button>`,
           );
-          const confirmation = $("#destructiveConfirmation"),
-            password = $("#destructivePassword"),
+          const password = $("#destructivePassword"),
             submit = $("#doDestructive"),
-            update = () => (submit.disabled = confirmation.value.trim() !== "YES" || !password.value);
-          confirmation.oninput = update;
+            update = () => (submit.disabled = !password.value);
           password.oninput = update;
           password.onkeydown = (event) => {
             if (event.key === "Enter" && !submit.disabled) submit.click();
           };
           $("#cancelDestructive").onclick = closeModal;
-          confirmation.focus();
+          password.focus();
           submit.onclick = async () => {
             submit.disabled = true;
             try {
@@ -1770,8 +1779,9 @@
 
         async function renderTasks() {
           let rows = await scoped("tasks");
-          const configuredStatuses = await configItems("task_status"),
-            configuredPriorities = await configItems("priority"),
+          const [configuredStatuses, configuredPriorities] = await Promise.all([
+              configItems("task_status"), configItems("priority"),
+            ]),
             statusOptions = [
               ["todo", "Chưa làm"],
               ["doing", "Đang làm"],
@@ -2032,12 +2042,14 @@
                 due_date: today(),
                 campus_id: state.campusId,
               };
-          const checks = await db.all("task_check_items"),
-            mine = checks.filter((x) => x.task_id === id),
-            customDefs = await customFieldDefs("tasks"),
-            groups = await configItems("task_group"),
-            statuses = await configItems("task_status"),
-            priorities = await configItems("priority");
+          const [checks, customDefs, groups, statuses, priorities] = await Promise.all([
+            id ? db.all("task_check_items") : [],
+            customFieldDefs("tasks"),
+            configItems("task_group"),
+            configItems("task_status"),
+            configItems("priority"),
+          ]),
+            mine = checks.filter((x) => x.task_id === id);
           openModal(
             id ? "Cập nhật công việc" : "Thêm công việc",
             `<form id="taskForm"><div class="form-grid"><div class="field full"><label class="required">Tiêu đề</label><input name="title" value="${esc(t.title || "")}" required maxlength="200"></div><div class="field"><label>Nhóm nghiệp vụ</label><select name="group"><option value="">— Chọn —</option>${groups.map((x) => `<option value="${esc(x.label)}" ${t.group === x.label ? "selected" : ""}>${esc(x.label)}</option>`).join("")}</select></div><div class="field"><label>Cơ sở</label><select name="campus_id"><option value="all">Toàn trường</option>${state.cache.campuses.map((c) => `<option value="${esc(c.id)}" ${t.campus_id === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></div><div class="field"><label>Ngày bắt đầu</label><input type="date" name="start_date" value="${esc(t.start_date || "")}"></div><div class="field"><label class="required">Hạn hoàn thành</label><input type="date" name="due_date" value="${esc(t.due_date || "")}" required></div><div class="field"><label>Ưu tiên</label><select name="priority">${[
@@ -2339,8 +2351,9 @@
           };
         }
 
-        async function renderTeacherClass() {
-          let data = await db.teacherClassWeek(state.yearId, state.weekId);
+        async function renderTeacherClass(classId = "") {
+          const manager = ["admin", "superadmin"].includes(state.user?.role);
+          let data = await db.teacherClassWeek(state.yearId, state.weekId, classId);
           const calendarDate = today(),
             weeks = visibleSchoolWeeks(data.weeks, data.year ? [data.year] : []).sort((a, b) =>
               String(a.start_date || "").localeCompare(String(b.start_date || "")),
@@ -2351,7 +2364,7 @@
             previousWeek = weeks.filter((week) => week.end_date < calendarDate).at(-1),
             initialWeek = currentWeek || previousWeek || weeks[0];
           if (!weeks.some((week) => week.id === state.weekId) && initialWeek && data.week?.id !== initialWeek.id)
-            data = await db.teacherClassWeek(data.assignment.school_year_id, initialWeek.id);
+            data = await db.teacherClassWeek(data.assignment.school_year_id, initialWeek.id, data.assignment.class?.id);
           data.weeks = weeks;
           data.week = weeks.find((week) => week.id === data.week?.id) || null;
           if (!data.week) {
@@ -2365,25 +2378,31 @@
             incidents = data.incidents || [];
           setContent(
             pageHead(
-              "Lớp chủ nhiệm",
-              "Xem xếp hạng lớp và các ghi nhận trong tuần.",
+              manager ? "Lỗi học sinh theo lớp" : "Lớp chủ nhiệm",
+              "Xem xếp hạng lớp và lọc ghi nhận theo học sinh trong tuần.",
               '<button class="btn no-print" onclick="window.print()">In/Lưu PDF</button>',
             ) +
-              `<article class="teacher-week-report"><div class="toolbar no-print"><label>Tuần <select id="teacherWeekSelect">${data.weeks.map((week) => `<option value="${esc(week.id)}" ${week.id === data.week?.id ? "selected" : ""}>${esc(week.name)}${week.start_date ? ` (${fmtDate(week.start_date)} - ${fmtDate(week.end_date)})` : ""}</option>`).join("")}</select></label><button class="btn" id="teacherCurrentWeek" ${currentWeek ? "" : 'disabled title="Không có tuần học trong ngày hiện tại"'}>Tuần hiện tại</button><button class="btn" id="teacherPreviousWeek" ${previousWeek ? "" : 'disabled title="Chưa có tuần học trước đó"'}>Tuần trước (xem lại)</button></div><div class="card"><div class="card-head"><h2>${esc(schoolClass?.class_name || "Lớp chưa xác định")}</h2><span class="meta">${esc(data.week?.name || "Chưa chọn tuần")}</span></div><div class="card-body">${data.official ? "" : '<div class="notice warn">Bảng tuần chưa duyệt hoặc chưa khóa; chưa có xếp hạng chính thức.</div>'}${ranking ? `<div class="grid-3"><div class="split"><span>Hạng trong nhóm</span><strong>#${esc(ranking.rank)}</strong></div><div class="split"><span>Nhóm lớp</span><strong>${esc(ranking.class_group_name || "Chưa phân nhóm")}</strong></div><div class="split"><span>Tổng tuần</span><strong>${Number(ranking.total || 0).toFixed(1)} điểm</strong></div></div><div class="table-wrap mt"><table><thead><tr>${Object.keys(ranking.daily || {}).map((date) => `<th>${fmtDate(date)}</th>`).join("")}</tr></thead><tbody><tr>${Object.values(ranking.daily || {}).map((value) => `<td>${Number(value || 0).toFixed(1)}</td>`).join("")}</tr></tbody></table></div>` : '<div class="empty">Chưa có xếp hạng cho lớp trong tuần này.</div>'}</div></div><div class="card mt"><div class="card-head"><h2>Ghi nhận trong tuần</h2><span class="meta">${incidents.length} dòng</span></div><div class="card-body"><div class="table-wrap"><table><thead><tr><th>Ngày</th><th>Họ và tên</th><th>Nội dung</th><th>Điểm</th></tr></thead><tbody>${incidents.map((item) => `<tr><td>${fmtDate(item.date)}</td><td>${esc(item.person_name || "—")}</td><td>${esc(item.rule || "—")}</td><td class="${Number(item.points) < 0 ? "negative" : Number(item.points) > 0 ? "positive" : ""}">${Number(item.points) > 0 ? "+" : ""}${Number(item.points || 0)}</td></tr>`).join("") || '<tr><td colspan="4" class="empty">Chưa có ghi nhận có tên trong tuần này.</td></tr>'}</tbody></table></div></div></div></article>`,
+              `<article class="teacher-week-report"><div class="toolbar no-print">${manager ? `<label>Lớp <select id="teacherClassSelect">${data.classes.map((row) => `<option value="${esc(row.id)}" ${row.id === schoolClass?.id ? "selected" : ""}>${esc(row.class_name)}</option>`).join("")}</select></label>` : ""}<label>Tuần <select id="teacherWeekSelect">${data.weeks.map((week) => `<option value="${esc(week.id)}" ${week.id === data.week?.id ? "selected" : ""}>${esc(week.name)}${week.start_date ? ` (${fmtDate(week.start_date)} - ${fmtDate(week.end_date)})` : ""}</option>`).join("")}</select></label><button class="btn" id="teacherCurrentWeek" ${currentWeek ? "" : 'disabled title="Không có tuần học trong ngày hiện tại"'}>Tuần hiện tại</button><button class="btn" id="teacherPreviousWeek" ${previousWeek ? "" : 'disabled title="Chưa có tuần học trước đó"'}>Tuần trước (xem lại)</button></div><div class="card"><div class="card-head"><h2>${esc(schoolClass?.class_name || "Lớp chưa xác định")}</h2><span class="meta">${esc(data.week?.name || "Chưa chọn tuần")}</span></div><div class="card-body">${data.official ? "" : '<div class="notice warn">Bảng tuần chưa duyệt hoặc chưa khóa; chưa có xếp hạng chính thức.</div>'}${ranking ? `<div class="grid-3"><div class="split"><span>Hạng trong nhóm</span><strong>#${esc(ranking.rank)}</strong></div><div class="split"><span>Nhóm lớp</span><strong>${esc(ranking.class_group_name || "Chưa phân nhóm")}</strong></div><div class="split"><span>Tổng tuần</span><strong>${Number(ranking.total || 0).toFixed(1)} điểm</strong></div></div><div class="table-wrap mt"><table><thead><tr>${Object.keys(ranking.daily || {}).map((date) => `<th>${fmtDate(date)}</th>`).join("")}</tr></thead><tbody><tr>${Object.values(ranking.daily || {}).map((value) => `<td>${Number(value || 0).toFixed(1)}</td>`).join("")}</tr></tbody></table></div>` : '<div class="empty">Chưa có xếp hạng cho lớp trong tuần này.</div>'}</div></div><div class="card mt"><div class="card-head"><h2>Ghi nhận theo học sinh</h2><label class="no-print">Học sinh <select id="teacherStudentSelect"><option value="">Tất cả học sinh</option>${[...new Set(incidents.map((item) => item.person_name).filter(Boolean))].sort((a, b) => a.localeCompare(b, "vi")).map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join("")}</select></label><span class="meta">${incidents.length} dòng</span></div><div class="card-body"><div class="table-wrap"><table><thead><tr><th>Ngày</th><th>Họ và tên</th><th>Nội dung</th><th>Điểm</th></tr></thead><tbody>${incidents.map((item) => `<tr data-student-name="${esc(item.person_name || "")}"><td>${fmtDate(item.date)}</td><td>${esc(item.person_name || "—")}</td><td>${esc(item.rule || "—")}</td><td class="${Number(item.points) < 0 ? "negative" : Number(item.points) > 0 ? "positive" : ""}">${Number(item.points) > 0 ? "+" : ""}${Number(item.points || 0)}</td></tr>`).join("") || '<tr><td colspan="4" class="empty">Chưa có ghi nhận có tên trong tuần này.</td></tr>'}</tbody></table></div></div></div></article>`,
           );
+          if (manager) $("#teacherClassSelect").onchange = (event) => renderTeacherClass(event.target.value);
+          $("#teacherStudentSelect").onchange = (event) => {
+            $$("[data-student-name]").forEach((row) => {
+              row.hidden = !!event.target.value && row.dataset.studentName !== event.target.value;
+            });
+          };
           $("#teacherWeekSelect").onchange = (event) => {
             state.weekId = event.target.value;
-            return renderTeacherClass();
+            return renderTeacherClass(schoolClass?.id);
           };
           $("#teacherCurrentWeek").onclick = () => {
             if (!currentWeek) return;
             state.weekId = currentWeek.id;
-            return renderTeacherClass();
+            return renderTeacherClass(schoolClass?.id);
           };
           $("#teacherPreviousWeek").onclick = () => {
             if (!previousWeek) return;
             state.weekId = previousWeek.id;
-            return renderTeacherClass();
+            return renderTeacherClass(schoolClass?.id);
           };
         }
         async function renderScores() {
@@ -7519,12 +7538,15 @@ async function removeClass(id) {
         async function ensureStorageProtection() {
           if (!navigator.storage) return;
           try {
-            const estimate = await navigator.storage.estimate(),
+            const [estimate, preferences] = await Promise.all([
+                navigator.storage.estimate(),
+                db.get("app_settings", "seed_state"),
+              ]),
               ratio = estimate.quota ? estimate.usage / estimate.quota : 0,
-              low = Number(await setting("storage_warning_low")) || 70,
-              high = Number(await setting("storage_warning_high")) || 85,
+              low = Number(preferences?.storage_warning_low) || 70,
+              high = Number(preferences?.storage_warning_high) || 85,
               critical =
-                Number(await setting("storage_warning_critical")) || 95,
+                Number(preferences?.storage_warning_critical) || 95,
               percent = Math.round(ratio * 100);
             await setting("storage_last_estimate", {
               usage: estimate.usage || 0,

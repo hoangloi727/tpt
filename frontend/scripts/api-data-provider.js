@@ -205,7 +205,7 @@
     async authorizeDestructive(currentPassword) {
       const result = await this.request("/destructive-confirmations", {
         method: "POST",
-        body: JSON.stringify({ confirmation: "YES", currentPassword }),
+        body: JSON.stringify({ currentPassword }),
       });
       this.destructiveAuthorization = result.authorization;
     }
@@ -256,10 +256,11 @@
       });
     }
 
-    teacherClassWeek(schoolYearId = "", weekId = "") {
+    teacherClassWeek(schoolYearId = "", weekId = "", classId = "") {
       const query = new URLSearchParams();
       if (schoolYearId) query.set("schoolYearId", schoolYearId);
       if (weekId) query.set("weekId", weekId);
+      if (classId) query.set("classId", classId);
       return this.request(`/teacher/class-week?${query}`);
     }
 

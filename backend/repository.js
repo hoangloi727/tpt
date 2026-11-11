@@ -177,7 +177,7 @@ export class SqliteRepository {
     const run = async () => {
       const draft = structuredClone(this.state);
       const result = await task(draft);
-      await this.persist(draft);
+      await this.database.updateRecords(this.state, draft);
       this.state = draft;
       return result;
     };

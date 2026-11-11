@@ -22,7 +22,7 @@ Every non-global user belongs to one school. Every user can update own display n
 4. Every domain record must have immutable tenant ownership; a caller cannot use an identifier or payload field to read or move another school's record.
 5. Require a secure authenticated session, auto-lock after configurable inactivity (5/10/15/30 minutes, default 10), and clear/expire sessions. Background inactivity counts. Enforce this in the authoritative service/session policy, not merely by a browser timer.
 6. Apply rate friction after three consecutive client login failures using exponential delay capped at 30 seconds.
-7. Sensitive/destructive actions require both ordinary authorization and recent current-password confirmation with literal confirmation text `YES`.
+7. Sensitive/destructive actions require both ordinary authorization and recent current-password confirmation.
 
 ### 3.2 School and academic context
 1. Manage school profile (identity, code/address, report preparer/title, logo) and campuses.
@@ -120,7 +120,7 @@ The system must distinguish invalid input, unauthenticated, forbidden, absent, u
 4. A base-formula sheet with base 100, a count entry 2 with points -3, and a boolean pass worth 5 yields 99; `N/A` does not alter score but makes that cell complete.
 5. Two group classes with equal totals receive rank 1 and the next receives rank 3; ungrouped classes do not rank against grouped classes.
 6. A sheet cannot complete when a required cell is blank, a pasted blank does not become zero, a boolean value of `2` is rejected, and no entry changes after approval/lock. Unlock needs a five-character reason and causes re-review before a renewed official result.
-7. Used rules cannot be structurally edited; destructive rule replacement clears that week’s dependent competition data only after current-password `YES` confirmation.
+7. Used rules cannot be structurally edited; destructive rule replacement clears that week’s dependent competition data only after current-password confirmation.
 8. A stale revision update conflicts without overwrite; an invalid bulk row leaves all batch records unchanged.
 9. A closed-year ordinary edit fails; a manager correction with >=10-character reason succeeds and is auditable.
 10. Document duplicate/version, snapshot/full-backup, mandatory format/manifest/checksum validation, merge precedence (identical in preview and commit), pre-restore protection, domain validation and attachment-preservation rules behave as specified.

@@ -429,3 +429,60 @@ test("scheduled snapshots fetch one payload for all due tiers and no payload whe
   assert.equal(requests.length, 4);
   assert.equal(repository.all("internal_snapshots", false, "school").filter(row => row.tier === "daily").length, 2);
 });
+
+test("class incident view lets managers switch classes and keeps teachers in their assigned class", async () => {
+  const repository = await openRepository();
+  await seedScores(repository);
+  await repository.put("classes", { id: "second", school_year_id: "year", class_name: "6B" }, options);
+  await repository.put("classes", { id: "foreign", school_year_id: "year" }, { schoolId: "other-school" });
+  await repository.put("teacher_class_assignments", { id: "teacher", user_id: "teacher", school_year_id: "year", class_id: "class" }, options);
+  // Named incidents are the existing source for the teacher report.
+  repository.state.stores.score_entries[0].incidents = [{ person_name: "Student A", criteria_id: "criterion", points: -2 }];
+  repository.state.stores.score_entries.push({ id: "second-entry", school_profile_id: "school", sheet_id: "sheet", class_id: "second", entry_date: "2026-09-14", incidents: [{ person_name: "Student B", criteria_id: "criterion", points: -1 }] });
+  for (const role of ["admin", "superadmin"]) {
+    const response = await apiRequest(repository, { id: role, role }, "/teacher/class-week?schoolYearId=year&weekId=week&classId=second");
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.result.classes.map(row => row.id).sort(), ["class", "second"]);
+    assert.equal(response.result.assignment.class.id, "second");
+    assert.deepEqual(response.result.incidents.map(row => row.person_name), ["Student B"]);
+    assert.equal((await apiRequest(repository, { role }, "/teacher/class-week?schoolYearId=year&classId=foreign")).status, 404);
+  }
+  const teacher = { id: "teacher", role: "teacher" };
+  const own = await apiRequest(repository, teacher, "/teacher/class-week?schoolYearId=year&weekId=week");
+  assert.equal(own.status, 200);
+  assert.deepEqual(own.result.classes.map(row => row.id), ["class"]);
+  assert.deepEqual(own.result.incidents.map(row => row.person_name), ["Student A"]);
+  assert.equal((await apiRequest(repository, teacher, "/teacher/class-week?schoolYearId=year&classId=second")).status, 403);
+  assert.equal((await apiRequest(repository, { role: "user", permissions: ["*"] }, "/teacher/class-week")).status, 403);
+});
+
+test("class incident UI filters students and retains class selection when changing weeks", async () => {
+  const source = appSource.slice(appSource.indexOf("async function renderTeacherClass("), appSource.indexOf("async function renderScores("));
+  const elements = new Map(), requests = [], rows = ["Student A", "Student B"].map(studentName => ({ dataset: { studentName } }));
+  let html;
+  const weeks = [{ id: "week", name: "Week", start_date: "2026-09-14", end_date: "2026-09-20" }];
+  const context = vm.createContext({
+    state: { user: { role: "admin" }, yearId: "year", weekId: "week" },
+    db: { teacherClassWeek: async (year, week, classId) => {
+      requests.push([year, week, classId]);
+      return { assignment: { school_year_id: "year", class: { id: classId || "first", class_name: "Class" } }, classes: [{ id: "first", class_name: "First" }, { id: "second", class_name: "Second" }], weeks, week: weeks[0], incidents: rows.map(row => ({ person_name: row.dataset.studentName, points: -1 })) };
+    } },
+    today: () => "2026-09-15", visibleSchoolWeeks: rows => rows, esc: value => String(value ?? ""), fmtDate: value => value || "", pageHead: () => "",
+    setContent: value => { html = value; },
+    $: selector => { if (!elements.has(selector)) elements.set(selector, {}); return elements.get(selector); },
+    $$: () => rows,
+  });
+  vm.runInContext(source, context);
+  await context.renderTeacherClass();
+  assert.match(html, /teacherClassSelect/);
+  elements.get("#teacherStudentSelect").onchange({ target: { value: "Student A" } });
+  assert.deepEqual(rows.map(row => row.hidden), [false, true]);
+  elements.get("#teacherStudentSelect").onchange({ target: { value: "" } });
+  assert.deepEqual(rows.map(row => row.hidden), [false, false]);
+  await elements.get("#teacherClassSelect").onchange({ target: { value: "second" } });
+  await elements.get("#teacherWeekSelect").onchange({ target: { value: "week" } });
+  assert.equal(requests.at(-1)[2], "second");
+  context.state.user.role = "teacher";
+  await context.renderTeacherClass();
+  assert.doesNotMatch(html, /teacherClassSelect/);
+});

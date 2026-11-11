@@ -21,7 +21,6 @@
     ["account", "♙", "Tài khoản của tôi"],
     ["users", "♜", "Quản lý người dùng"],
     ["settings", "⚙", "Thiết lập"],
-    ["api", "{ }", "API nội bộ"],
   ];
 
   const ENTITY = {

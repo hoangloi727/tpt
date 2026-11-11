@@ -62,7 +62,7 @@ Tất cả đều tùy chọn:
 - `frontend/scripts/app.js`: composition root, điều hướng và điều phối tính năng trình duyệt.
 - `frontend/scripts/app-schema.js`, `browser-runtime.js`, `custom-fields.js`: cấu hình, tích hợp trình duyệt và biểu mẫu.
 - `frontend/scripts/score-engine.js`, `report-formatters.js`, `backup-codec.js`, `backup-service.js`: tính điểm, báo cáo và sao lưu.
-- `frontend/scripts/api-reference.js`, `pwa-runtime.js`: trang tham chiếu API nội bộ và vòng đời PWA.
+- `frontend/scripts/pwa-runtime.js`: vòng đời PWA.
 - `frontend/scripts/api-data-provider.js`: bộ chuyển đổi CRUD qua HTTP (`window.ApiDataProvider`).
 - `frontend/manifest.webmanifest`, `frontend/sw.js`: manifest và service worker của PWA.
 - `data/`: dữ liệu chạy cục bộ, bị loại khỏi Git.
@@ -77,7 +77,6 @@ Lệnh này kiểm tra cú pháp các tệp JavaScript chính; dự án hiện c
 
 ### Mô tả API
 
-- [`api.md`](api.md): mô tả kỹ thuật và hướng dẫn tích hợp API nội bộ bằng tiếng Việt và tiếng Anh.
 
 ## English
 
@@ -141,7 +140,7 @@ All variables are optional:
 - `frontend/scripts/app.js`: browser composition root, routing, and feature orchestration.
 - `frontend/scripts/app-schema.js`, `browser-runtime.js`, `custom-fields.js`: configuration, browser integration, and forms.
 - `frontend/scripts/score-engine.js`, `report-formatters.js`, `backup-codec.js`, `backup-service.js`: scoring, reports, and backups.
-- `frontend/scripts/api-reference.js`, `pwa-runtime.js`: private API reference page and PWA lifecycle.
+- `frontend/scripts/pwa-runtime.js`: PWA lifecycle.
 - `frontend/scripts/api-data-provider.js`: HTTP CRUD adapter (`window.ApiDataProvider`).
 - `frontend/manifest.webmanifest`, `frontend/sw.js`: PWA manifest and service worker.
 - `data/`: local runtime data, excluded from Git.
@@ -158,4 +157,8 @@ Run `npm run test:unit` for dependency-free Node unit tests covering scoring, ra
 
 ### API documentation
 
-- [`api.md`](api.md): technical specification and integration guide for the private API, in Vietnamese and English.
+### SQLite native
+
+Backend dùng `better-sqlite3` để ghi transaction trực tiếp xuống `SQLITE_FILE`, với `synchronous=FULL`. Node 20 vẫn được hỗ trợ; chạy `npm install` trên máy triển khai để cài native module đúng nền tảng. `sql.js` chỉ còn dùng trong kiểm tra tương thích.
+
+Tệp SQLite hiện có được mở trực tiếp, không cần đổi schema hoặc nhập lại tài khoản. Trước khi nâng cấp, dừng máy chủ và sao lưu tệp SQLite; sau đó cài dependencies và chạy `npm start`. Chỉ chạy một tiến trình ứng dụng với mỗi database vì backend giữ trạng thái trong bộ nhớ. Muốn quay lại bản cũ, dừng bản mới trước rồi khởi động bản cũ với cùng tệp SQLite; giữ nguyên các tệp JSON nguồn rollback. Không sao chép riêng tệp database khi máy chủ đang ghi; dùng chức năng sao lưu của ứng dụng hoặc dừng máy chủ trước.

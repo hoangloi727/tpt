@@ -156,3 +156,21 @@ test("Unlock requires manager password, reason and current revision, for approve
     reason: "Cannot unlock review", currentPassword: "test-password", revision: repository.get("weekly_score_sheets", "sheet", "school").revision,
   })).status, 409);
 });
+
+test("destructive confirmation requires only the current password", async () => {
+  const checked = [];
+  const { request } = await fixture({ verifyPassword: async (id, password) => {
+    checked.push([id, password]);
+    return password === "test-password";
+  } });
+  for (const body of [{}, { currentPassword: "" }, { currentPassword: "wrong" }]) {
+    const response = await request("admin", "POST", "/destructive-confirmations", body);
+    assert.equal(response.status, 403);
+    assert.equal(response.result.authorization, undefined);
+  }
+  const response = await request("admin", "POST", "/destructive-confirmations", { currentPassword: "test-password" });
+  assert.equal(response.status, 200);
+  assert.ok(response.result.authorization);
+  assert.equal(checked.length, 4);
+  assert.deepEqual(checked.at(-1), ["admin", "test-password"]);
+});
