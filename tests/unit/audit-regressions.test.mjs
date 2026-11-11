@@ -567,3 +567,22 @@ test("attachment listing omits binary content and preserves school isolation", a
   assert.equal(response.result[0].blob,undefined);
   assert.equal((await apiRequest(repository,{role:"user"},"/attachments/metadata")).status,403);
 });
+
+test("score batches filter selected week and page batches have distinct payloads", async () => {
+  const repository = await openRepository();
+  await seedScores(repository);
+  await repository.put("score_entries", {id:"next-entry", school_year_id:"year", week_id:"next-week",sheet_id:"next-sheet",class_id:"class",criteria_id:"criterion",entry_date:"2026-09-21",entry_state:"value",value:2},options);
+  const response = await apiRequest(repository,{role:"admin"},"/scores/data?yearId=year&weekId=week");
+  assert.equal(response.status,200);
+  assert.deepEqual(response.result.stores.score_entries.map(row=>row.id),["entry"]);
+  assert.equal((await apiRequest(repository,{role:"admin"},"/scores/data?yearId=other&weekId=week")).status,400);
+  const startup = await apiRequest(repository,{role:"admin"},"/startup");
+  assert.equal(startup.result.stores.score_entries,undefined);
+  const dashboard = await apiRequest(repository,{role:"admin"},"/dashboard/data?yearId=year&weekId=week");
+  assert.equal(dashboard.result.stores.generated_reports,undefined);
+  assert.equal(dashboard.result.stores.score_entries.length,1);
+  const reports = await apiRequest(repository,{role:"admin"},"/reports/data?yearId=year&weekId=week");
+  assert.equal(reports.result.stores.score_entries.length,2);
+  assert.ok(reports.result.stores.generated_reports);
+  assert.equal((await apiRequest(repository,{role:"user"},"/reports/data")).status,403);
+});

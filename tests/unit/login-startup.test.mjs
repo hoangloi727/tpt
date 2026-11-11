@@ -105,7 +105,7 @@ test("startup reads share one batch and a write invalidates it", async () => {
 
 test("dashboard revisits fetch one fresh batch, startup reuses its batch and failures release it", async () => {
   let loads = 0, renders = 0, fail = false;
-  const db = { startupData: null, async prepareStartup() { loads++; this.startupData = {}; } };
+  const db = { startupData: null, async preparePage() { loads++; this.startupData = {stores:{score_entries:[]}}; } };
   const context = vm.createContext({ db, state: { user: { role: "admin" } }, canManageScores: () => true,
     renderDashboardData: async () => { renders++; assert.ok(db.startupData); if (fail) throw Error("render failed"); },
   });
@@ -114,7 +114,7 @@ test("dashboard revisits fetch one fresh batch, startup reuses its batch and fai
   await context.renderDashboard();
   assert.equal(loads, 2);
   assert.equal(db.startupData, null);
-  db.startupData = {};
+  db.startupData = {stores:{score_entries:[]}};
   await context.renderDashboard();
   assert.equal(loads, 2);
   db.startupData = null;
@@ -143,4 +143,24 @@ test("page reads deduplicate sequential requests, refresh after writes and on th
   await db.all("tasks"); assert.equal(requests,4);
   db.endReadScope(scope);
   await db.all("tasks"); assert.equal(requests,5);
+});
+
+test("score subtabs reuse context and calculate rankings only once", async () => {
+  const buttons = ["entry","ranking","anomaly","history"].map(tab => ({ dataset:{scoreTab:tab}, classList:{toggle(){} } }));
+  let calculations = 0, entries = 0;
+  const context = vm.createContext({
+    state:{scoreTab:"entry"}, ctx:{sheet:{status:"draft"}}, manager:true,
+    $$:()=>buttons, renderScoreEntry:()=>{entries++;}, renderScoreAnomalies:()=>{}, renderScoreHistory:async()=>{},
+    calculateRanking:async()=>{calculations++;return [];}, renderScoreRanking:async()=>{}, toast:message=>{throw Error(message);},
+  });
+  const start = source.indexOf("          let ranking = null, rendering = false;");
+  const end = source.indexOf('          if ($("#assignScoreGraders"))',start);
+  await vm.runInContext(`(async()=>{${source.slice(start,end)}})()`,context);
+  await buttons[1].onclick();
+  await buttons[2].onclick();
+  await buttons[1].onclick();
+  await buttons[0].onclick();
+  assert.equal(calculations,1);
+  assert.equal(entries,2);
+  assert.ok(buttons.every(button=>!button.disabled));
 });

@@ -1309,8 +1309,8 @@
         }
         async function renderDashboard() {
           if (state.user?.role === "user") return renderSaoDoScoreDashboard();
-          const loadBatch = canManageScores() && !db.startupData;
-          if (loadBatch) await db.prepareStartup();
+          const loadBatch = canManageScores() && !db.startupData?.stores.score_entries;
+          if (loadBatch) await db.preparePage("dashboard", state.yearId, state.weekId);
           try {
             await renderDashboardData();
           } finally {
@@ -2460,8 +2460,8 @@
           };
         }
         async function renderScores() {
-          const loadBatch = !db.startupData;
-          if (loadBatch) await db.prepareScores();
+          const loadBatch = !db.startupData?.stores.score_entries;
+          if (loadBatch) await db.prepareScores(state.yearId, state.weekId);
           try {
             await renderScoresData();
           } finally {
@@ -2487,17 +2487,34 @@
       <div class="toolbar"><strong>${esc(week?.name || "Chưa chọn tuần")}</strong><span>${week ? `${fmtDate(week.start_date)} – ${fmtDate(week.end_date)}` : ""}</span><span style="margin-left:auto">Trạng thái: ${ctx.sheet?.status === "draft" ? '<span class="badge">Chưa nhập đủ</span>' : statusBadge(ctx.sheet?.status || "Chưa tạo")}</span></div>
       <div class="tabs"><button data-score-tab="entry" class="${state.scoreTab === "entry" ? "active" : ""}">Nhập điểm</button>${manager ? `<button data-score-tab="ranking" class="${state.scoreTab === "ranking" ? "active" : ""}">Xếp hạng</button><button data-score-tab="anomaly" class="${state.scoreTab === "anomaly" ? "active" : ""}">Kiểm tra bất thường</button><button data-score-tab="history" class="${state.scoreTab === "history" ? "active" : ""}">Nhật ký điều chỉnh</button>` : ""}</div><div id="scoreArea"></div>`,
           );
-          if (state.scoreTab === "entry") renderScoreEntry(ctx);
-          if (state.scoreTab === "ranking") await renderScoreRanking(ctx);
-          if (state.scoreTab === "anomaly") renderScoreAnomalies(ctx);
-          if (state.scoreTab === "history") await renderScoreHistory(ctx);
-          $$("[data-score-tab]").forEach(
-            (b) =>
-              (b.onclick = () => {
-                state.scoreTab = b.dataset.scoreTab;
-                renderScores();
-              }),
-          );
+          let ranking = null, rendering = false;
+          const renderTab = async (tab) => {
+            if (rendering) return;
+            rendering = true;
+            try {
+              state.scoreTab = manager ? tab : "entry";
+              $$("[data-score-tab]").forEach(button => {
+                button.classList.toggle("active", button.dataset.scoreTab === state.scoreTab);
+                button.disabled = true;
+              });
+              if (state.scoreTab === "entry") renderScoreEntry(ctx);
+              if (state.scoreTab === "ranking") {
+                ranking ||= await calculateRanking(["approved", "locked"].includes(ctx.sheet?.status), false, ctx);
+                await renderScoreRanking(ctx, ranking);
+              }
+              if (state.scoreTab === "anomaly") renderScoreAnomalies(ctx);
+              if (state.scoreTab === "history") await renderScoreHistory(ctx);
+            } catch (error) {
+              toast(error.message, "bad");
+            } finally {
+              rendering = false;
+              $$("[data-score-tab]").forEach(button => { button.disabled = false; });
+            }
+          };
+          $$("[data-score-tab]").forEach(button => {
+            button.onclick = () => renderTab(button.dataset.scoreTab);
+          });
+          await renderTab(state.scoreTab);
           if ($("#assignScoreGraders"))
             $("#assignScoreGraders").onclick = showScoreGraderAssignments;
           if ($("#criteriaConfig")) $("#criteriaConfig").onclick = showRulesetConfig;
@@ -3390,10 +3407,10 @@
               : ctx,
           );
         }
-        async function renderScoreRanking(ctx) {
+        async function renderScoreRanking(ctx, preparedRanks = null) {
           const area = $("#scoreArea"),
             official = ["approved", "locked"].includes(ctx.sheet?.status),
-            allRanks = await calculateRanking(official, false, ctx),
+            allRanks = preparedRanks || await calculateRanking(official, false, ctx),
             groups = new Map(
               allRanks.map((row) => [row.class_group_id, row.class_group_name]),
             );
@@ -3409,7 +3426,7 @@
           $$("[data-ranking-group]").forEach((button) => {
             button.onclick = () => {
               state.rankingGroupId = button.dataset.rankingGroup;
-              return renderScoreRanking(ctx);
+              return renderScoreRanking(ctx, allRanks);
             };
           });
         }
@@ -3509,8 +3526,8 @@
           };
         }
         async function renderReports() {
-          const loadBatch = canManageScores() && !db.startupData;
-          if (loadBatch) await db.prepareStartup();
+          const loadBatch = canManageScores() && !db.startupData?.stores.generated_reports;
+          if (loadBatch) await db.preparePage("reports", state.yearId, state.weekId);
           try {
             await renderReportsData();
           } finally {

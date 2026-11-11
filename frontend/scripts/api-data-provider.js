@@ -319,8 +319,12 @@
       return this;
     }
 
-    async prepareScores() {
-      this.startupData = await this.request("/scores/data");
+    async prepareScores(yearId = "", weekId = "") {
+      this.startupData = await this.request(`/scores/data?${new URLSearchParams({ yearId, weekId })}`);
+    }
+
+    async preparePage(page, yearId = "", weekId = "") {
+      this.startupData = await this.request(`/${page}/data?${new URLSearchParams({ yearId, weekId })}`);
     }
 
     async prepareStartup() {

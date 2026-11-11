@@ -755,9 +755,18 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         const stores = ["criteria_sets", "weekly_score_sheets", "criteria", "criteria_groups", "classes", "class_groups", "score_entries", "score_grader_assignments"];
         if (isManager(user)) stores.push("ranking_snapshots");
         if (!stores.every(store => canReadStore(user, store))) return forbidden(response);
+        const yearId = url.searchParams.get("yearId"), weekId = url.searchParams.get("weekId");
+        if (weekId) {
+          const week = repository.get("school_weeks", weekId, user.selectedSchoolId);
+          if (!week || (yearId && (week.school_year_id || week.academic_year_id) !== yearId))
+            return sendJson(response, 400, { error: "Tuần không thuộc năm học đã chọn." });
+        }
         const classIds = new Set(graderAssignments(repository, user).flatMap(row => row.class_ids || []));
         return sendJson(response, 200, { stores: Object.fromEntries(stores.map(store => [store,
           repository.all(store, false, user.selectedSchoolId).filter(row => {
+            const rowYear = row.school_year_id || row.academic_year_id;
+            if (yearId && rowYear && rowYear !== yearId) return false;
+            if (weekId && ["score_entries", "weekly_score_sheets", "ranking_snapshots"].includes(store) && row.week_id !== weekId) return false;
             if (user.role !== "user") return true;
             if (store === "score_grader_assignments") return row.user_id === user.id;
             if (store === "classes") return classIds.has(row.id);
@@ -786,9 +795,22 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         if (!isManager(user)) return forbidden(response);
         return sendJson(response, 200, Object.fromEntries(STORES.filter(store => !EXTERNAL_BACKUP_EXCLUDED_STORES.has(store)).map(store => [store, repository.all(store, true, user.selectedSchoolId)])));
       }
+      if (request.method === "GET" && ["/api/dashboard/data", "/api/reports/data"].includes(url.pathname)) {
+        if (!isManager(user)) return forbidden(response);
+        const stores = ["schools", "app_settings", "tasks", "calendar_events", "classes", "weekly_score_sheets", "score_entries", "criteria_sets", "criteria", "criteria_groups", "class_groups", "ranking_snapshots"];
+        if (url.pathname === "/api/reports/data") stores.push("activities", "equipment", "generated_reports");
+        const yearId = url.searchParams.get("yearId"), weekId = url.searchParams.get("weekId");
+        return sendJson(response, 200, { stores: Object.fromEntries(stores.map(store => [store,
+          repository.all(store, false, user.selectedSchoolId).filter(row => {
+            const year = row.school_year_id || row.academic_year_id;
+            if (yearId && year && year !== yearId) return false;
+            return url.pathname === "/api/reports/data" || !weekId || !["score_entries", "weekly_score_sheets", "ranking_snapshots"].includes(store) || row.week_id === weekId;
+          }),
+        ])) });
+      }
       if (request.method === "GET" && url.pathname === "/api/startup") {
         if (!isManager(user)) return forbidden(response);
-        const stores = ["schools", "school_years", "semesters", "school_weeks", "campuses", "app_settings", "tasks", "task_check_items", "calendar_events", "classes", "weekly_score_sheets", "score_entries", "criteria_sets", "criteria", "criteria_groups", "class_groups", "ranking_snapshots", "activities", "equipment", "generated_reports"];
+        const stores = ["schools", "school_years", "semesters", "school_weeks", "campuses", "app_settings", "tasks", "task_check_items", "calendar_events"];
         return sendJson(response, 200, {
           stores: Object.fromEntries(stores.map((store) => [store, repository.all(store, false, user.selectedSchoolId)])),
           pending: repository.pendingOperations(user.selectedSchoolId),
