@@ -127,6 +127,7 @@
     }
 
     async request(path, options = {}) {
+      if (options.method && options.method !== "GET") this.startupData = null;
       const headers = new Headers(options.headers || {});
       if (this.destructiveAuthorization) {
         headers.set("X-Destructive-Authorization", this.destructiveAuthorization);
@@ -158,6 +159,7 @@
     }
 
     schoolBranding() {
+      if (this.startupData?.stores.schools) return Promise.resolve({ brand_logo: structuredClone(this.startupData.stores.schools[0]?.brand_logo || null) });
       return this.request("/school-branding");
     }
 
@@ -287,11 +289,19 @@
       return this;
     }
 
+    async prepareStartup() {
+      this.startupData = null;
+      if (["superadmin", "admin"].includes(this.currentUser?.role))
+        this.startupData = await this.request("/startup");
+    }
+
     pendingOperations() {
+      if (this.startupData) return Promise.resolve(structuredClone(this.startupData.pending));
       return this.request("/operations/pending");
     }
 
     all(store) {
+      if (this.startupData?.stores[store]) return Promise.resolve(structuredClone(this.startupData.stores[store]));
       return this.request(`/stores/${encodeURIComponent(store)}`);
     }
 
@@ -300,6 +310,7 @@
     }
 
     get(store, id) {
+      if (this.startupData?.stores[store]) return Promise.resolve(structuredClone(this.startupData.stores[store].find((row) => row.id === id) || null));
       return this.request(
         `/stores/${encodeURIComponent(store)}/${encodeURIComponent(id)}?optional=1`,
         { allowMissing: true },

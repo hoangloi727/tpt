@@ -446,9 +446,9 @@
             },
           );
         }
-        async function recoverInterruptedOperations() {
-          for (const row of await db.pendingOperations())
-              await finishOperation(row, "interrupted", {
+        async function recoverInterruptedOperations(rows) {
+          for (const row of rows)
+            await finishOperation(row, "interrupted", {
                 reason: "Ứng dụng mở lại trước khi thao tác ghi nhận hoàn tất.",
               });
         }
@@ -626,7 +626,7 @@
           await job.promise;
           if (scheduledMaintenance === job) scheduledMaintenance = null;
         }
-        function scheduleMaintenance() {
+        function scheduleMaintenance(pending = []) {
           if (scheduledMaintenance || !state.unlocked || tabCoordinator.readOnly ||
               !["superadmin", "admin"].includes(state.user?.role)) return;
           const job = { controller: new AbortController(), promise: null };
@@ -634,7 +634,7 @@
           const run = () => {
             if (job.controller.signal.aborted || !state.unlocked) return;
             job.promise = (async () => {
-              for (const task of [ensureScheduledSnapshots, ensureScheduledDirectoryBackup]) {
+              for (const task of [() => recoverInterruptedOperations(pending), ensureScheduledSnapshots, ensureScheduledDirectoryBackup]) {
                 if (job.controller.signal.aborted) break;
                 try {
                   await task(job.controller.signal);
@@ -660,6 +660,17 @@
           }
         }
         async function launchApp() {
+          await startupStep("Tải dữ liệu khởi động…", () => db.prepareStartup());
+          try {
+            await launchPreparedApp();
+          } finally {
+            db.startupData = null;
+          }
+        }
+        async function launchPreparedApp() {
+          const pendingRecovery = ["superadmin", "admin"].includes(state.user?.role)
+            ? await db.pendingOperations() : [];
+
           if (!db.db) {
             await tabCoordinator.start();
             await db.open();
@@ -672,7 +683,6 @@
             !tabCoordinator.readOnly &&
             ["superadmin", "admin"].includes(state.user?.role)
           ) {
-            await startupStep("Kiểm tra thao tác chưa hoàn tất…", recoverInterruptedOperations);
             await startupStep("Kiểm tra dữ liệu ban đầu…", ensureSeed);
             await startupStep("Kiểm tra phiên bản dữ liệu…", migrateEnhancedData);
             await startupStep("Tạo công việc định kỳ…", generateRecurringTasks);
@@ -724,7 +734,7 @@
             !preferences?.onboarded
           )
             showOnboarding();
-          scheduleMaintenance();
+          scheduleMaintenance(pendingRecovery);
         }
         function updateSchoolBranding() {
           const schoolName =

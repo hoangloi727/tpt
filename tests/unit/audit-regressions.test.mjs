@@ -499,3 +499,16 @@ test("pending operation recovery returns only unfinished records in the current 
   assert.equal((await apiRequest(repository, { role: "user" }, "/operations/pending")).status, 403);
   assert.equal((await apiRequest(repository, { role: "teacher" }, "/operations/pending")).status, 403);
 });
+
+test("startup batch is manager-only and contains only the selected school's records", async () => {
+  const repository = await openRepository();
+  await repository.put("tasks", { id: "local" }, { schoolId: "school" });
+  await repository.put("tasks", { id: "foreign" }, { schoolId: "other" });
+  const response = await apiRequest(repository, { role: "admin" }, "/startup");
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.result.stores.tasks.map(row => row.id), ["local"]);
+  assert.equal(response.result.stores.internal_snapshots, undefined);
+  assert.equal(response.result.stores.auth_users, undefined);
+  for (const role of ["user", "teacher"])
+    assert.equal((await apiRequest(repository, { role }, "/startup")).status, 403);
+});

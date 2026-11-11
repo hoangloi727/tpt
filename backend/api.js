@@ -750,6 +750,14 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           }),
         );
       }
+      if (request.method === "GET" && url.pathname === "/api/startup") {
+        if (!isManager(user)) return forbidden(response);
+        const stores = ["schools", "school_years", "semesters", "school_weeks", "campuses", "app_settings", "tasks", "task_check_items", "calendar_events", "classes", "weekly_score_sheets", "score_entries", "criteria_sets", "criteria", "criteria_groups", "class_groups", "ranking_snapshots"];
+        return sendJson(response, 200, {
+          stores: Object.fromEntries(stores.map((store) => [store, repository.all(store, false, user.selectedSchoolId)])),
+          pending: repository.pendingOperations(user.selectedSchoolId),
+        });
+      }
       if (request.method === "GET" && url.pathname === "/api/operations/pending") {
         if (!isManager(user)) return forbidden(response);
         return sendJson(response, 200, repository.pendingOperations(user.selectedSchoolId));

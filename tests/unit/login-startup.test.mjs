@@ -30,6 +30,7 @@ test("maintenance is deferred, cancelled before idle, and drains an active task 
   const context = vm.createContext({
     state, tabCoordinator: { readOnly: false }, AbortController,
     window: { requestIdleCallback(callback) { idle = callback; } },
+    recoverInterruptedOperations: async () => {},
     ensureScheduledSnapshots: async () => { calls++; await new Promise((resolve) => { finish = resolve; }); },
     ensureScheduledDirectoryBackup: async () => { calls++; }, console, toast() {},
   });
@@ -59,7 +60,7 @@ test("login displays the shell before scheduling maintenance without awaiting sc
   const launch = source.slice(source.indexOf("        async function launchApp()"), source.indexOf("        function updateSchoolBranding()"));
   assert.doesNotMatch(launch, /await.*ensureScheduled/);
   assert.doesNotMatch(launch, /ensureStorageProtection/);
-  assert.ok(launch.indexOf('$("#appShell").classList.remove("hidden")') < launch.indexOf("scheduleMaintenance()"));
+  assert.ok(launch.indexOf('$("#appShell").classList.remove("hidden")') < launch.indexOf("scheduleMaintenance(pendingRecovery)"));
 });
 
 test("cancelling during snapshot hashing prevents writes while manual snapshots remain available", async () => {
@@ -81,4 +82,23 @@ test("cancelling during snapshot hashing prevents writes while manual snapshots 
   assert.equal(writes, 0);
   await service.createInternalSnapshot("Before restore", { protectedSnapshot: true });
   assert.equal(writes, 1);
+});
+
+test("startup reads share one batch and a write invalidates it", async () => {
+  let requests = 0;
+  const context = vm.createContext({ window: {}, structuredClone, Headers, Blob, fetch: async () => {
+    requests++;
+    return { ok: true, status: 200, json: async () => ({ stores: { tasks: [{ id: "task", title: "Original" }] }, pending: [] }) };
+  } });
+  vm.runInContext(await readFile(new URL("../../frontend/scripts/api-data-provider.js", import.meta.url), "utf8"), context);
+  const db = new context.window.ApiDataProvider({});
+  db.currentUser = { role: "admin" };
+  await db.prepareStartup();
+  const rows = await db.all("tasks");
+  rows[0].title = "Changed";
+  assert.equal((await db.get("tasks", "task")).title, "Original");
+  await db.pendingOperations();
+  assert.equal(requests, 1);
+  await db.request("/test", { method: "POST", body: "{}" });
+  assert.equal(db.startupData, null);
 });
