@@ -41,6 +41,7 @@ test("maintenance is deferred, cancelled before idle, and drains an active task 
   assert.equal(calls, 0);
   context.scheduleMaintenance();
   idle();
+  await new Promise(setImmediate);
   assert.equal(calls, 1);
   let cancelled = false;
   const drain = context.cancelScheduledMaintenance().then(() => { cancelled = true; });
@@ -57,6 +58,7 @@ test("maintenance is deferred, cancelled before idle, and drains an active task 
 test("login displays the shell before scheduling maintenance without awaiting scheduled backups", () => {
   const launch = source.slice(source.indexOf("        async function launchApp()"), source.indexOf("        function updateSchoolBranding()"));
   assert.doesNotMatch(launch, /await.*ensureScheduled/);
+  assert.doesNotMatch(launch, /ensureStorageProtection/);
   assert.ok(launch.indexOf('$("#appShell").classList.remove("hidden")') < launch.indexOf("scheduleMaintenance()"));
 });
 

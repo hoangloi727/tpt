@@ -642,7 +642,7 @@
                 } catch (error) {
                   if (!job.controller.signal.aborted) {
                     console.warn("Scheduled maintenance failed:", error);
-                    toast("Sao lưu định kỳ chưa hoàn tất. Kiểm tra mục Sao lưu.", "bad");
+                    toast("Tác vụ bảo trì chưa hoàn tất. Kiểm tra mục Sao lưu và Cài đặt.", "bad");
                   }
                 }
               }
@@ -677,7 +677,6 @@
             await startupStep("Kiểm tra dữ liệu ban đầu…", ensureSeed);
             await startupStep("Kiểm tra phiên bản dữ liệu…", migrateEnhancedData);
             await startupStep("Tạo công việc định kỳ…", generateRecurringTasks);
-            await startupStep("Kiểm tra dung lượng lưu trữ…", ensureStorageProtection);
           }
           const manager = ["superadmin", "admin"].includes(state.user?.role),
             [branding, preferences] = await Promise.all([
@@ -887,11 +886,9 @@
           });
         }
         async function ensureSeed() {
-          const [schools, existingYears] = await Promise.all([
-            db.all("schools"),
-            db.all("school_years"),
-          ]);
+          const existingYears = await db.all("school_years");
           if (existingYears.length) return;
+          const schools = await db.all("schools");
           const yid = uid(),
             c1 = uid(),
             c2 = uid();
@@ -6086,25 +6083,14 @@
             });
           }
           if (tab === "data") {
-            panel.innerHTML = `<div class="grid-2"><div class="card"><div class="card-head"><h2>Dữ liệu và sao lưu</h2></div><div class="card-body"><p>Sao lưu nhanh cho dữ liệu cấu trúc; sao lưu đầy đủ gồm cả dữ liệu tệp và mã kiểm tra.</p><button class="btn primary" id="openBackup">Mở Sao lưu – khôi phục</button></div></div><div class="card"><div class="card-head"><h2>Giới hạn tệp và cảnh báo dung lượng</h2></div><div class="card-body"><div class="field"><label>Dung lượng tối đa mỗi tệp (MB)</label><input id="maxFileMb" type="number" min="1" max="250" value="${esc(Number(await setting("max_file_mb")) || 25)}"></div><div class="form-grid mt"><div class="field"><label>Cảnh báo sớm (%)</label><input id="storageLow" type="number" min="50" max="90" value="${esc(Number(await setting("storage_warning_low")) || 70)}"></div><div class="field"><label>Cảnh báo cao (%)</label><input id="storageHigh" type="number" min="60" max="95" value="${esc(Number(await setting("storage_warning_high")) || 85)}"></div><div class="field"><label>Cảnh báo nguy cấp (%)</label><input id="storageCritical" type="number" min="70" max="99" value="${esc(Number(await setting("storage_warning_critical")) || 95)}"></div></div><button class="btn mt" id="saveFileLimit">Lưu giới hạn</button></div></div></div>`;
+            panel.innerHTML = `<div class="grid-2"><div class="card"><div class="card-head"><h2>Dữ liệu và sao lưu</h2></div><div class="card-body"><p>Sao lưu nhanh cho dữ liệu cấu trúc; sao lưu đầy đủ gồm cả dữ liệu tệp và mã kiểm tra.</p><button class="btn primary" id="openBackup">Mở Sao lưu – khôi phục</button></div></div><div class="card"><div class="card-head"><h2>Giới hạn tệp</h2></div><div class="card-body"><div class="field"><label>Dung lượng tối đa mỗi tệp (MB)</label><input id="maxFileMb" type="number" min="1" max="250" value="${esc(Number(await setting("max_file_mb")) || 25)}"></div><button class="btn mt" id="saveFileLimit">Lưu giới hạn</button></div></div></div>`;
             $("#openBackup").onclick = () => go("backup");
             return ($("#saveFileLimit").onclick = async () => {
-              const low = clamp($("#storageLow").value, 50, 90),
-                high = clamp($("#storageHigh").value, 60, 95),
-                critical = clamp($("#storageCritical").value, 70, 99);
-              if (!(low < high && high < critical))
-                return toast(
-                  "Ba ngưỡng phải tăng dần: sớm < cao < nguy cấp.",
-                  "bad",
-                );
               await setting(
                 "max_file_mb",
                 clamp($("#maxFileMb").value, 1, 250),
               );
-              await setting("storage_warning_low", low);
-              await setting("storage_warning_high", high);
-              await setting("storage_warning_critical", critical);
-              toast("Đã lưu giới hạn tệp và ngưỡng dung lượng");
+              toast("Đã lưu giới hạn tệp");
             });
           }
           if (tab === "security") return renderSecurityPanel(panel);
@@ -6993,21 +6979,14 @@ async function removeClass(id) {
                 .sort((a, b) => Number(a.version || 0) - Number(b.version || 0))
                 .map((a) => [a.document_id, a]),
             ),
-            estimate = navigator.storage?.estimate
-              ? await navigator.storage.estimate()
-              : {},
-            used =
-              estimate.usage ||
-              attachments.reduce((n, a) => n + Number(a.size || 0), 0),
-            quota = estimate.quota || 0,
-            pct = quota ? Math.min(100, Math.round((used / quota) * 100)) : 0;
+            used = attachments.reduce((n, a) => n + Number(a.size || 0), 0);
           setContent(
             pageHead(
               "Hồ sơ – minh chứng",
               "Kho tài liệu ngoại tuyến: lưu tệp thật, thư mục, phiên bản, tìm kiếm và thùng rác.",
               `<button class="btn" id="newFolder">＋ Thư mục</button><button class="btn primary" id="uploadDocuments">＋ Tải tệp</button>`,
             ) +
-               `<div class="toolbar"><input class="grow" id="documentSearch" value="${esc(query)}" placeholder="Tìm tên, số hiệu, thẻ…"><select id="documentTypeFilter"><option value="all">Tất cả loại tệp</option><option value="pdf">PDF</option><option value="image">Hình ảnh</option><option value="office">Word/Excel/PowerPoint</option></select><button class="btn small" id="toggleDocumentView">${state.documentView === "grid" ? "☷ Danh sách" : "▦ Dạng lưới"}</button><span class="muted">${docs.length} tài liệu</span></div><div class="document-layout"><aside class="folder-pane"><strong>Thư mục</strong><button class="folder-row ${activeFolder === "root" ? "active" : ""}" data-folder="root">▧ Tất cả tài liệu</button>${folders.map((f) => `<button class="folder-row ${activeFolder === f.id ? "active" : ""}" data-folder="${esc(f.id)}">▸ ${esc(f.name)}</button>`).join("")}<button class="folder-row ${trash ? "active" : ""}" data-folder="trash">♲ Thùng rác</button><hr style="border:0;border-top:1px solid var(--line)"><small class="muted">Dung lượng ước tính</small><div class="storage-meter mt"><span style="width:${pct}%"></span></div><small>${formatBytes(used)}${quota ? ` / ${formatBytes(quota)} (${pct}%)` : ""}</small><button class="btn small mt" id="requestPersistent">Bảo vệ lưu trữ</button></aside><section><div class="drop-zone ${trash ? "hidden" : ""}" id="documentDrop">Kéo thả nhiều tệp vào đây hoặc dán ảnh từ bộ nhớ tạm</div><div class="${state.documentView === "grid" ? "file-grid" : "table-wrap"} mt" id="documentItems">${renderDocumentItems(docs, attachMap, trash)}</div></section></div>`,
+               `<div class="toolbar"><input class="grow" id="documentSearch" value="${esc(query)}" placeholder="Tìm tên, số hiệu, thẻ…"><select id="documentTypeFilter"><option value="all">Tất cả loại tệp</option><option value="pdf">PDF</option><option value="image">Hình ảnh</option><option value="office">Word/Excel/PowerPoint</option></select><button class="btn small" id="toggleDocumentView">${state.documentView === "grid" ? "☷ Danh sách" : "▦ Dạng lưới"}</button><span class="muted">${docs.length} tài liệu</span></div><div class="document-layout"><aside class="folder-pane"><strong>Thư mục</strong><button class="folder-row ${activeFolder === "root" ? "active" : ""}" data-folder="root">▧ Tất cả tài liệu</button>${folders.map((f) => `<button class="folder-row ${activeFolder === f.id ? "active" : ""}" data-folder="${esc(f.id)}">▸ ${esc(f.name)}</button>`).join("")}<button class="folder-row ${trash ? "active" : ""}" data-folder="trash">♲ Thùng rác</button><hr style="border:0;border-top:1px solid var(--line)"><small class="muted">Tổng dung lượng tệp</small><small>${formatBytes(used)}</small></aside><section><div class="drop-zone ${trash ? "hidden" : ""}" id="documentDrop">Kéo thả nhiều tệp vào đây hoặc dán ảnh từ bộ nhớ tạm</div><div class="${state.documentView === "grid" ? "file-grid" : "table-wrap"} mt" id="documentItems">${renderDocumentItems(docs, attachMap, trash)}</div></section></div>`,
           );
           $("#documentSearch").oninput = debounce(() => {
             state.documentSearch = $("#documentSearch").value;
@@ -7052,20 +7031,7 @@ async function removeClass(id) {
               .filter(Boolean);
             if (files.length) await saveDocumentFiles(files);
           };
-          $("#requestPersistent").onclick = async () => {
-            if (!navigator.storage?.persist)
-              return toast(
-                "Trình duyệt không hỗ trợ yêu cầu lưu bền vững.",
-                "bad",
-              );
-            const ok = await navigator.storage.persist();
-            toast(
-              ok
-                ? "Trình duyệt đã ưu tiên giữ dữ liệu."
-                : "Chưa được cấp lưu bền vững; hãy sao lưu định kỳ.",
-              ok ? "ok" : "bad",
-            );
-          };
+
           bindDocumentActions(trash);
         }
         function renderDocumentItems(docs, attachMap, trash) {
@@ -7567,41 +7533,6 @@ async function removeClass(id) {
             }).catch(() => {});
             throw new Error("Nâng cấp dữ liệu chưa hoàn tất: " + error.message);
           }
-        }
-
-        async function ensureStorageProtection() {
-          if (!navigator.storage) return;
-          try {
-            const [estimate, preferences] = await Promise.all([
-                navigator.storage.estimate(),
-                db.get("app_settings", "seed_state"),
-              ]),
-              ratio = estimate.quota ? estimate.usage / estimate.quota : 0,
-              low = Number(preferences?.storage_warning_low) || 70,
-              high = Number(preferences?.storage_warning_high) || 85,
-              critical =
-                Number(preferences?.storage_warning_critical) || 95,
-              percent = Math.round(ratio * 100);
-            await setting("storage_last_estimate", {
-              usage: estimate.usage || 0,
-              quota: estimate.quota || 0,
-              checked_at: now(),
-            });
-            if (
-              navigator.storage.persist &&
-              !(await navigator.storage.persisted())
-            )
-              await navigator.storage.persist();
-            if (percent >= low)
-              toast(
-                percent >= critical
-                  ? `Dung lượng cục bộ đã dùng ${percent}% – mức nguy cấp. Hãy sao lưu đầy đủ và dọn tệp ngay.`
-                  : percent >= high
-                    ? `Dung lượng cục bộ đã dùng ${percent}% – mức cao. Hãy tạo sao lưu đầy đủ.`
-                    : `Dung lượng cục bộ đã dùng ${percent}%. Nên kiểm tra và sao lưu định kỳ.`,
-                "bad",
-              );
-          } catch (_) {}
         }
 
         async function configItems(key, includeInactive = false) {

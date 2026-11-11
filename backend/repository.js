@@ -173,9 +173,17 @@ export class SqliteRepository {
     return this.database.replaceRecords(state, metadata);
   }
 
-  mutate(task) {
+  mutate(task, store = null) {
     const run = async () => {
-      const draft = structuredClone(this.state);
+      const draft = store ? {
+        ...this.state,
+        stores: {
+          ...this.state.stores,
+          audit_logs: this.state.stores.audit_logs.slice(),
+          operation_journal: this.state.stores.operation_journal.slice(),
+          [store]: structuredClone(this.state.stores[store]),
+        },
+      } : structuredClone(this.state);
       const result = await task(draft);
       await this.database.updateRecords(this.state, draft);
       this.state = draft;
@@ -1121,7 +1129,7 @@ export class SqliteRepository {
 
   put(store, row, options = {}) {
     this.assertStore(store);
-    return this.mutate((draft) => structuredClone(this.putInto(draft, store, row, options)));
+    return this.mutate((draft) => structuredClone(this.putInto(draft, store, row, options)), store);
   }
 
   bulkPut(store, rows, options = {}) {

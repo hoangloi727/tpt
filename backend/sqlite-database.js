@@ -98,6 +98,7 @@ export class SqliteDatabase {
   updateRecords(previous, next) {
     const changes = [], removals = [];
     for (const [store, rows] of Object.entries(next.stores)) {
+      if (rows === previous.stores[store]) continue;
       const key = (row) => JSON.stringify([row.school_profile_id || "thcs-local-profile-001", row.id]);
       const existing = new Map(previous.stores[store].map((row) => [key(row), row]));
       for (const row of rows) {

@@ -82,3 +82,15 @@ test("native SQLite preserves sql.js files and remains readable by the old engin
   assert.equal(rollback.exec("PRAGMA integrity_check")[0].values[0][0], "ok");
   rollback.close();
 });
+
+test("single-record writes leave unrelated stores and existing history untouched", async () => {
+  const { database, repository } = await openRepository();
+  await repository.put("internal_snapshots", { id: "snapshot", payload: { tasks: [] } }, { schoolId: "school" });
+  await repository.put("tasks", { id: "first" }, { schoolId: "school" });
+  const snapshots = repository.state.stores.internal_snapshots;
+  const history = structuredClone(repository.state.stores.audit_logs);
+  await repository.put("tasks", { id: "second" }, { schoolId: "school" });
+  assert.equal(repository.state.stores.internal_snapshots, snapshots);
+  assert.deepEqual(repository.state.stores.audit_logs.slice(0, history.length), history);
+  assert.deepEqual(database.loadRecords(STORES), JSON.parse(JSON.stringify(repository.state.stores)));
+});
