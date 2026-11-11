@@ -30,14 +30,16 @@
         protectedSnapshot = false,
         reason = "manual",
         yearId = null,
+        signal = null,
       } = {},
       preparedPayload = null,
     ) {
       tabCoordinator.assertWritable();
       const payload = preparedPayload || await snapshotPayload(yearId),
         serialized = stableJSON(payload.data),
-        checksum = await sha256Text(serialized),
-        snapshot = await db.put(
+        checksum = await sha256Text(serialized);
+      signal?.throwIfAborted();
+      const snapshot = await db.put(
           "internal_snapshots",
           {
             name,
@@ -58,13 +60,15 @@
             created_at: now(),
           },
         );
+      signal?.throwIfAborted();
       await pruneSnapshots();
       return snapshot;
     }
     async function pruneSnapshots() {
       return db.pruneSnapshots();
     }
-    async function ensureScheduledSnapshots() {
+    async function ensureScheduledSnapshots(signal = null) {
+      signal?.throwIfAborted();
       const rows = await db.snapshotMetadata(),
         hasSince = (tier, days) =>
           rows.some(
@@ -78,11 +82,14 @@
         ["monthly", 28, "Tự động hằng tháng"],
       ].filter(([tier, days]) => !hasSince(tier, days));
       if (!due.length) return;
+      signal?.throwIfAborted();
       const payload = await snapshotPayload();
+      signal?.throwIfAborted();
       for (const [tier, , name] of due)
-        await createInternalSnapshot(name, { tier, reason: "scheduled" }, payload);
+        await createInternalSnapshot(name, { tier, reason: "scheduled", signal }, payload);
     }
-    async function ensureScheduledDirectoryBackup() {
+    async function ensureScheduledDirectoryBackup(signal = null) {
+      signal?.throwIfAborted();
       if (!(await setting("backup_directory_auto"))) return;
       const [directoryRecord] = await db.all("backup_handles"),
         directoryHandle = getDirectoryHandle() || directoryRecord?.handle || null,
@@ -93,35 +100,34 @@
         !(await platform.permission(directoryHandle, false))
       )
         return;
-      try {
-        const payload = await exportBusinessData(false),
-          text = JSON.stringify(payload),
-          blob = new Blob([text], { type: "application/json" }),
-          fileName = `tro-ly-doi-tu-dong-${today()}.json`;
-        await platform.writeFile(
-          directoryHandle,
-          fileName,
-          blob,
-          false,
-        );
-        await db.put(
-          "backup_records",
-          {
-            name: fileName,
-            scope: "quick",
-            destination: "directory",
-            scheduled_while_open: true,
-            encrypted: false,
-            size: blob.size,
-            checksum: await sha256Text(text),
-            status: "completed",
-            completed_at: now(),
-          },
-        );
-        await setting("last_directory_backup_at", now());
-      } catch (error) {
-        console.warn("Scheduled directory backup skipped:", error);
-      }
+      const payload = await exportBusinessData(false, null, signal),
+        text = JSON.stringify(payload),
+        blob = new Blob([text], { type: "application/json" }),
+        fileName = `tro-ly-doi-tu-dong-${today()}.json`;
+      signal?.throwIfAborted();
+      await platform.writeFile(
+        directoryHandle,
+        fileName,
+        blob,
+        false,
+      );
+      signal?.throwIfAborted();
+      await db.put(
+        "backup_records",
+        {
+          name: fileName,
+          scope: "quick",
+          destination: "directory",
+          scheduled_while_open: true,
+          encrypted: false,
+          size: blob.size,
+          checksum: await sha256Text(text),
+          status: "completed",
+          completed_at: now(),
+        },
+      );
+      signal?.throwIfAborted();
+      await setting("last_directory_backup_at", now());
     }
     async function exportBusinessData(
       includeFiles = false,

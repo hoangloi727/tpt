@@ -320,7 +320,7 @@
                 ? `${state.user.displayName} • ${state.user.role === "superadmin" ? "Superadmin" : state.user.role === "admin" ? "Admin" : state.user.role === "teacher" ? "Giáo viên" : "Sao đỏ"}`
                 : `Khóa sau ${state.unlockTimeoutMinutes} phút`;
           }
-          lock(message = "Ứng dụng đã khóa.") {
+          async lock(message = "Ứng dụng đã khóa.") {
             if (
               !state.unlocked &&
               !$("#activationScreen").classList.contains("hidden")
@@ -329,6 +329,7 @@
             // An authenticated session proves root setup is complete. Never flash the setup form on logout.
             state.setupRequired = false;
             state.unlocked = false;
+            await cancelScheduledMaintenance();
             resetSessionState();
             db?.disconnectMemory?.();
             closeModal();
@@ -618,6 +619,38 @@
           $("#confirmActivationCode").value = "";
           setTimeout(() => $("#activationUsername").focus(), 30);
         }
+        let scheduledMaintenance = null;
+        async function cancelScheduledMaintenance() {
+          const job = scheduledMaintenance;
+          if (!job) return;
+          job.controller.abort();
+          await job.promise;
+          if (scheduledMaintenance === job) scheduledMaintenance = null;
+        }
+        function scheduleMaintenance() {
+          if (scheduledMaintenance || !state.unlocked || tabCoordinator.readOnly ||
+              !["superadmin", "admin"].includes(state.user?.role)) return;
+          const job = { controller: new AbortController(), promise: null };
+          scheduledMaintenance = job;
+          const run = () => {
+            if (job.controller.signal.aborted || !state.unlocked) return;
+            job.promise = (async () => {
+              for (const task of [ensureScheduledSnapshots, ensureScheduledDirectoryBackup]) {
+                if (job.controller.signal.aborted) break;
+                try {
+                  await task(job.controller.signal);
+                } catch (error) {
+                  if (!job.controller.signal.aborted) {
+                    console.warn("Scheduled maintenance failed:", error);
+                    toast("Sao lưu định kỳ chưa hoàn tất. Kiểm tra mục Sao lưu.", "bad");
+                  }
+                }
+              }
+            })();
+          };
+          if (window.requestIdleCallback) window.requestIdleCallback(run, { timeout: 5000 });
+          else setTimeout(run, 0);
+        }
         async function startupStep(label, action) {
           $("#activationStatus").textContent = label;
           const started = performance.now();
@@ -645,8 +678,6 @@
             await startupStep("Kiểm tra phiên bản dữ liệu…", migrateEnhancedData);
             await startupStep("Tạo công việc định kỳ…", generateRecurringTasks);
             await startupStep("Kiểm tra dung lượng lưu trữ…", ensureStorageProtection);
-            await startupStep("Tạo điểm khôi phục định kỳ…", ensureScheduledSnapshots);
-            await startupStep("Sao lưu vào thư mục…", ensureScheduledDirectoryBackup);
           }
           const manager = ["superadmin", "admin"].includes(state.user?.role),
             [branding, preferences] = await Promise.all([
@@ -695,6 +726,7 @@
             !preferences?.onboarded
           )
             showOnboarding();
+          scheduleMaintenance();
         }
         function updateSchoolBranding() {
           const schoolName =
@@ -751,6 +783,8 @@
               return;
             selector.disabled = true;
             try {
+              await cancelScheduledMaintenance();
+              if (!state.unlocked) return;
               const user = await db.switchSchool(selector.value);
               applyAuthenticatedUser(user, true);
               await launchApp();
