@@ -447,8 +447,7 @@
           );
         }
         async function recoverInterruptedOperations() {
-          for (const row of await db.all("operation_journal"))
-            if (row.status === "started")
+          for (const row of await db.pendingOperations())
               await finishOperation(row, "interrupted", {
                 reason: "Ứng dụng mở lại trước khi thao tác ghi nhận hoàn tất.",
               });

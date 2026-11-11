@@ -750,6 +750,10 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           }),
         );
       }
+      if (request.method === "GET" && url.pathname === "/api/operations/pending") {
+        if (!isManager(user)) return forbidden(response);
+        return sendJson(response, 200, repository.pendingOperations(user.selectedSchoolId));
+      }
       if (request.method === "GET" && url.pathname === "/api/snapshots/metadata") {
         if (!isManager(user)) return forbidden(response);
         return sendJson(response, 200, repository.snapshotMetadata(user.selectedSchoolId));

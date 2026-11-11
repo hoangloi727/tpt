@@ -486,3 +486,16 @@ test("class incident UI filters students and retains class selection when changi
   await context.renderTeacherClass();
   assert.doesNotMatch(html, /teacherClassSelect/);
 });
+
+test("pending operation recovery returns only unfinished records in the current school", async () => {
+  const repository = await openRepository();
+  for (const [id, status, schoolId, deleted_at] of [
+    ["pending", "started", "school"], ["done", "committed", "school"],
+    ["other", "started", "other"], ["deleted", "started", "school", "2026-01-01"],
+  ]) await repository.put("operation_journal", { id, status, deleted_at }, { schoolId });
+  const response = await apiRequest(repository, { role: "admin" }, "/operations/pending");
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.result.map(row => row.id), ["pending"]);
+  assert.equal((await apiRequest(repository, { role: "user" }, "/operations/pending")).status, 403);
+  assert.equal((await apiRequest(repository, { role: "teacher" }, "/operations/pending")).status, 403);
+});

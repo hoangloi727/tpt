@@ -193,6 +193,12 @@ export class SqliteRepository {
     return this.queue;
   }
 
+  pendingOperations(schoolId) {
+    return structuredClone(this.state.stores.operation_journal.filter(
+      (row) => row.school_profile_id === schoolId && !row.deleted_at && row.status === "started",
+    ));
+  }
+
   all(store, includeDeleted = false, schoolId = null) {
     this.assertStore(store);
     const rows = this.state.stores[store].filter(

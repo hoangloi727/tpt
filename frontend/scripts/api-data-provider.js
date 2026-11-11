@@ -287,6 +287,10 @@
       return this;
     }
 
+    pendingOperations() {
+      return this.request("/operations/pending");
+    }
+
     all(store) {
       return this.request(`/stores/${encodeURIComponent(store)}`);
     }
