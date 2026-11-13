@@ -57,6 +57,7 @@
             normalizeSchoolYearName,
             parseAccountImportText,
             prepareBulkImportRows,
+            resolveDataContext,
             validateAccountImportRows,
             prepareGraderAssignmentImport,
             defaultConfigColor,
@@ -105,7 +106,7 @@
         const state = {
           page: "dashboard",
           yearId: "",
-          semesterId: "all",
+          semesterId: "",
           weekId: "",
           scoreDate: "",
           campusId: "all",
@@ -145,7 +146,7 @@
             state.schoolId !== user.selectedSchoolId;
           if (identityChanged) {
             state.yearId = "";
-            state.semesterId = "all";
+            state.semesterId = "";
             state.weekId = "";
             state.scoreDate = "";
             state.campusId = "all";
@@ -182,7 +183,7 @@
           Object.assign(state, {
             page: "dashboard",
             yearId: "",
-            semesterId: "all",
+            semesterId: "",
             weekId: "",
             scoreDate: "",
             campusId: "all",
@@ -333,6 +334,8 @@
             await cancelScheduledMaintenance();
             const accountMenu = $("#accountMenu");
             if (accountMenu) accountMenu.open = false;
+            const dataScope = $("#dataScope");
+            if (dataScope) dataScope.open = false;
             resetSessionState();
             db?.disconnectMemory?.();
             closeModal();
@@ -678,9 +681,6 @@
             await tabCoordinator.start();
             await db.open();
             bindShell();
-            updateNetwork();
-            window.addEventListener("online", updateNetwork);
-            window.addEventListener("offline", updateNetwork);
           }
           if (
             !tabCoordinator.readOnly &&
@@ -709,7 +709,7 @@
                 : Number(preferences?.auto_lock_minutes) || 10,
           );
           $("#quickAdd").classList.toggle("hidden", !manager);
-          $$("#yearSelect, #semesterSelect, #weekSelect, #campusSelect, #mobileContext, .topbar .searchbox").forEach(
+          $$("#dataScope, .topbar .searchbox").forEach(
             (control) => control.classList.toggle("hidden", state.user?.role === "teacher"),
           );
           document.body.dataset.paper =
@@ -760,13 +760,12 @@
           const selector = $("#schoolSelect"),
             canSwitch = state.user?.role === "superadmin";
           if (selector) {
-            selector.classList.toggle("hidden", !canSwitch);
-            if (canSwitch)
-              fillSelect(
-                selector,
-                state.loginSchools.map((school) => [school.id, school.name]),
-                state.schoolId,
-              );
+            selector.disabled = !canSwitch;
+            fillSelect(
+              selector,
+              canSwitch ? state.loginSchools.map((school) => [school.id, school.name]) : [[state.schoolId, schoolName]],
+              state.schoolId,
+            );
           }
           document.title = `${schoolName} - Trợ lý Tổng phụ trách Đội`;
         }
@@ -811,7 +810,17 @@
             if (e.target.id === "modalLayer") closeModal(e);
           });
           $("#quickAdd").onclick = showQuickAdd;
-          $("#mobileContext").onclick = showMobileContext;
+          const scopeMenu = $("#dataScope");
+          document.addEventListener("click", (event) => {
+            if (scopeMenu.open && !scopeMenu.contains(event.target)) scopeMenu.open = false;
+          });
+          scopeMenu.addEventListener("keydown", (event) => {
+            if (event.key === "Escape" && scopeMenu.open) {
+              event.preventDefault();
+              scopeMenu.open = false;
+              scopeMenu.querySelector("summary").focus();
+            }
+          });
           $("#schoolSelect").onchange = async (event) => {
             const selector = event.target,
               previousSchoolId = state.schoolId;
@@ -848,12 +857,13 @@
           );
           $("#yearSelect").onchange = (e) => {
             state.yearId = e.target.value;
-            state.semesterId = "all";
+            state.semesterId = "";
             state.weekId = "";
             refreshContext();
           };
           $("#semesterSelect").onchange = (e) => {
             state.semesterId = e.target.value;
+            state.weekId = "";
             refreshContext();
           };
           $("#weekSelect").onchange = (e) => {
@@ -1114,18 +1124,8 @@
             years = rawYears.map((year) => ({ ...year, name: normalizeSchoolYearName(year.name) })),
             weeks = sortWeeksAscending(visibleSchoolWeeks(rawWeeks, years));
           state.cache = { years, sems, weeks, campuses };
-          state.yearId =
-            state.yearId ||
-            years.find((x) => x.is_current)?.id ||
-            years[0]?.id ||
-            "";
-          const yearWeeks = weeks.filter((week) => week.school_year_id === state.yearId);
-          state.weekId =
-            yearWeeks.find((week) => week.id === state.weekId)?.id ||
-            yearWeeks.find((w) => today() >= w.start_date && today() <= w.end_date)
-              ?.id ||
-            yearWeeks[0]?.id ||
-            "";
+          const { weekOptions, ...selection } = resolveDataContext(state.cache, state, today());
+          Object.assign(state, selection);
           fillSelect(
             $("#yearSelect"),
             years.map((x) => [x.id, x.name]),
@@ -1134,7 +1134,7 @@
           fillSelect(
             $("#semesterSelect"),
             [
-              ["all", "Cả học kỳ"],
+              ["all", "Tất cả học kỳ"],
               ...sems
                 .filter((x) => x.school_year_id === state.yearId)
                 .map((x) => [x.id, x.name]),
@@ -1143,9 +1143,7 @@
           );
           fillSelect(
             $("#weekSelect"),
-            weeks
-              .filter((x) => x.school_year_id === state.yearId)
-              .map((x) => [x.id, x.name]),
+            weekOptions.map((x) => [x.id, x.name]),
             state.weekId,
           );
           fillSelect(
@@ -1153,6 +1151,17 @@
             [["all", "Tất cả cơ sở"], ...campuses.map((x) => [x.id, x.name])],
             state.campusId,
           );
+          const summary = $("#scopeSummary");
+          if (summary) {
+            const labels = [
+              years.find((row) => row.id === state.yearId)?.name,
+              sems.find((row) => row.id === state.semesterId)?.name || "Tất cả học kỳ",
+              weeks.find((row) => row.id === state.weekId)?.name || "Chưa có tuần",
+            ];
+            summary.textContent = labels.filter(Boolean).join(" · ");
+            summary.title = [state.user?.selectedSchoolName, ...labels,
+              campuses.find((row) => row.id === state.campusId)?.name || "Tất cả cơ sở"].filter(Boolean).join(" · ");
+          }
         }
         function fillSelect(el, items, value) {
           el.replaceChildren(
@@ -1169,33 +1178,6 @@
           await loadContext();
           await loadScoreAssignment();
           await go(state.page, false);
-        }
-        function showMobileContext() {
-          const optionList = (items, selected) =>
-            items
-              .map(
-                ([value, label]) =>
-                  `<option value="${esc(value)}" ${value === selected ? "selected" : ""}>${esc(label)}</option>`,
-              )
-              .join("");
-          openModal(
-            "Phạm vi dữ liệu",
-            `<div class="form-grid"><div class="field full"><label>Năm học</label><select id="mobileYear">${optionList(state.cache.years.map((row) => [row.id, row.name]), state.yearId)}</select></div><div class="field"><label>Học kỳ</label><select id="mobileSemester">${optionList([["all", "Cả học kỳ"], ...state.cache.sems.filter((row) => row.school_year_id === state.yearId).map((row) => [row.id, row.name])], state.semesterId)}</select></div><div class="field"><label>Tuần</label><select id="mobileWeek">${optionList(state.cache.weeks.filter((row) => row.school_year_id === state.yearId).map((row) => [row.id, row.name]), state.weekId)}</select></div><div class="field full"><label>Cơ sở</label><select id="mobileCampus">${optionList([["all", "Toàn trường"], ...state.cache.campuses.map((row) => [row.id, row.name])], state.campusId)}</select></div></div>`,
-            `<button class="btn" id="cancelMobileContext">Hủy</button><button class="btn primary" id="applyMobileContext">Áp dụng</button>`,
-          );
-          $("#cancelMobileContext").onclick = closeModal;
-          $("#applyMobileContext").onclick = async () => {
-            const nextYear = $("#mobileYear").value,
-              yearChanged = nextYear !== state.yearId;
-            state.yearId = nextYear;
-            state.semesterId = yearChanged
-              ? "all"
-              : $("#mobileSemester").value;
-            state.weekId = yearChanged ? "" : $("#mobileWeek").value;
-            state.campusId = $("#mobileCampus").value;
-            closeModal();
-            await refreshContext();
-          };
         }
         function renderNav() {
           $("#nav").replaceChildren(
@@ -1334,14 +1316,6 @@
             el.textContent = text;
             el.dataset.state = status;
           }
-        }
-        function updateNetwork() {
-          const online = navigator.onLine;
-          $("#networkDot").classList.toggle("off", !online);
-          $("#networkText").textContent = online ? "Trực tuyến" : "Ngoại tuyến";
-          $("#networkText").title = online
-            ? "Kết nối máy chủ đang khả dụng."
-            : "Cần kết nối lại để đọc hoặc ghi dữ liệu trên máy chủ.";
         }
         function openModal(title, body, foot = "", wide = false) {
           state.modalReturnFocus = document.activeElement;

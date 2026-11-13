@@ -113,40 +113,20 @@
         >
           ☰
         </button>
-        <select
-          class="context-select hidden"
-          id="schoolSelect"
-          aria-label="Trường đang quản lý"
-        ></select>
-        <select
-          class="context-select"
-          id="yearSelect"
-          aria-label="Năm học"
-        ></select>
-        <button
-          class="icon-btn mobile-context-btn"
-          id="mobileContext"
-          type="button"
-          title="Chọn năm, học kỳ, tuần và cơ sở"
-          aria-label="Chọn phạm vi dữ liệu"
-        >
-          ☷
-        </button>
-        <select
-          class="context-select"
-          id="semesterSelect"
-          aria-label="Học kỳ"
-        ></select>
-        <select
-          class="context-select"
-          id="weekSelect"
-          aria-label="Tuần"
-        ></select>
-        <select
-          class="context-select"
-          id="campusSelect"
-          aria-label="Cơ sở"
-        ></select>
+        <details class="scope-menu" id="dataScope">
+          <summary>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M4 5h16M7 12h10M10 19h4" stroke-linecap="round"/></svg>
+            <span class="scope-label"><strong>Phạm vi dữ liệu</strong><small id="scopeSummary"></small></span>
+            <svg class="scope-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </summary>
+          <div class="scope-dropdown">
+            <div class="field scope-field-wide"><label for="schoolSelect">Trường</label><select id="schoolSelect"></select></div>
+            <div class="field"><label for="yearSelect">Năm học</label><select id="yearSelect"></select></div>
+            <div class="field"><label for="semesterSelect">Học kỳ</label><select id="semesterSelect"></select></div>
+            <div class="field"><label for="weekSelect">Tuần</label><select id="weekSelect"></select></div>
+            <div class="field"><label for="campusSelect">Cơ sở</label><select id="campusSelect"></select></div>
+          </div>
+        </details>
         <div class="searchbox">
           <label class="sr-only" for="globalSearch">Tìm kiếm</label
           ><input
@@ -156,10 +136,6 @@
           />
         </div>
         <button class="btn primary" id="quickAdd">＋ Thêm nhanh</button>
-        <div class="status-line">
-          <span class="dot" id="networkDot"></span>
-          <span id="networkText">Trực tuyến</span>
-        </div>
         <details class="account-menu" id="accountMenu">
           <summary>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2" stroke-linecap="round"/></svg>

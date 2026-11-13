@@ -2240,3 +2240,116 @@
           display: none;
         }
       }
+
+      .scope-menu {
+        position: relative;
+        z-index: 1;
+        flex: 0 1 340px;
+        min-width: 0;
+      }
+      .scope-menu > summary {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        min-height: 40px;
+        padding: 6px 10px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        list-style: none;
+        cursor: pointer;
+      }
+      .scope-menu > summary::-webkit-details-marker {
+        display: none;
+      }
+      .scope-menu > summary:hover,
+      .scope-menu[open] > summary {
+        background: var(--blue-soft);
+      }
+      .scope-menu svg {
+        flex: 0 0 auto;
+        width: 20px;
+        height: 20px;
+        color: var(--blue2);
+      }
+      .scope-menu .scope-chevron {
+        width: 14px;
+        height: 14px;
+        margin-left: auto;
+      }
+      .scope-label {
+        min-width: 0;
+      }
+      .scope-label strong,
+      .scope-label small {
+        display: block;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .scope-label strong {
+        font-size: 12px;
+      }
+      .scope-label small {
+        margin-top: 2px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .scope-dropdown {
+        position: absolute;
+        top: calc(100% + 8px);
+        left: 0;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+        width: min(420px, calc(100vw - 28px));
+        padding: 18px;
+        background: #fff;
+        border-radius: 12px;
+        box-shadow: 0 8px 28px rgba(9, 22, 36, 0.18);
+      }
+      .scope-field-wide {
+        grid-column: 1 / -1;
+      }
+      .scope-dropdown :is(#schoolSelect, #yearSelect, #semesterSelect, #weekSelect, #campusSelect) {
+        display: block;
+        flex: none;
+        width: 100%;
+        min-width: 0;
+        max-width: none;
+        height: 40px;
+        padding: 8px 10px;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        background: #fff;
+        color: var(--ink);
+        font-size: 13px;
+      }
+      @media (max-width: 520px) {
+        .scope-menu {
+          flex: 1 1 120px;
+          max-width: calc(100vw - 220px);
+        }
+        .scope-menu > summary {
+          min-height: 44px;
+          padding: 7px;
+          gap: 5px;
+        }
+        .scope-menu > summary > svg:first-child,
+        .scope-label small {
+          display: none;
+        }
+        .scope-dropdown {
+          position: fixed;
+          top: 58px;
+          left: 7px;
+          right: 7px;
+          width: auto;
+          max-height: calc(100dvh - 72px);
+          overflow-y: auto;
+          padding: 16px;
+        }
+        .scope-dropdown :is(#schoolSelect, #yearSelect, #semesterSelect, #weekSelect, #campusSelect) {
+          min-height: 44px;
+          font-size: 16px;
+        }
+      }

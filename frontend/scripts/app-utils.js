@@ -226,6 +226,30 @@
     rows.push(row);
     return rows;
   }
+  function resolveDataContext({ years, sems, weeks, campuses }, selected, date) {
+    const containsDate = (row) => row.start_date && row.end_date && row.start_date <= date && date <= row.end_date;
+    const year = years.find((row) => row.id === selected.yearId) || years.find(containsDate) || years.find((row) => row.is_current) || years[0];
+    const yearSemesters = sems.filter((row) => row.school_year_id === year?.id);
+    const semester = yearSemesters.find((row) => row.id === selected.semesterId) ||
+      (selected.semesterId === "all" ? null : yearSemesters.find(containsDate));
+    const semesterId = semester?.id || "all";
+    const weekOptions = weeks.filter((row) => row.school_year_id === year?.id)
+      .filter((row) => !semester || (row.semester_id ? row.semester_id === semester.id :
+        !semester.start_date || !semester.end_date || row.end_date >= semester.start_date && row.start_date <= semester.end_date))
+      .sort((a, b) => String(a.start_date || "").localeCompare(String(b.start_date || "")));
+    const current = weekOptions.find(containsDate);
+    const nearest = weekOptions.reduce((best, week) => {
+      const distance = Math.min(Math.abs(Date.parse(date) - Date.parse(week.start_date)), Math.abs(Date.parse(date) - Date.parse(week.end_date)));
+      return !best || distance < best.distance ? { week, distance } : best;
+    }, null)?.week;
+    return {
+      yearId: year?.id || "",
+      semesterId,
+      weekId: weekOptions.find((row) => row.id === selected.weekId)?.id || current?.id || nearest?.id || "",
+      campusId: selected.campusId === "all" || campuses.some((row) => row.id === selected.campusId) ? selected.campusId : "all",
+      weekOptions,
+    };
+  }
   function prepareBulkImportRows(rows, fields, { defaults = {}, unique = [], existing = [] } = {}) {
     const key = (value) => normalizeText(String(value ?? "").trim()),
       lines = rows.map((cells, index) => ({ cells: cells || [], row: index + 1 }))
@@ -441,6 +465,7 @@
     normalizeSchoolYearName,
     parseAccountImportText,
     prepareBulkImportRows,
+    resolveDataContext,
     validateAccountImportRows,
     prepareGraderAssignmentImport,
     defaultConfigColor,
