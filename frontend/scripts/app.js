@@ -1338,17 +1338,23 @@
         }
 
         async function scoped(store) {
+          const week = (state.cache.weeks || []).find((row) =>
+            row.id === state.weekId && row.school_year_id === state.yearId,
+          );
           return (await db.all(store)).filter(
             (x) =>
               (!(x.school_year_id || x.academic_year_id) ||
                 (x.school_year_id || x.academic_year_id) === state.yearId) &&
               (!x.semester_id ||
                 state.semesterId === "all" ||
+                (store === "tasks" && x.due_date) ||
                 x.semester_id === state.semesterId) &&
               (!x.campus_id ||
                 x.campus_id === "all" ||
                 state.campusId === "all" ||
-                x.campus_id === state.campusId),
+                x.campus_id === state.campusId) &&
+              (store !== "tasks" || !x.due_date ||
+                (week && x.due_date >= week.start_date && x.due_date <= week.end_date)),
           );
         }
         const canManageScores = () =>
@@ -2072,7 +2078,7 @@
           setContent(
             pageHead(
               "Công việc và checklist",
-              "Theo dõi đầu việc, hạn, phụ thuộc và tiến độ thực hiện.",
+              "Theo dõi công việc theo tuần chứa hạn hoàn thành.",
               `<button class="btn" id="importTasks">Nhập hàng loạt</button><button class="btn" id="taskTemplates">Thư viện mẫu</button><button class="btn primary" id="newTask">＋ Công việc</button>`,
             ) +
               `
