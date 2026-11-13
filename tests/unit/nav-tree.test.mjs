@@ -73,4 +73,32 @@ test('navigation children reuse page controls, follow selection, and collapse wi
   context.syncNavChildren();
   assert.equal(nav.children.some(child => child.id === 'navChildren'), false);
   assert.equal(parent.hasAttribute('aria-expanded'), false);
+
+  context.state.page = 'scores';
+  sources = ['entry', 'ranking', 'anomaly', 'history'].map(tab => {
+    const button = new Element();
+    button.dataset.scoreTab = tab;
+    button.textContent = tab;
+    return button;
+  });
+  const rankingGroups = ['Tất cả nhóm', 'Khối 6'].map(label => {
+    const button = new Element();
+    button.setAttribute('data-ranking-group', label);
+    button.textContent = label;
+    return button;
+  });
+  let selectedGroup;
+  rankingGroups[1].onclick = () => { selectedGroup = 'Khối 6'; };
+  sources.push(...rankingGroups);
+  context.renderNav();
+  group = nav.children.find(child => child.id === 'navChildren');
+  assert.deepEqual(Array.from(group.children, button => button.textContent),
+    ['entry', 'ranking', 'Tất cả nhóm', 'Khối 6', 'anomaly', 'history']);
+  assert.equal(group.children[2].classList.contains('nav-grandchild'), true);
+  group.children[3].click();
+  assert.equal(selectedGroup, 'Khối 6');
+  sources = sources.filter(button => !button.hasAttribute('data-ranking-group'));
+  context.syncNavChildren();
+  assert.deepEqual(Array.from(group.children, button => button.textContent),
+    ['entry', 'ranking', 'anomaly', 'history']);
 });

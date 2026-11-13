@@ -56,6 +56,7 @@
             normalizeText,
             normalizeSchoolYearName,
             parseAccountImportText,
+            prepareBulkImportRows,
             validateAccountImportRows,
             prepareGraderAssignmentImport,
             defaultConfigColor,
@@ -1225,7 +1226,11 @@
           parent.setAttribute("aria-controls", children.id);
           parent.setAttribute("aria-expanded", String(!children.hidden));
           const focusIndex = Array.from(children.children).indexOf(document.activeElement);
-          children.replaceChildren(...sources.map((source) => {
+          const rankingGroups = sources.filter((source) => source.hasAttribute("data-ranking-group"));
+          const orderedSources = sources
+            .filter((source) => !source.hasAttribute("data-ranking-group"))
+            .flatMap((source) => source.dataset.scoreTab === "ranking" ? [source, ...rankingGroups] : [source]);
+          children.replaceChildren(...orderedSources.map((source) => {
             const container = source.closest(".tabs, .settings-menu");
             if (container && !container.classList.contains("sidebar-tab-source"))
               container.classList.add("sidebar-tab-source");
@@ -1558,7 +1563,7 @@
             pageHead(
               cfg.title,
               cfg.desc,
-              `<button class="btn" data-export-entity="${esc(key)}">Xuất CSV</button><button class="btn primary" data-new-entity="${esc(key)}">＋ Thêm mới</button>`,
+              `<button class="btn" data-import-entity="${esc(key)}">Nhập hàng loạt</button><button class="btn" data-export-entity="${esc(key)}">Xuất CSV</button><button class="btn primary" data-new-entity="${esc(key)}">＋ Thêm mới</button>`,
             ) +
               (key === "organization"
                 ? `<div class="tabs" aria-label="Đội/ban">${["", ...organizationUnits].map((unit) => `<button data-organization-unit="${esc(unit)}" class="${(state.organizationUnit || "") === unit ? "active" : ""}" aria-pressed="${(state.organizationUnit || "") === unit}">${esc(unit || "Tất cả")}</button>`).join("")}</div>`
@@ -1598,6 +1603,9 @@
           $$("[data-new-entity]").forEach(
             (b) => (b.onclick = () => entityForm(key)),
           );
+          $$("[data-import-entity]").forEach((button) => {
+            button.onclick = async () => { await entityForm(key); $("#openBulkImport").click(); };
+          });
           $$("[data-export-entity]").forEach(
             (b) => (b.onclick = () => exportEntityCSV(key, rows)),
           );
@@ -1759,6 +1767,18 @@
             `<button class="btn" id="cancelForm">Hủy</button><button class="btn primary" id="saveEntity">Lưu</button>`,
             true,
           );
+          if (!id) enableFormBulkImport("#entityForm", {
+            store: cfg.store,
+            defaults: { school_year_id: state.yearId, semester_id: state.semesterId === "all" ? null : state.semesterId },
+            prepare(data) {
+              if (data.start_date && data.end_date && data.end_date < data.start_date)
+                throw new Error("Ngày kết thúc phải từ ngày bắt đầu trở đi");
+              if (key === "plans" && data.progress !== "" && (data.progress < 0 || data.progress > 100))
+                throw new Error("Tiến độ phải từ 0 đến 100");
+              if (key === "equipment" && data.quantity < 0) throw new Error("Số lượng không được âm");
+              return data;
+            },
+          });
           $("#cancelForm").onclick = closeModal;
           $("#saveEntity").onclick = async () => {
             const f = $("#entityForm");
@@ -1777,6 +1797,118 @@
             closeModal();
             toast("Đã lưu bản ghi");
             renderEntity(key);
+          };
+        }
+        function enableFormBulkImport(formId, options) {
+          const form = $(formId), title = $("#modalTitle").textContent,
+            page = state.page,
+            fields = Array.from(form.elements).filter((input) => input.name && !input.disabled && !input.readOnly)
+              .map((input) => {
+                const validator = input.cloneNode(true);
+                return {
+                  name: input.name,
+                  label: input.closest(".field, .check-row")?.querySelector("label")?.textContent.trim() ||
+                    input.closest("label")?.textContent.trim() || input.name,
+                  type: input.type,
+                  required: input.required,
+                  multiple: input.multiple,
+                  defaultValue: input.type === "checkbox" ? String(input.checked) : input.value,
+                  ...(input.options ? { options: Array.from(input.options).filter((option) => !option.disabled)
+                    .map((option) => ({ value: option.value, label: option.textContent.trim() })) } : {}),
+                  validate(value) {
+                    if (input.type === "checkbox") validator.checked = value;
+                    else if (input.multiple) Array.from(validator.options).forEach((option) => { option.selected = value.includes(option.value); });
+                    else validator.value = String(value);
+                    if (value !== "" && ["date", "time", "color"].includes(input.type) && validator.value.toLowerCase() !== String(value).toLowerCase()) return false;
+                    return (!(input.maxLength > 0) || String(value).length <= input.maxLength) && validator.checkValidity();
+                  },
+                };
+              });
+          fields.push(...(options.fields || []));
+          const button = document.createElement("button");
+          button.className = "btn";
+          button.type = "button";
+          button.id = "openBulkImport";
+          button.textContent = "Nhập hàng loạt";
+          button.onclick = () => showFormBulkImport(title, fields, {
+            afterSave: () => go(page), ...options,
+          });
+          $("#modalFoot").prepend(button);
+        }
+        function showFormBulkImport(title, fields, options) {
+          openModal(
+            `Nhập hàng loạt • ${title}`,
+            `<div class="notice">${esc(options.notice || "Chỉ thêm mới, không ghi đè bản ghi cũ.")} Tải mẫu để nhập đúng thứ tự cột. Hỗ trợ CSV/XLSX tối đa 2 MB, 2.000 dòng; XLSX dùng trang tính đầu tiên. Ngày dùng YYYY-MM-DD hoặc DD/MM/YYYY; Có/Không cho ô đánh dấu; dấu | cho lựa chọn nhiều. Ô trống giữ giá trị mặc định của form.</div><div class="toolbar mt"><button class="btn" id="bulkTemplate">Tải mẫu CSV</button><label class="btn" for="bulkFile">Chọn CSV/XLSX</label><input id="bulkFile" type="file" accept=".csv,.xlsx" hidden><span id="bulkSource"></span></div><details class="mt"><summary>Các cột và giá trị hợp lệ</summary>${simpleTable(["Cột", "Yêu cầu", "Giá trị/mặc định"], fields.map((field) => [field.label, field.required ? "Bắt buộc" : "Tùy chọn", field.options?.filter((item) => item.value).map((item) => item.label).join(" | ") || field.defaultValue || "—"]))}</details><div class="field mt"><label for="bulkText">Dán bảng từ Excel hoặc CSV</label><textarea id="bulkText" rows="10" placeholder="${esc(fields.map((field) => field.label).join("\t"))}"></textarea></div><div id="bulkPreview" class="mt" aria-live="polite"></div>`,
+            '<button class="btn" id="bulkCancel">Hủy</button><button class="btn" id="bulkCheck">Xem trước</button><button class="btn primary" id="bulkSave" disabled>Nhập dữ liệu</button>',
+            true,
+          );
+          const input = $("#bulkText"), fileInput = $("#bulkFile"), preview = $("#bulkPreview"),
+            commit = $("#bulkSave"), check = $("#bulkCheck"), cancel = $("#bulkCancel"), source = $("#bulkSource");
+          let fileRows = null, parsed = [], version = 0, loading = false, saving = false, started = false;
+          const invalidate = () => { version++; parsed = []; commit.disabled = true; preview.textContent = ""; };
+          const validate = async () => {
+            const current = version;
+            try {
+              if (new TextEncoder().encode(input.value).length > 2 * 1024 * 1024) throw new Error("Dữ liệu vượt quá 2 MB.");
+              const existing = options.unique?.length ? (await db.all(options.store)).filter(options.scope || (() => true)) : [];
+              if (current !== version) return;
+              parsed = prepareBulkImportRows(fileRows || parseAccountImportText(input.value), fields, { ...options, existing });
+              for (const item of parsed) {
+                try {
+                  if (options.prepare) item.data = options.prepare(item.data);
+                  const custom = Object.keys(item.data).filter((name) => name.startsWith("cf_"));
+                  if (custom.length) {
+                    item.data.custom_values = Object.fromEntries(custom.map((name) => [name.slice(3), item.data[name]]));
+                    custom.forEach((name) => delete item.data[name]);
+                  }
+                  item.data.id = uid();
+                } catch (error) { item.errors.push(error.message); }
+              }
+              const errors = parsed.filter((item) => item.errors.length);
+              preview.innerHTML = `<div class="notice ${errors.length ? "danger" : ""}">${parsed.length} dòng; ${errors.length} dòng lỗi. Xem trước tối đa 30 dòng. ${errors.length ? "Sửa tất cả dòng lỗi trước khi nhập." : "Sẵn sàng nhập."}</div>${simpleTable(["Dòng", ...fields.slice(0, 3).map((field) => field.label), "Kết quả"], parsed.slice(0, 30).map((item) => [item.row, ...fields.slice(0, 3).map((field) => item.data[field.name] ?? ""), item.errors.join("; ") || "Hợp lệ"]))}`;
+              if (errors.length) preview.innerHTML += `<div class="notice danger">${errors.map((item) => `Dòng ${item.row}: ${esc(item.errors.join("; "))}`).join("<br>")}</div>`;
+              commit.disabled = saving || loading || !!errors.length || !parsed.length;
+            } catch (error) {
+              if (current === version) { parsed = []; commit.disabled = true; preview.textContent = error.message; }
+            }
+          };
+          input.oninput = () => { fileRows = null; fileInput.value = ""; source.textContent = ""; loading = false; invalidate(); };
+          $("#bulkTemplate").onclick = () => download("\ufeff" + fields.map((field) => csvSafe(field.label)).join(",") + "\r\n",
+            `mau-${options.store}.csv`, "text/csv;charset=utf-8");
+          fileInput.onchange = async () => {
+            invalidate(); fileRows = null; input.value = ""; source.textContent = "";
+            const file = fileInput.files?.[0], current = version;
+            loading = false;
+            if (!file) return;
+            loading = true;
+            try {
+              if (file.size > 2 * 1024 * 1024 || !/\.(csv|xlsx)$/i.test(file.name)) throw new Error("Hãy chọn CSV/XLSX tối đa 2 MB.");
+              const rows = /\.xlsx$/i.test(file.name) ? (await db.readAccountWorkbook(file)).rows : parseAccountImportText(await file.text());
+              if (current !== version) return;
+              fileRows = rows; source.textContent = file.name; loading = false;
+              await validate();
+            } catch (error) { if (current === version) { loading = false; preview.textContent = error.message; } }
+          };
+          cancel.onclick = closeModal;
+          check.onclick = () => { if (!loading && !saving) return validate(); };
+          commit.onclick = async () => {
+            if (saving || loading || commit.disabled) return;
+            saving = true; started = true;
+            commit.disabled = input.disabled = fileInput.disabled = check.disabled = cancel.disabled = true;
+            try {
+              if (options.save) await options.save(parsed.map((item) => item.data));
+              else await db.bulkPut(options.store, parsed.map((item) => item.data));
+              closeModal();
+              toast(`Đã nhập ${parsed.length} bản ghi.`);
+              await options.afterSave().catch((error) => toast(`Dữ liệu đã lưu; không thể tải lại màn hình: ${error.message}`, "bad"));
+            } catch (error) {
+              preview.textContent = `Nhập chưa hoàn tất: ${error.message}. Có thể thử lại lô này; hãy kiểm tra danh sách trước khi mở lô nhập mới.`;
+              commit.disabled = false;
+            } finally {
+              saving = false; cancel.disabled = false;
+              // Giữ nguyên ID của lô sau khi gửi để lần thử lại không tạo bản ghi trùng.
+              input.disabled = fileInput.disabled = check.disabled = started;
+            }
           };
         }
         function confirmDialog(message, title = "Xác nhận") {
@@ -1942,13 +2074,14 @@
             pageHead(
               "Công việc và checklist",
               "Theo dõi đầu việc, hạn, phụ thuộc và tiến độ thực hiện.",
-              `<button class="btn" id="taskTemplates">Thư viện mẫu</button><button class="btn primary" id="newTask">＋ Công việc</button>`,
+              `<button class="btn" id="importTasks">Nhập hàng loạt</button><button class="btn" id="taskTemplates">Thư viện mẫu</button><button class="btn primary" id="newTask">＋ Công việc</button>`,
             ) +
               `
       <div class="toolbar"><input class="grow" id="taskSearch" placeholder="Tìm công việc…"><select id="taskStatus"><option value="all">Mọi trạng thái</option>${statusOptions.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("")}</select><select id="taskPriority"><option value="all">Mọi mức ưu tiên</option>${priorityOptions.map(([v, l]) => `<option value="${esc(v)}">${esc(l)}</option>`).join("")}</select><div class="tabs" style="margin:0 0 0 auto;border:0"><button data-task-view="list" class="${state.taskView === "list" ? "active" : ""}">Danh sách</button><button data-task-view="kanban" class="${state.taskView === "kanban" ? "active" : ""}">Bảng thẻ</button></div></div><div id="taskArea"></div>`,
           );
           renderTaskArea(rows);
           $("#newTask").onclick = () => taskForm();
+          $("#importTasks").onclick = async () => { await taskForm(); $("#openBulkImport").click(); };
           $("#taskTemplates").onclick = showTaskTemplates;
           $$("[data-task-view]").forEach(
             (b) =>
@@ -2225,6 +2358,32 @@
             `<button class="btn" id="cancelTask">Hủy</button><button class="btn primary" id="saveTask">Lưu công việc</button>`,
             true,
           );
+          if (!id) {
+            let tasksSaved = false, checkRows = [];
+            enableFormBulkImport("#taskForm", {
+              store: "tasks",
+              defaults: { school_year_id: state.yearId, semester_id: state.semesterId === "all" ? null : state.semesterId },
+              prepare(data) {
+                if (data.start_date && data.due_date < data.start_date) throw new Error("Hạn hoàn thành phải từ ngày bắt đầu trở đi");
+                if (data.repeat_until && data.repeat_until < data.due_date) throw new Error("Kết thúc lặp phải từ hạn hoàn thành trở đi");
+                if (data.status === "done" && data.checklist.split("\n").some((line) => line.trim().startsWith("!")))
+                  throw new Error("Chưa thể hoàn thành vì có checklist bắt buộc chưa xong");
+                data.repeat_next_at = data.repeat_rule === "none" ? null : nextRepeatDate(data.due_date, data.repeat_rule);
+                if (data.repeat_rule === "none") data.repeat_until = null;
+                return data;
+              },
+              async save(rows) {
+                if (!tasksSaved) {
+                  checkRows = rows.flatMap((task) => task.checklist.split("\n").map((line) => line.trim()).filter(Boolean)
+                    .map((label, order) => ({ id: uid(), task_id: task.id, label: label.replace(/^!\s*/, ""), required: label.startsWith("!"), done: false, order })));
+                  await db.bulkPut("tasks", rows.map(({ checklist, ...task }) => task));
+                  tasksSaved = true;
+                }
+                try { if (checkRows.length) await db.bulkPut("task_check_items", checkRows); }
+                catch (error) { throw new Error(`Công việc đã lưu; checklist chưa hoàn tất: ${error.message}`); }
+              },
+            });
+          }
           $("#cancelTask").onclick = closeModal;
           $("#saveTask").onclick = async () => {
             const f = $("#taskForm");
@@ -2413,7 +2572,7 @@
             pageHead(
               "Lịch hoạt động",
               "Xem lịch tháng; cảnh báo thiếu địa điểm, phụ trách hoặc an toàn.",
-              `<button class="btn" onclick="window.print()">In lịch</button><button class="btn primary" id="newEvent">＋ Sự kiện</button>`,
+              `<button class="btn" id="importEvents">Nhập hàng loạt</button><button class="btn" onclick="window.print()">In lịch</button><button class="btn primary" id="newEvent">＋ Sự kiện</button>`,
             ) +
               `<div class="toolbar"><button class="btn small" id="prevMonth">‹</button><strong>Tháng ${m + 1}/${y}</strong><button class="btn small" id="nextMonth">›</button><button class="btn small" id="thisMonth">Hôm nay</button><span class="muted" style="margin-left:auto">${events.length} sự kiện trong phạm vi dữ liệu</span></div><div class="calendar-grid"><div class="dow">Thứ 2</div><div class="dow">Thứ 3</div><div class="dow">Thứ 4</div><div class="dow">Thứ 5</div><div class="dow">Thứ 6</div><div class="dow">Thứ 7</div><div class="dow">Chủ nhật</div>${cells
                 .map((x) => {
@@ -2423,6 +2582,7 @@
                 })
                 .join("")}</div>`,
           );
+          $("#importEvents").onclick = async () => { await eventForm(); $("#openBulkImport").click(); };
           $("#newEvent").onclick = () => eventForm();
           $("#prevMonth").onclick = () => {
             state.calendarDate = new Date(y, m - 1, 1);
@@ -2453,6 +2613,9 @@
             `<form id="eventForm"><div class="form-grid"><div class="field full"><label class="required">Tên sự kiện</label><input name="title" value="${esc(e.title || "")}" required></div><div class="field"><label class="required">Ngày</label><input type="date" name="date" value="${esc(e.date)}" required></div><div class="field"><label>Giờ</label><input type="time" name="time" value="${esc(e.time || "")}"></div><div class="field"><label>Địa điểm</label><input name="location" value="${esc(e.location || "")}"></div><div class="field"><label>Người phụ trách</label><input name="leader" value="${esc(e.leader || "")}"></div><div class="field"><label>Cơ sở</label><select name="campus_id"><option value="all">Toàn trường</option>${state.cache.campuses.map((c) => `<option value="${esc(c.id)}" ${e.campus_id === c.id ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></div><div class="field"><label>Nhắc trước (giờ)</label><input type="number" name="reminder_hours" min="0" value="${esc(e.reminder_hours || 24)}"></div><div class="field full"><label>Checklist an toàn</label><textarea name="safety">${esc(e.safety || "")}</textarea><span class="hint">Hoạt động đông người nên ghi rõ phương án an toàn và dự phòng.</span></div></div></form>`,
             `<button class="btn" id="deleteEvent" ${id ? "" : 'style="display:none"'}>Xóa</button><button class="btn" id="cancelEvent">Hủy</button><button class="btn primary" id="saveEvent">Lưu</button>`,
           );
+          if (!id) enableFormBulkImport("#eventForm", {
+            store: "calendar_events", defaults: { school_year_id: state.yearId, category: "Hoạt động Đội" },
+          });
           $("#cancelEvent").onclick = closeModal;
           if (id)
             $("#deleteEvent").onclick = () =>
@@ -2971,7 +3134,7 @@
           openModal(
             `${category.code} - ${category.name}`,
             `<div class="notice"><strong>${esc(schoolClass.class_name)}</strong> • ${fmtDate(state.scoreDate)}<br>Chọn đúng nội dung do Admin cấu hình. Điểm được tính tự động và không thể sửa trực tiếp.</div><div class="field mt"><label>Trạng thái ghi nhận</label><select id="incidentEntryState"><option value="value" ${entryState === "value" ? "selected" : ""}>Có dữ liệu / không có sự việc</option><option value="na" ${entryState === "na" ? "selected" : ""}>Không áp dụng (KAD)</option><option value="exempt" ${entryState === "exempt" ? "selected" : ""}>Được miễn</option></select></div><div id="incidentEditor" class="mt"></div>`,
-            `<button class="btn" id="cancelIncidentEntry">Hủy</button>${existing ? '<button class="btn danger" id="deleteIncidentEntry">Xóa dữ liệu</button>' : ""}<button class="btn primary" id="saveIncidentEntry">Lưu ghi nhận</button>`,
+            `<button class="btn" id="importIncidents" ${rules.length ? "" : "disabled"}>Nhập hàng loạt</button><button class="btn" id="cancelIncidentEntry">Hủy</button>${existing ? '<button class="btn danger" id="deleteIncidentEntry">Xóa dữ liệu</button>' : ""}<button class="btn primary" id="saveIncidentEntry">Lưu ghi nhận</button>`,
             true,
           );
           const renderIncidents = () => {
@@ -3047,7 +3210,8 @@
                 renderScores();
               }, "Xóa ghi nhận");
             };
-          $("#saveIncidentEntry").onclick = async () => {
+          const entryId = existing?.id || uid();
+          const saveEntry = async () => {
             if (entryState === "value") {
               const incomplete = incidents.some(
                 (incident) =>
@@ -3055,10 +3219,7 @@
                   !rules.some((rule) => rule.id === incident.criteria_id),
               );
               if (incomplete)
-                return toast(
-                  "Mỗi ghi nhận phải có họ tên và nội dung hợp lệ.",
-                  "bad",
-                );
+                throw new Error("Mỗi ghi nhận phải có họ tên và nội dung hợp lệ.");
             }
             const rows =
                 entryState === "value"
@@ -3083,34 +3244,54 @@
                       0,
                     )
                   : null;
+            const saved = await db.put(
+              "score_entries",
+              {
+                ...(existing || {}),
+                id: entryId,
+                sheet_id: ctx.sheet.id,
+                school_year_id: state.yearId,
+                campus_id: schoolClass.campus_id,
+                class_id: schoolClass.id,
+                criteria_group_id: category.id,
+                criteria_id: undefined,
+                week_id: state.weekId,
+                entry_date: state.scoreDate,
+                entry_state: entryState,
+                incidents: rows,
+                value,
+                reason: existing?.reason || "",
+              },
+            );
+            state.lastScoreUndo = existing
+              ? { type: "restore", row: existing }
+              : { type: "delete", id: saved.id };
+          };
+          $("#saveIncidentEntry").onclick = async () => {
             try {
-              const saved = await db.put(
-                "score_entries",
-                {
-                  ...(existing || {}),
-                  sheet_id: ctx.sheet.id,
-                  school_year_id: state.yearId,
-                  campus_id: schoolClass.campus_id,
-                  class_id: schoolClass.id,
-                  criteria_group_id: category.id,
-                  criteria_id: undefined,
-                  week_id: state.weekId,
-                  entry_date: state.scoreDate,
-                  entry_state: entryState,
-                  incidents: rows,
-                  value,
-                  reason: existing?.reason || "",
-                },
-              );
-              state.lastScoreUndo = existing
-                ? { type: "restore", row: existing }
-                : { type: "delete", id: saved.id };
+              await saveEntry();
               closeModal();
               toast("Đã lưu ghi nhận");
-              renderScores();
-            } catch (error) {
-              toast(error.message, "bad");
-            }
+              await renderScores();
+            } catch (error) { toast(error.message, "bad"); }
+          };
+          $("#importIncidents").onclick = () => {
+            const previous = incidents.map((incident) => ({ ...incident }));
+            showFormBulkImport(`Ghi nhận • ${schoolClass.class_name} • ${category.name} • ${fmtDate(state.scoreDate)}`, [
+              { name: "person_name", label: "Người được ghi nhận", required: true,
+                validate: (value) => String(value).length <= 120 },
+              { name: "criteria_id", label: "Nội dung", required: true,
+                options: rules.map((rule) => ({ value: rule.id, label: `${rule.code} - ${rule.name}` })) },
+            ], {
+              store: "score_entries",
+              notice: "Thêm các dòng vào ghi nhận của lớp, danh mục và ngày đang chọn; giữ các dòng hiện có. Điểm tự tính theo cấu hình, không nhập điểm trực tiếp.",
+              async save(rows) {
+                incidents = [...previous, ...rows.map((row) => ({ ...row }))];
+                entryState = "value";
+                await saveEntry();
+              },
+              afterSave: renderScores,
+            });
           };
         }
         async function saveScoreCell(ev) {
@@ -4237,6 +4418,7 @@
             `<form id="newCriteriaSetForm"><div class="form-grid"><div class="field full"><label class="required">Tên bộ tiêu chí</label><input name="name" required></div><div class="field"><label>Phiên bản</label><input name="version" value="1.0"></div><div class="field"><label>Cách tính</label><select name="formula"><option value="base">Điểm chuẩn rồi cộng/trừ</option><option value="sum">Cộng các thành phần</option><option value="weighted">Trọng số theo tiêu chí</option></select></div><div class="field"><label>Điểm chuẩn</label><input type="number" name="base_score" value="100"></div><div class="field"><label>Trạng thái</label><select name="status"><option value="draft">Dự thảo</option><option value="active">Đang áp dụng</option></select></div><div class="field full"><label>Căn cứ nội bộ</label><textarea name="basis"></textarea></div></div></form>`,
             `<button class="btn" id="cancelNewSet">Hủy</button><button class="btn primary" id="saveNewSet">Tạo bộ</button>`,
           );
+          enableFormBulkImport("#newCriteriaSetForm", { store: "criteria_sets", defaults: { school_year_id: state.yearId, semester_id: state.semesterId === "all" ? null : state.semesterId, campus_id: state.campusId, effective_from: today() }, afterSave: () => showCriteriaConfig() });
           $("#cancelNewSet").onclick = closeModal;
           $("#saveNewSet").onclick = async () => {
             const f = $("#newCriteriaSetForm");
@@ -4313,6 +4495,15 @@
               )}</select></div><div class="field"><label>Điểm mỗi lần</label><input type="number" step="0.01" name="points" value="${esc(Number(c.points || 0))}"></div><div class="field"><label>Tối thiểu</label><input type="number" step="0.01" name="min" value="${esc(c.min ?? "")}"></div><div class="field"><label>Tối đa</label><input type="number" step="0.01" name="max" value="${esc(c.max ?? "")}"></div><div class="field"><label>Số chữ số thập phân</label><input type="number" min="0" max="3" name="decimals" value="${esc(Number(c.decimals || 0))}"></div><div class="field"><label>Trọng số</label><input type="number" step="0.01" min="0" name="weight" value="${esc(Number(c.weight || 1))}"></div><div class="field"><label>Thứ tự</label><input type="number" name="order" value="${esc(Number(c.order || 99))}"></div><div class="field"><label>Màu</label><input type="color" name="color" value="${esc(c.color || "#0b6bcb")}"></div><label class="check-row"><input type="checkbox" name="evidence_required" ${c.evidence_required ? "checked" : ""}> Bắt buộc minh chứng</label><label class="check-row"><input type="checkbox" name="active" ${c.active !== false ? "checked" : ""}> Đang sử dụng</label></div></form>`,
             `<button class="btn" id="cancelCriterion">Hủy</button><button class="btn primary" id="saveCriterion">Lưu tiêu chí</button>`,
           );
+          if (!id) enableFormBulkImport("#criterionForm", {
+            store: "criteria", defaults: { criteria_set_id: set.id, school_year_id: state.yearId, campus_id: set.campus_id || "all" },
+            unique: ["code"], scope: (item) => item.criteria_set_id === set.id,
+            prepare(data) {
+              if (data.min > data.max) throw new Error("Giới hạn tối thiểu không được lớn hơn tối đa");
+              return data;
+            },
+            afterSave: () => showCriteriaConfig(set.id),
+          });
           $("#cancelCriterion").onclick = closeModal;
           $("#saveCriterion").onclick = async () => {
             const f = $("#criterionForm");
@@ -4505,6 +4696,7 @@
             `<form id="newRulesetForm"><div class="form-grid"><div class="field full"><label class="required">Tên bộ quy tắc</label><input name="name" required></div><div class="field"><label>Phiên bản</label><input name="version" value="1.0" required></div><div class="field"><label>Cách tính</label><select name="formula"><option value="base">Điểm chuẩn rồi cộng/trừ</option><option value="sum">Cộng các điều chỉnh</option></select></div><div class="field"><label>Điểm chuẩn</label><input type="number" step="0.01" name="base_score" value="100"></div><div class="field full"><label>Căn cứ / ghi chú</label><textarea name="basis"></textarea></div></div></form>`,
             '<button class="btn" id="cancelNewRuleset">Hủy</button><button class="btn primary" id="saveNewRuleset">Tạo bộ</button>',
           );
+          enableFormBulkImport("#newRulesetForm", { store: "criteria_sets", defaults: { status: "draft", school_year_id: state.yearId, semester_id: state.semesterId === "all" ? null : state.semesterId, campus_id: state.campusId, effective_from: today() }, afterSave: () => showRulesetConfig() });
           $("#cancelNewRuleset").onclick = closeModal;
           $("#saveNewRuleset").onclick = async () => {
             const form = $("#newRulesetForm");
@@ -4577,6 +4769,12 @@
             `<form id="scoreCategoryForm"><div class="form-grid"><div class="field"><label class="required">Mã danh mục</label><input name="code" value="${esc(category.code || "")}" maxlength="40" required></div><div class="field"><label class="required">Tên danh mục</label><input name="name" value="${esc(category.name || "")}" maxlength="120" required></div><div class="field full"><label>Mô tả</label><textarea name="description">${esc(category.description || "")}</textarea></div><div class="field"><label>Thứ tự</label><input type="number" name="order" value="${esc(Number(category.order || 99))}"></div><label class="check-row"><input type="checkbox" name="active" ${category.active !== false ? "checked" : ""}> Đang sử dụng</label></div></form>`,
             '<button class="btn" id="cancelScoreCategory">Hủy</button><button class="btn primary" id="saveScoreCategory">Lưu danh mục</button>',
           );
+          if (!id) enableFormBulkImport("#scoreCategoryForm", {
+            store: "criteria_groups",
+            defaults: { criteria_set_id: set.id, school_year_id: state.yearId, campus_id: set.campus_id || "all" },
+            unique: ["code"], scope: (item) => item.criteria_set_id === set.id,
+            afterSave: () => showRulesetConfig(set.id),
+          });
           $("#cancelScoreCategory").onclick = closeModal;
           $("#saveScoreCategory").onclick = async () => {
             const form = $("#scoreCategoryForm");
@@ -4609,6 +4807,13 @@
             `<form id="scoreRuleForm"><div class="form-grid"><div class="field"><label class="required">Mã nội dung</label><input name="code" value="${esc(rule.code || "")}" maxlength="40" required></div><div class="field"><label class="required">Tên nội dung</label><input name="name" value="${esc(rule.name || "")}" maxlength="160" required></div><div class="field full"><label>Mô tả</label><textarea name="description">${esc(rule.description || "")}</textarea></div><div class="field"><label class="required">Điểm cộng/trừ</label><input type="number" step="0.01" name="points" value="${esc(Number(rule.points || 0))}" required><small class="hint">Số âm để trừ điểm, số dương để cộng điểm.</small></div><div class="field"><label>Thứ tự</label><input type="number" name="order" value="${esc(Number(rule.order || 99))}"></div><label class="check-row"><input type="checkbox" name="active" ${rule.active !== false ? "checked" : ""}> Đang sử dụng</label></div></form>`,
             '<button class="btn" id="cancelScoreRule">Hủy</button><button class="btn primary" id="saveScoreRule">Lưu nội dung</button>',
           );
+          if (!id) enableFormBulkImport("#scoreRuleForm", {
+            store: "criteria",
+            defaults: { criteria_set_id: set.id, criteria_group_id: categoryId, school_year_id: state.yearId,
+              campus_id: set.campus_id || "all", data_type: "incident" },
+            unique: ["code"], scope: (item) => item.criteria_set_id === set.id,
+            afterSave: () => showRulesetConfig(set.id),
+          });
           $("#cancelScoreRule").onclick = closeModal;
           $("#saveScoreRule").onclick = async () => {
             const form = $("#scoreRuleForm");
@@ -4645,6 +4850,11 @@
             `<form id="campusForm"><div class="field"><label class="required">Tên cơ sở</label><input name="name" value="${esc(c.name || "")}" required maxlength="120" placeholder="Ví dụ: Cơ sở 1"></div><div class="field mt"><label class="required">Mã cơ sở</label><input name="code" value="${esc(c.code || "")}" required maxlength="30" pattern="[A-Za-z0-9_-]+" placeholder="Ví dụ: CS1"><span class="hint">Chỉ dùng chữ không dấu, số, dấu gạch ngang hoặc gạch dưới. Mã cơ sở phải duy nhất.</span></div></form>`,
             `<button class="btn" id="cancelCampus">Hủy</button><button class="btn primary" id="saveCampus">Lưu</button>`,
           );
+          if (!id) enableFormBulkImport("#campusForm", {
+            store: "campuses", unique: ["code", "name"],
+            prepare: (data) => ({ ...data, code: data.code.toUpperCase() }),
+            afterSave: async () => { await loadContext(); await renderSettings(); },
+          });
           $("#cancelCampus").onclick = closeModal;
           $("#saveCampus").onclick = async () => {
             const f = $("#campusForm");
@@ -6149,6 +6359,9 @@
               )}</select></div><div class="field"><label>Thứ tự</label><input type="number" name="order" value="${esc(Number(f.order || 99))}"></div><div class="field full"><label>Các lựa chọn, ngăn bằng dấu |</label><input name="options" value="${esc(f.options || "")}" placeholder="Mức 1|Mức 2|Mức 3"></div><div class="field full"><label>Mô tả</label><textarea name="description">${esc(f.description || "")}</textarea></div><label class="check-row"><input type="checkbox" name="required" ${f.required ? "checked" : ""}> Bắt buộc</label><label class="check-row"><input type="checkbox" name="active" ${f.active !== false ? "checked" : ""}> Đang sử dụng</label></div></form>`,
             `<button class="btn" id="cancelCustomField">Hủy</button><button class="btn primary" id="saveCustomField">Lưu</button>`,
           );
+          if (!id) enableFormBulkImport("#customFieldForm", {
+            store: "custom_field_definitions", defaults: { entity_type: entity },
+          });
           $("#cancelCustomField").onclick = closeModal;
           $("#saveCustomField").onclick = async () => {
             const form = $("#customFieldForm");
@@ -6795,6 +7008,17 @@
             '<button class="btn" id="cancelClassGroup">Hủy</button><button class="btn primary" id="saveClassGroup">Lưu nhóm</button>',
             true,
           );
+          if (!id) enableFormBulkImport("#classGroupForm", {
+            store: "class_groups", defaults: { school_year_id: state.yearId },
+            unique: ["code", "name", "class_ids"], scope: (item) => item.school_year_id === state.yearId,
+            fields: [{ name: "class_ids", label: "Các lớp (ngăn bằng |)", multiple: true,
+              options: sortedClasses.filter((schoolClass) => !owners.has(schoolClass.id))
+                .map((schoolClass) => ({ value: schoolClass.id, label: schoolClass.class_name })) }],
+            prepare(data) {
+              if (new Set(data.class_ids).size !== data.class_ids.length) throw new Error("Lớp bị lặp trong nhóm");
+              return data;
+            },
+          });
           $("#cancelClassGroup").onclick = closeModal;
           $("#saveClassGroup").onclick = async () => {
             const form = $("#classGroupForm");
@@ -6849,7 +7073,7 @@ async function removeClass(id) {
           const categories = await db.all("config_categories"),
             cat = categories.find((x) => x.key === key),
             items = await configItems(key, true);
-          return `<div class="card mb config-card" data-config-key="${esc(key)}"><div class="card-head"><h2>${esc(cat?.name || key)}</h2><span class="meta">${items.filter((x) => x.active !== false).length}/${items.length} đang dùng</span></div><div class="card-body"><div class="toolbar"><input class="grow" data-config-search="${esc(key)}" placeholder="Tìm trong danh mục…"><button class="btn small primary" data-config-add="${esc(key)}">＋ Thêm</button><button class="btn small" data-config-restore="${esc(key)}">Khôi phục mẫu</button></div><div class="table-wrap" style="max-height:300px"><table><thead><tr><th>Thứ tự</th><th>Màu</th><th>Tên hiển thị</th><th>Mã</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody data-config-rows="${esc(key)}">${items.map((x, i) => `<tr data-config-text="${esc(normalizeText(x.label))}"><td>${i + 1}</td><td><span style="display:inline-block;width:16px;height:16px;border-radius:4px;background:${esc(x.color || "#0b6bcb")}"></span></td><td class="wrap">${esc(x.label)}</td><td>${esc(x.code)}</td><td>${x.active !== false ? '<span class="badge green">Đang dùng</span>' : '<span class="badge">Ngừng dùng</span>'}</td><td><button class="link-btn" data-config-up="${esc(x.id)}">↑</button><button class="link-btn" data-config-down="${esc(x.id)}">↓</button><button class="link-btn" data-config-edit="${esc(x.id)}">Sửa</button><button class="link-btn" data-config-clone="${esc(x.id)}">Nhân bản</button><button class="link-btn" data-config-toggle="${esc(x.id)}">${x.active !== false ? "Ngừng" : "Bật"}</button></td></tr>`).join("")}</tbody></table></div></div></div>`;
+          return `<div class="card mb config-card" data-config-key="${esc(key)}"><div class="card-head"><h2>${esc(cat?.name || key)}</h2><span class="meta">${items.filter((x) => x.active !== false).length}/${items.length} đang dùng</span></div><div class="card-body"><div class="toolbar"><input class="grow" data-config-search="${esc(key)}" placeholder="Tìm trong danh mục…"><button class="btn small" data-config-import="${esc(key)}">Nhập hàng loạt</button><button class="btn small primary" data-config-add="${esc(key)}">＋ Thêm</button><button class="btn small" data-config-restore="${esc(key)}">Khôi phục mẫu</button></div><div class="table-wrap" style="max-height:300px"><table><thead><tr><th>Thứ tự</th><th>Màu</th><th>Tên hiển thị</th><th>Mã</th><th>Trạng thái</th><th>Thao tác</th></tr></thead><tbody data-config-rows="${esc(key)}">${items.map((x, i) => `<tr data-config-text="${esc(normalizeText(x.label))}"><td>${i + 1}</td><td><span style="display:inline-block;width:16px;height:16px;border-radius:4px;background:${esc(x.color || "#0b6bcb")}"></span></td><td class="wrap">${esc(x.label)}</td><td>${esc(x.code)}</td><td>${x.active !== false ? '<span class="badge green">Đang dùng</span>' : '<span class="badge">Ngừng dùng</span>'}</td><td><button class="link-btn" data-config-up="${esc(x.id)}">↑</button><button class="link-btn" data-config-down="${esc(x.id)}">↓</button><button class="link-btn" data-config-edit="${esc(x.id)}">Sửa</button><button class="link-btn" data-config-clone="${esc(x.id)}">Nhân bản</button><button class="link-btn" data-config-toggle="${esc(x.id)}">${x.active !== false ? "Ngừng" : "Bật"}</button></td></tr>`).join("")}</tbody></table></div></div></div>`;
         }
         function bindConfigActions() {
           $$("[data-config-search]").forEach(
@@ -6865,6 +7089,9 @@ async function removeClass(id) {
                 );
               }),
           );
+          $$("[data-config-import]").forEach((button) => {
+            button.onclick = async () => { await configItemForm(button.dataset.configImport); $("#openBulkImport").click(); };
+          });
           $$("[data-config-add]").forEach(
             (b) => (b.onclick = () => configItemForm(b.dataset.configAdd)),
           );
@@ -6930,6 +7157,10 @@ async function removeClass(id) {
             `<form id="configItemForm"><div class="form-grid"><div class="field full"><label class="required">Tên hiển thị</label><input name="label" value="${esc(row.label || "")}" required></div><div class="field"><label class="required">Mã duy nhất</label><input name="code" value="${esc(row.code || "")}" required pattern="[A-Za-z0-9_-]+"></div><div class="field"><label>Màu nhận diện</label><input type="color" name="color" value="${esc(row.color || "#0b6bcb")}"></div><div class="field"><label>Biểu tượng ký tự</label><input name="icon" value="${esc(row.icon || "•")}" maxlength="4"></div><div class="field"><label>Thứ tự</label><input type="number" name="order" value="${esc(row.order || 99)}"></div><div class="field full"><label>Mô tả</label><textarea name="description">${esc(row.description || "")}</textarea></div><label class="check-row"><input type="checkbox" name="active" ${row.active !== false ? "checked" : ""}> Đang sử dụng</label></div></form>`,
             `<button class="btn" id="cancelConfigItem">Hủy</button><button class="btn primary" id="saveConfigItem">Lưu</button>`,
           );
+          if (!id) enableFormBulkImport("#configItemForm", {
+            store: "config_items", defaults: { category_key: key, is_default: false },
+            unique: ["code"], scope: (item) => item.category_key === key,
+          });
           $("#cancelConfigItem").onclick = closeModal;
           $("#saveConfigItem").onclick = async () => {
             const f = $("#configItemForm");
@@ -7110,7 +7341,7 @@ async function removeClass(id) {
             pageHead(
               "Hồ sơ – minh chứng",
               "Kho tài liệu ngoại tuyến: lưu tệp thật, thư mục, phiên bản, tìm kiếm và thùng rác.",
-              `<button class="btn" id="newFolder">＋ Thư mục</button><button class="btn primary" id="uploadDocuments">＋ Tải tệp</button>`,
+              `<button class="btn" id="importDocumentRecords">Nhập hồ sơ hàng loạt</button><button class="btn" id="newFolder">＋ Thư mục</button><button class="btn primary" id="uploadDocuments">＋ Tải tệp</button>`,
             ) +
                `<div class="toolbar"><input class="grow" id="documentSearch" value="${esc(query)}" placeholder="Tìm tên, số hiệu, thẻ…"><select id="documentTypeFilter"><option value="all">Tất cả loại tệp</option><option value="pdf">PDF</option><option value="image">Hình ảnh</option><option value="office">Word/Excel/PowerPoint</option></select><button class="btn small" id="toggleDocumentView">${state.documentView === "grid" ? "☷ Danh sách" : "▦ Dạng lưới"}</button><span class="muted">${docs.length} tài liệu</span></div><div class="document-layout"><aside class="folder-pane"><strong>Thư mục</strong><button class="folder-row ${activeFolder === "root" ? "active" : ""}" data-folder="root">▧ Tất cả tài liệu</button>${folders.map((f) => `<button class="folder-row ${activeFolder === f.id ? "active" : ""}" data-folder="${esc(f.id)}">▸ ${esc(f.name)}</button>`).join("")}<button class="folder-row ${trash ? "active" : ""}" data-folder="trash">♲ Thùng rác</button><hr style="border:0;border-top:1px solid var(--line)"><small class="muted">Tổng dung lượng tệp</small><small>${formatBytes(used)}</small></aside><section><div class="drop-zone ${trash ? "hidden" : ""}" id="documentDrop">Kéo thả nhiều tệp vào đây hoặc dán ảnh từ bộ nhớ tạm</div><div class="${state.documentView === "grid" ? "file-grid" : "table-wrap"} mt" id="documentItems">${renderDocumentItems(docs, attachMap, trash)}</div></section></div>`,
           );
@@ -7134,6 +7365,10 @@ async function removeClass(id) {
           $("#documentFileInput").onchange = async (e) => {
             await saveDocumentFiles([...e.target.files]);
             e.target.value = "";
+          };
+          $("#importDocumentRecords").onclick = async () => {
+            await entityForm("documents");
+            $("#openBulkImport").click();
           };
           $("#newFolder").onclick = createFolder;
           const dz = $("#documentDrop");
@@ -7543,6 +7778,7 @@ async function removeClass(id) {
             `<form id="folderForm"><div class="field"><label class="required">Tên thư mục</label><input name="name" required maxlength="80"></div><div class="field mt"><label>Thư mục cha</label><select name="parent_id"><option value="root">Thư mục gốc</option>${folders.map((x) => `<option value="${esc(x.id)}" ${state.documentFolderId === x.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></div></form>`,
             `<button class="btn" id="cancelFolder">Hủy</button><button class="btn primary" id="saveFolder">Tạo</button>`,
           );
+          enableFormBulkImport("#folderForm", { store: "document_folders", defaults: { active: true }, unique: [["parent_id", "name"]] });
           $("#cancelFolder").onclick = closeModal;
           $("#saveFolder").onclick = async () => {
             const f = $("#folderForm");

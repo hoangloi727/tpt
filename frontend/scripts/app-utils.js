@@ -226,6 +226,67 @@
     rows.push(row);
     return rows;
   }
+  function prepareBulkImportRows(rows, fields, { defaults = {}, unique = [], existing = [] } = {}) {
+    const key = (value) => normalizeText(String(value ?? "").trim()),
+      lines = rows.map((cells, index) => ({ cells: cells || [], row: index + 1 }))
+        .filter(({ cells }) => cells.some((cell) => String(cell ?? "").trim()));
+    if (lines[0]?.cells.length === fields.length && fields.every((field, i) =>
+      [field.name, field.label].some((header) => key(header) === key(lines[0].cells[i])))) lines.shift();
+    if (!lines.length) throw new Error("Chưa có dữ liệu để nhập.");
+    if (lines.length > 2000) throw new Error("Chỉ nhập tối đa 2.000 dòng mỗi lần.");
+    const uniqueFields = unique.map((names) => Array.isArray(names) ? names : [names]);
+    const uniqueValues = (data, names) => {
+      if (names.length === 1 && Array.isArray(data[names[0]])) return data[names[0]].map(key).filter(Boolean);
+      const values = names.map((name) => key(data[name]));
+      return values.some(Boolean) ? [JSON.stringify(values)] : [];
+    };
+    const seen = uniqueFields.map((names) => new Set(existing.flatMap((item) => uniqueValues(item, names))));
+    return lines.map(({ cells, row }) => {
+      const data = { ...defaults }, errors = [];
+      if (cells.slice(fields.length).some((cell) => String(cell ?? "").trim()))
+        errors.push("Thừa cột; hãy dùng đúng mẫu");
+      fields.forEach((field, index) => {
+        let value = String(cells[index] ?? "").trim();
+        if (!value) value = String(field.defaultValue ?? "");
+        if (field.type === "date" && value) {
+          const local = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+          if (local) value = `${local[3]}-${local[2].padStart(2, "0")}-${local[1].padStart(2, "0")}`;
+          else if (/^\d{4}-\d{2}-\d{2}T/.test(value)) value = value.slice(0, 10);
+          const date = new Date(`${value}T00:00:00Z`);
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value)
+            errors.push(`${field.label}: ngày không hợp lệ (dùng YYYY-MM-DD hoặc DD/MM/YYYY)`);
+        }
+        if (field.type === "checkbox") {
+          const yes = ["true", "1", "yes", "co"], no = ["false", "0", "no", "khong"];
+          if (![...yes, ...no].includes(key(value))) errors.push(`${field.label}: dùng Có/Không`);
+          value = yes.includes(key(value));
+        } else if (field.options) {
+          const values = field.multiple ? value.split("|").map((v) => v.trim()).filter(Boolean) : [value];
+          const selected = values.map((v) => {
+            const exact = field.options.find((option) => option.value === v);
+            const matches = exact ? [exact] : field.options.filter((option) => key(option.label) === key(v));
+            if (matches.length === 1) return matches[0].value;
+            if (v) errors.push(`${field.label}: lựa chọn không hợp lệ hoặc trùng tên (${v})`);
+            return "";
+          });
+          value = field.multiple ? selected : selected[0];
+        } else if (field.type === "number" && value !== "") {
+          value = Number(value.replace(",", "."));
+          if (!Number.isFinite(value)) errors.push(`${field.label}: số không hợp lệ`);
+        }
+        if (field.required && (value === "" || Array.isArray(value) && !value.length)) errors.push(`Thiếu ${field.label}`);
+        if (field.validate && !field.validate(value)) errors.push(`${field.label}: không đúng định dạng hoặc giới hạn của form`);
+        data[field.name] = field.type === "number" && value === "" && !field.required ? 0 : value;
+      });
+      uniqueFields.forEach((names, index) => {
+        for (const value of uniqueValues(data, names)) {
+          if (seen[index].has(value)) errors.push(`${names.map((name) => fields.find((field) => field.name === name)?.label || name).join(" / ")}: đã tồn tại hoặc trùng trong tệp`);
+          seen[index].add(value);
+        }
+      });
+      return { row, data, errors };
+    });
+  }
   function validateAccountImportRows(rows, { role, years, classes, users, schoolYearId }) {
     if (!["user", "teacher"].includes(role)) throw new Error("Loại tài khoản nhập không hợp lệ.");
     const textKey = (value) => normalizeText(String(value ?? "").trim()),
@@ -379,6 +440,7 @@
     normalizeText,
     normalizeSchoolYearName,
     parseAccountImportText,
+    prepareBulkImportRows,
     validateAccountImportRows,
     prepareGraderAssignmentImport,
     defaultConfigColor,

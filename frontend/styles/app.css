@@ -1959,3 +1959,10 @@
           display: none;
         }
       }
+
+      .modal-layer:has(#bulkText) {
+        grid-template-columns: minmax(0, 1fr);
+      }
+      .modal-layer:has(#bulkText) .modal {
+        max-width: calc(100vw - 10px);
+      }
