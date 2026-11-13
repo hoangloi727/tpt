@@ -1202,6 +1202,7 @@
             scores: "[data-score-tab], [data-ranking-group]",
             settings: "[data-setting-tab]",
             documents: "[data-folder]",
+            users: "[data-user-role]",
           };
           const parent = $("#nav").querySelector(`[data-page="${state.page}"]`);
           if (!parent) return;
@@ -5987,22 +5988,24 @@
         }
 
         async function renderUserManagement() {
-          const [users, classes] = await Promise.all([db.listUsers(), db.all("classes")]),
+          const [accounts, classes] = await Promise.all([db.listUsers(), db.all("classes")]),
+            users = accounts.filter((account) => account.role !== "superadmin"),
             isSuperadmin = state.user?.role === "superadmin",
             roleOptions = [
               ["all", "Tất cả loại tài khoản"],
-              ["superadmin", "Superadmin"],
               ["admin", "Admin"],
               ["teacher", "Giáo viên"],
               ["user", "Sao đỏ"],
             ];
+          if (!roleOptions.some(([role]) => role === state.userRoleFilter))
+            state.userRoleFilter = "all";
           setContent(
             pageHead(
               "Quản lý người dùng",
               `Tài khoản thuộc ${state.user?.selectedSchoolName || "trường đang chọn"}.`,
               `${isSuperadmin ? '<button class="btn" id="addSchool">＋ Thêm trường</button>' : ""}<button class="btn" id="importUsers">Nhập Sao đỏ (Excel/CSV)</button><button class="btn" id="importTeachers">Nhập Giáo viên (Excel/CSV)</button><button class="btn primary" id="addUser">＋ Thêm người dùng</button>`,
             ) +
-              `<div class="toolbar"><label for="userRoleFilter">Loại tài khoản</label><select id="userRoleFilter">${roleOptions.map(([role, label]) => `<option value="${role}" ${state.userRoleFilter === role ? "selected" : ""}>${label}</option>`).join("")}</select></div>` +
+              `<div class="tabs" aria-label="Loại tài khoản">${roleOptions.map(([role, label]) => `<button data-user-role="${role}" class="${state.userRoleFilter === role ? "active" : ""}" aria-pressed="${state.userRoleFilter === role}">${esc(label)} (${role === "all" ? users.length : users.filter((user) => user.role === role).length})</button>`).join("")}</div>` +
               `<div class="notice"><strong>Admin có toàn quyền trong trường này</strong> và có thể quản lý User/Admin, nhưng không thể tạo hoặc quản lý Superadmin. Superadmin dùng bộ chọn trường trên thanh điều hướng để đổi phạm vi.</div><div class="table-wrap"><table><thead><tr><th>Tài khoản</th><th>Tên hiển thị</th><th>Vai trò</th><th>Quyền</th><th>Trạng thái</th><th>Lần đăng nhập cuối</th><th>Thao tác</th></tr></thead><tbody>${users
                 .filter((user) => state.userRoleFilter === "all" || user.role === state.userRoleFilter)
                 .map(
@@ -6027,10 +6030,12 @@
                 )
                 .join("") || '<tr><td colspan="7" class="empty">Không có tài khoản thuộc loại đã chọn.</td></tr>'}</tbody></table></div>`,
           );
-          $("#userRoleFilter").onchange = (event) => {
-            state.userRoleFilter = event.target.value;
-            return renderUserManagement();
-          };
+          $$("[data-user-role]").forEach((button) => {
+            button.onclick = () => {
+              state.userRoleFilter = button.dataset.userRole;
+              return renderUserManagement();
+            };
+          });
           $("#addUser").onclick = () => openUserForm();
           $("#importUsers").onclick = () =>
             showUserImport("user").catch((error) => toast(error.message, "bad"));
@@ -6195,10 +6200,8 @@
               (row) => row.user_id === user?.id,
             ),
             editing = !!user,
-            isSuperadmin = state.user?.role === "superadmin",
-            roleOptions = isSuperadmin
-              ? `<option value="user" ${user?.role === "user" || !user ? "selected" : ""}>Sao đỏ</option><option value="teacher" ${user?.role === "teacher" ? "selected" : ""}>Giáo viên chủ nhiệm</option><option value="admin" ${user?.role === "admin" ? "selected" : ""}>Admin trường</option><option value="superadmin" ${user?.role === "superadmin" ? "selected" : ""}>Superadmin</option>`
-              : `<option value="user" ${user?.role === "user" || !user ? "selected" : ""}>Sao đỏ</option><option value="teacher" ${user?.role === "teacher" ? "selected" : ""}>Giáo viên chủ nhiệm</option><option value="admin" ${user?.role === "admin" ? "selected" : ""}>Admin trường</option>`;
+            roleOptions =
+              `<option value="user" ${user?.role === "user" || !user ? "selected" : ""}>Sao đỏ</option><option value="teacher" ${user?.role === "teacher" ? "selected" : ""}>Giáo viên chủ nhiệm</option><option value="admin" ${user?.role === "admin" ? "selected" : ""}>Admin trường</option>`;
           openModal(
             editing ? "Sửa tài khoản" : "Thêm người dùng",
             `<form id="userForm"><div class="form-grid"><div class="field"><label class="required">Tên đăng nhập</label><input name="username" value="${esc(user?.username || "")}" minlength="3" maxlength="32" pattern="[a-z0-9._\\-]+" autocapitalize="none" required></div><div class="field"><label class="required">Tên hiển thị</label><input name="displayName" value="${esc(user?.displayName || "")}" required></div><div class="field"><label>Vai trò</label><select name="role" ${user?.root ? "disabled" : ""}>${roleOptions}</select></div><div class="field"><label>${editing ? "Mật khẩu mới (để trống nếu giữ nguyên)" : "Mật khẩu, tối thiểu 10 ký tự"}</label><input name="password" type="password" minlength="10" autocomplete="new-password" ${editing ? "" : "required"}></div><div class="field full"><label>Khóa quyền, cách nhau bằng dấu phẩy</label><textarea name="permissions" placeholder="dashboard, page:tasks, store:tasks:read">${esc((user?.permissions || ["dashboard"]).filter((value) => value !== "*").join(", "))}</textarea><small class="hint">Admin và Superadmin có toàn quyền theo vai trò; các khóa này áp dụng cho User.</small></div>${editing && !user?.root ? `<label class="check-row field full"><input type="checkbox" name="disabled" ${user.disabled ? "checked" : ""}> Khóa tài khoản này</label>` : ""}</div></form>`,

@@ -522,17 +522,12 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           return sendJson(
             response,
             200,
-            users.list(
-              user.selectedSchoolId,
-              user.role === "superadmin",
-            ),
+            users.list(user.selectedSchoolId).filter((account) => account.role !== "superadmin"),
           );
         if (request.method === "POST") {
           const body = await readJson(request);
           assertObject(body);
-          if (user.role === "admin") {
-            if (body.role === "superadmin") body.role = "admin";
-          }
+          if (body.role === "superadmin") return forbidden(response);
           if (body.role === "teacher")
             validateTeacherAssignment(repository, body.teacherAssignment, user.selectedSchoolId);
           if (body.graderClassId !== undefined)
@@ -560,9 +555,8 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         const target = users.get(id);
         if (
           !target ||
-          (target.schoolId !== user.selectedSchoolId &&
-            !(user.role === "superadmin" && target.role === "superadmin")) ||
-          (user.role === "admin" && target.role === "superadmin")
+          target.role === "superadmin" ||
+          target.schoolId !== user.selectedSchoolId
         )
           return forbidden(response);
         if (request.method === "PATCH") {
@@ -570,9 +564,7 @@ export const createApiHandler = ({ repository, sessions, users }) =>
           assertObject(changes);
           const passwordChanged = !!changes.password;
           changes.schoolId = user.selectedSchoolId;
-          if (user.role === "admin") {
-            if (changes.role === "superadmin") changes.role = "admin";
-          }
+          if (changes.role === "superadmin") return forbidden(response);
           if (
             (changes.role || target.role) === "teacher" &&
             (changes.teacherAssignment || target.role !== "teacher")
