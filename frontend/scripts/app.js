@@ -768,6 +768,12 @@
           document.title = `${schoolName} - Trợ lý Tổng phụ trách Đội`;
         }
         function bindShell() {
+          new MutationObserver(syncNavChildren).observe($("#content"), {
+            subtree: true,
+            childList: true,
+            attributes: true,
+            attributeFilter: ["class", "disabled", "aria-pressed"],
+          });
           $("#toggleSidebar").onclick = () => {
             $("#sidebar").classList.toggle("collapsed");
             document.body.classList.toggle(
@@ -1176,10 +1182,64 @@
               b.title = label;
               b.setAttribute("aria-label", label);
               b.innerHTML = `<span class="ico" aria-hidden="true">${ico}</span><span class="nav-label">${esc(label)}</span>`;
-              b.onclick = () => go(id);
+              b.onclick = () => {
+                const children = $("#navChildren");
+                if (id === state.page && children?.childElementCount) {
+                  children.hidden = !children.hidden;
+                  b.setAttribute("aria-expanded", String(!children.hidden));
+                } else go(id);
+              };
               return b;
             }),
           );
+          syncNavChildren();
+        }
+        function syncNavChildren() {
+          const selectors = {
+            organization: "[data-organization-unit]",
+            tasks: "[data-task-view]",
+            scores: "[data-score-tab], [data-ranking-group]",
+            settings: "[data-setting-tab]",
+            documents: "[data-folder]",
+          };
+          const parent = $("#nav").querySelector(`[data-page="${state.page}"]`);
+          if (!parent) return;
+          const sources = selectors[state.page]
+            ? Array.from($("#content").querySelectorAll(selectors[state.page]))
+            : [];
+          let children = $("#navChildren");
+          if (!sources.length) {
+            children?.remove();
+            parent.removeAttribute("aria-expanded");
+            parent.removeAttribute("aria-controls");
+            return;
+          }
+          if (!children) {
+            children = document.createElement("div");
+            children.id = "navChildren";
+            children.className = "nav-children";
+            children.setAttribute("role", "group");
+            children.setAttribute("aria-label", parent.title);
+            parent.after(children);
+          }
+          parent.setAttribute("aria-controls", children.id);
+          parent.setAttribute("aria-expanded", String(!children.hidden));
+          const focusIndex = Array.from(children.children).indexOf(document.activeElement);
+          children.replaceChildren(...sources.map((source) => {
+            const container = source.closest(".tabs, .settings-menu");
+            if (container && !container.classList.contains("sidebar-tab-source"))
+              container.classList.add("sidebar-tab-source");
+            const button = document.createElement("button");
+            const active = source.classList.contains("active");
+            button.className = "nav-child" + (active ? " active" : "");
+            if (source.hasAttribute("data-ranking-group")) button.classList.add("nav-grandchild");
+            button.textContent = source.textContent;
+            button.disabled = source.disabled;
+            button.setAttribute("aria-pressed", String(active));
+            button.onclick = () => source.click();
+            return button;
+          }));
+          if (focusIndex >= 0) children.children[focusIndex]?.focus({ preventScroll: true });
         }
         async function go(page, focus = true, fromHistory = false) {
           if (!NAV.some(([id]) => id === page)) page = "dashboard";
@@ -1190,9 +1250,9 @@
           if (!fromHistory && location.hash !== `#${page}`)
             history.pushState(null, "", `#${page}`);
           state.page = page;
-          renderNav();
           const content = $("#content");
           content.innerHTML = '<div class="empty">Đang tải dữ liệu…</div>';
+          renderNav();
           const renderers = {
             dashboard: renderDashboard,
             today: renderToday,
@@ -1482,12 +1542,27 @@
         async function renderEntity(key) {
           const cfg = ENTITY[key],
             rows = await scoped(cfg.store);
+          let organizationUnits = [];
+          if (key === "organization") {
+            const configured = await configItems("team_group");
+            organizationUnits = [...new Set([
+              ...(configured.length
+                ? configured.map((item) => item.label)
+                : cfg.fields.find(([name]) => name === "unit")[4].split("|")),
+              ...rows.map((row) => row.unit).filter(Boolean),
+            ])];
+            if (!organizationUnits.includes(state.organizationUnit))
+              state.organizationUnit = "";
+          }
           setContent(
             pageHead(
               cfg.title,
               cfg.desc,
               `<button class="btn" data-export-entity="${esc(key)}">Xuất CSV</button><button class="btn primary" data-new-entity="${esc(key)}">＋ Thêm mới</button>`,
             ) +
+              (key === "organization"
+                ? `<div class="tabs" aria-label="Đội/ban">${["", ...organizationUnits].map((unit) => `<button data-organization-unit="${esc(unit)}" class="${(state.organizationUnit || "") === unit ? "active" : ""}" aria-pressed="${(state.organizationUnit || "") === unit}">${esc(unit || "Tất cả")}</button>`).join("")}</div>`
+                : "") +
               `<div class="toolbar"><input class="grow" id="entitySearch" placeholder="Tìm trong ${esc(cfg.title.toLowerCase())}…"><select id="entityCampus"><option value="all">Tất cả cơ sở</option>${state.cache.campuses.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join("")}</select><span class="muted">${rows.length} bản ghi</span></div><div class="table-wrap"><table><thead><tr>${entityColumns(
                 key,
               )
@@ -1496,30 +1571,30 @@
                   "",
                 )}<th>Thao tác</th></tr></thead><tbody id="entityRows"></tbody></table></div>`,
           );
-          renderEntityRows(key, rows);
-          $("#entitySearch").oninput = debounce(
-            () =>
-              renderEntityRows(
-                key,
-                rows.filter((r) =>
-                  Object.values(r).some((v) =>
-                    String(v ?? "")
-                      .toLowerCase()
-                      .includes($("#entitySearch").value.toLowerCase()),
-                  ),
-                ),
-              ),
-            180,
-          );
-          $("#entityCampus").onchange = () =>
-            renderEntityRows(
-              key,
-              rows.filter(
-                (r) =>
-                  $("#entityCampus").value === "all" ||
-                  r.campus_id === $("#entityCampus").value,
-              ),
-            );
+          const applyFilters = () => {
+            const query = $("#entitySearch").value.toLowerCase(),
+              campus = $("#entityCampus").value;
+            state.entityPage = 0;
+            renderEntityRows(key, rows.filter((row) =>
+              (key !== "organization" || !state.organizationUnit || row.unit === state.organizationUnit) &&
+              (campus === "all" || row.campus_id === campus) &&
+              Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(query)),
+            ));
+          };
+          applyFilters();
+          $("#entitySearch").oninput = debounce(applyFilters, 180);
+          $("#entityCampus").onchange = applyFilters;
+          $$("[data-organization-unit]").forEach((button) => {
+            button.onclick = () => {
+              state.organizationUnit = button.dataset.organizationUnit;
+              $$("[data-organization-unit]").forEach((tab) => {
+                const active = tab.dataset.organizationUnit === state.organizationUnit;
+                tab.classList.toggle("active", active);
+                tab.setAttribute("aria-pressed", String(active));
+              });
+              applyFilters();
+            };
+          });
           $$("[data-new-entity]").forEach(
             (b) => (b.onclick = () => entityForm(key)),
           );
@@ -1633,7 +1708,7 @@
         }
         async function entityForm(key, id) {
           const cfg = ENTITY[key],
-            row = id ? await db.get(cfg.store, id) : {},
+            row = id ? await db.get(cfg.store, id) : (key === "organization" ? { unit: state.organizationUnit || "" } : {}),
             customDefs = await customFieldDefs(key),
             dynamicMap = {
               activities: { category: "activity_type" },
