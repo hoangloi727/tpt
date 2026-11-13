@@ -6,7 +6,7 @@ import vm from 'node:vm';
 const source = await readFile(new URL('../../frontend/scripts/app.js', import.meta.url), 'utf8');
 const code = source.slice(source.indexOf('        async function scoped(store)'), source.indexOf('        const canManageScores'));
 
-test('dated tasks appear only in the deadline week, including boundaries, while undated tasks and other scopes are preserved', async () => {
+test('other weeks show tasks by deadline while preserving date boundaries, undated tasks and other scopes', async () => {
   const rows = [
     { id: 'earlier', due_date: '2026-11-08' },
     { id: 'monday', due_date: '2026-11-09' },
@@ -26,7 +26,7 @@ test('dated tasks appear only in the deadline week, including boundaries, while 
       { id: 'next-week', school_year_id: 'year', start_date: '2026-11-16', end_date: '2026-11-22' },
     ] },
   };
-  const context = vm.createContext({ state, db: { all: async () => rows } });
+  const context = vm.createContext({ state, today: () => '2026-11-23', db: { all: async () => rows } });
   vm.runInContext(code, context);
   const ids = async store => Array.from(await context.scoped(store), row => row.id);
   assert.deepEqual(await ids('tasks'), ['monday', 'sunday', 'undated', 'old-semester-metadata']);
@@ -38,4 +38,35 @@ test('dated tasks appear only in the deadline week, including boundaries, while 
   state.cache.weeks = [{ id: 'missing', school_year_id: 'other', start_date: '2026-11-09', end_date: '2026-11-15' }];
   assert.deepEqual(await ids('tasks'), ['undated']);
   assert.deepEqual(rows, before);
+});
+
+test('the current week also shows unfinished future tasks, but excludes completed future tasks and overdue tasks from older weeks', async () => {
+  const rows = [
+    { id: 'due-this-week', due_date: '2026-11-15', status: 'done' },
+    { id: 'pending-next-week', due_date: '2026-11-19', status: 'doing' },
+    { id: 'pending-later', due_date: '2026-11-30', status: 'todo' },
+    { id: 'done-next-week', due_date: '2026-11-19', status: 'done' },
+    { id: 'overdue-previous-week', due_date: '2026-11-08', status: 'todo' },
+    { id: 'wrong-campus', due_date: '2026-11-19', campus_id: 'other' },
+    { id: 'wrong-year', due_date: '2026-11-19', school_year_id: 'other' },
+  ].map(row => ({ school_year_id: 'year', campus_id: 'campus', ...row }));
+  const state = {
+    yearId: 'year', semesterId: 'all', campusId: 'campus', weekId: 'first',
+    cache: { weeks: [
+      { id: 'first', school_year_id: 'year', start_date: '2026-11-09', end_date: '2026-11-15' },
+      { id: 'next', school_year_id: 'year', start_date: '2026-11-16', end_date: '2026-11-22' },
+    ] },
+  };
+  let date = '2026-11-13';
+  const context = vm.createContext({ state, today: () => date, db: { all: async () => rows } });
+  vm.runInContext(code, context);
+  const ids = async () => Array.from(await context.scoped('tasks'), row => row.id);
+  assert.deepEqual(await ids(), ['due-this-week', 'pending-next-week', 'pending-later']);
+  rows.find(row => row.id === 'pending-later').status = 'done';
+  assert.deepEqual(await ids(), ['due-this-week', 'pending-next-week']);
+  state.weekId = 'next';
+  assert.deepEqual(await ids(), ['pending-next-week', 'done-next-week']);
+  date = '2026-11-17';
+  state.weekId = 'first';
+  assert.deepEqual(await ids(), ['due-this-week']);
 });

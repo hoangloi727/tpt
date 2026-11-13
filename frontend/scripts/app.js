@@ -1340,7 +1340,9 @@
         async function scoped(store) {
           const week = (state.cache.weeks || []).find((row) =>
             row.id === state.weekId && row.school_year_id === state.yearId,
-          );
+          ),
+            currentDate = today(),
+            isCurrentWeek = week && week.start_date <= currentDate && currentDate <= week.end_date;
           return (await db.all(store)).filter(
             (x) =>
               (!(x.school_year_id || x.academic_year_id) ||
@@ -1354,7 +1356,8 @@
                 state.campusId === "all" ||
                 x.campus_id === state.campusId) &&
               (store !== "tasks" || !x.due_date ||
-                (week && x.due_date >= week.start_date && x.due_date <= week.end_date)),
+                (week && x.due_date >= week.start_date && x.due_date <= week.end_date) ||
+                (isCurrentWeek && x.status !== "done" && x.due_date > currentDate)),
           );
         }
         const canManageScores = () =>
@@ -2078,7 +2081,7 @@
           setContent(
             pageHead(
               "Công việc và checklist",
-              "Theo dõi công việc theo tuần chứa hạn hoàn thành.",
+              "Theo dõi theo tuần đến hạn; tuần hiện tại hiển thị thêm việc chưa xong, chưa đến hạn.",
               `<button class="btn" id="importTasks">Nhập hàng loạt</button><button class="btn" id="taskTemplates">Thư viện mẫu</button><button class="btn primary" id="newTask">＋ Công việc</button>`,
             ) +
               `
