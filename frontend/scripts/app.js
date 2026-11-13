@@ -1919,12 +1919,12 @@
             }
           };
         }
-        function confirmDialog(message, title = "Xác nhận") {
+        function confirmDialog(message, title = "Lưu thêm bản trùng") {
           return new Promise((resolve) => {
             openModal(
               title,
               `<p>${esc(message)}</p>`,
-              `<button class="btn" id="cancelConfirm">Hủy</button><button class="btn danger" id="doConfirm">Đồng ý</button>`,
+              `<button class="btn" id="cancelConfirm">Bỏ qua tệp</button><button class="btn primary" id="doConfirm">Lưu thêm bản</button>`,
             );
             $("#cancelConfirm").onclick = () => {
               closeModal();
@@ -1941,7 +1941,7 @@
             openModal(
               title,
               `<p>${esc(message)}</p><input id="promptInput" type="text" class="input" style="width:100%;margin-top:.5rem" value="${esc(initialValue)}">`,
-              `<button class="btn" id="cancelPrompt">Hủy</button><button class="btn primary" id="doPrompt">OK</button>`,
+              `<button class="btn" id="cancelPrompt">Hủy</button><button class="btn primary" id="doPrompt">Tiếp tục</button>`,
             );
             $("#promptInput").focus();
             $("#promptInput").select();
@@ -1959,7 +1959,7 @@
         function confirmDestructive(message, action, title = "Xác nhận xóa", button = "Xóa", content = "") {
           openModal(
             title,
-            `<div class="notice danger">${esc(message)}</div>${content}<p>Nhập mật khẩu hiện tại để tiếp tục.</p><div class="field mt"><label>Mật khẩu hiện tại</label><input id="destructivePassword" type="password" autocomplete="current-password"></div>`,
+            `<div class="notice danger">${esc(message)}</div>${content}<div class="field mt"><label>Mật khẩu hiện tại</label><input id="destructivePassword" type="password" autocomplete="current-password"></div>`,
             `<button class="btn" id="cancelDestructive">Hủy</button><button class="btn danger" id="doDestructive" disabled>${esc(button)}</button>`,
           );
           const password = $("#destructivePassword"),
@@ -1988,7 +1988,7 @@
         async function confirmDelete(store, id, after) {
           const row = await db.get(store, id);
           confirmDestructive(
-            `Bản ghi “${row?.name || row?.title || row?.recipient || row?.code || "đã chọn"}” sẽ bị xóa mềm và không thể hoàn tác trực tiếp trên màn hình này.`,
+            `Bản ghi “${row?.name || row?.title || row?.recipient || row?.code || "đã chọn"}” sẽ bị xóa khỏi danh sách. Không thể hoàn tác trực tiếp trên màn hình này.`,
             async () => {
             await db.remove(store, id);
             toast("Đã xóa bản ghi");
@@ -2534,7 +2534,7 @@
           ];
           openModal(
             "Thư viện công việc mẫu",
-            `<div class="notice">Các mẫu chỉ để tham khảo; thầy có thể chọn, sau đó sửa lại trước khi dùng.</div><div class="form-grid">${templates.map((x, i) => `<label class="check-row"><input type="checkbox" value="${esc(x)}"> ${esc(x)}</label>`).join("")}</div>`,
+            `<div class="notice">Chọn mẫu công việc cần thêm. Có thể sửa nội dung sau khi thêm.</div><div class="form-grid">${templates.map((x, i) => `<label class="check-row"><input type="checkbox" value="${esc(x)}"> ${esc(x)}</label>`).join("")}</div>`,
             `<button class="btn" id="closeTemplates">Đóng</button><button class="btn primary" id="addTemplates">Thêm mục đã chọn</button>`,
             true,
           );
@@ -3448,7 +3448,7 @@
         }
         function deleteScoreSheet(sheet) {
           confirmDestructive(
-            "Không thể hoàn tác. Thao tác này xóa bảng tuần, toàn bộ điểm của mọi lớp và các snapshot xếp hạng liên quan. Nhật ký kiểm toán vẫn được giữ.",
+            "Không thể hoàn tác. Thao tác này xóa bảng tuần, toàn bộ điểm của mọi lớp và các bản chốt xếp hạng liên quan. Nhật ký kiểm toán vẫn được giữ.",
             async () => {
               const result = await db.deleteWeeklyScoreSheet(sheet.id);
               state.lastScoreUndo = null;
@@ -3469,7 +3469,7 @@
           if (!alternatives.length)
             return toast("Cần có một bộ tiêu chí khác đang hoạt động để thay thế.", "bad");
           confirmDestructive(
-            "Toàn bộ điểm, minh chứng và snapshot xếp hạng của tuần sẽ bị xóa. Bảng tuần giữ lại nhưng được đặt về trạng thái draft với bộ tiêu chí mới.",
+            "Toàn bộ điểm, minh chứng và bản chốt xếp hạng của tuần sẽ bị xóa. Bảng tuần được giữ lại, chuyển về dự thảo và áp dụng bộ tiêu chí mới.",
             async () => {
               const result = await db.replaceWeeklyScoreSheetCriteria(
                 ctx.sheet.id,
@@ -4555,7 +4555,7 @@
 
         function forceDeleteRuleset(set) {
           confirmDestructive(
-            `Không thể hoàn tác. Bộ tiêu chí “${set.name || "đã chọn"}”, mọi bảng tuần dùng bộ này, điểm và snapshot xếp hạng liên quan sẽ bị xóa vĩnh viễn.`,
+            `Không thể hoàn tác. Bộ tiêu chí “${set.name || "đã chọn"}”, mọi bảng tuần dùng bộ này, điểm và bản chốt xếp hạng liên quan sẽ bị xóa vĩnh viễn.`,
             async () => {
               const result = await db.forceDeleteCriteriaSet(set.id);
               state.criteriaSetId = "";
@@ -5381,12 +5381,7 @@
               "Thông tin trường",
               "Các cơ sở",
               "Năm học",
-              "Danh sách lớp",
-              "Giáo viên chủ nhiệm",
-              "Bộ tiêu chí",
-              "Công việc định kỳ",
-              "Chế độ dữ liệu",
-              "Sẵn sàng sử dụng",
+              "Hoàn tất thiết lập",
             ];
             let body = "";
             if (step === 0)
@@ -5396,21 +5391,11 @@
             if (step === 2)
               body = `<div class="form-grid"><div class="field full"><label>Năm học</label><input id="wYear" value="${esc(data.year)}"></div><div class="field"><label>Bắt đầu</label><input type="date" id="wStart" value="${esc(data.start)}"></div><div class="field"><label>Kết thúc</label><input type="date" id="wEnd" value="${esc(data.end)}"></div></div>`;
             if (step === 3)
-              body = `<p>Thầy có thể nhập danh sách lớp ngay sau khi hoàn tất tại <strong>Thiết lập → Danh sách lớp</strong>.</p><div class="notice">Hệ thống hỗ trợ CSV và dán trực tiếp từ Excel, có xem trước và kiểm tra dòng lỗi.</div>`;
-            if (step === 4)
-              body = `<p>Thông tin tối thiểu gồm họ tên giáo viên và lớp phụ trách; số điện thoại/email là tùy chọn. Có thể cập nhật cùng danh sách lớp.</p>`;
-            if (step === 5)
-              body = `<div class="notice warn">Bộ tiêu chí mẫu chỉ mang tính tham khảo, cần nhà trường phê duyệt trước khi sử dụng.</div><label class="check-row"><input id="wUseCriteria" type="checkbox" checked> Giữ bộ tiêu chí mẫu để chỉnh sửa</label>`;
-            if (step === 6)
-              body = `<p>Thư viện đã có mẫu công việc tuần, tháng và năm học. Sau khi hoàn tất, vào <strong>Công việc và checklist → Thư viện mẫu</strong> để chọn.</p>`;
-            if (step === 7)
-              body = `<div class="notice"><strong>Lưu trữ máy chủ:</strong> mọi thao tác nghiệp vụ được gửi tới API của ứng dụng.</div><p class="muted">Có thể tạo tệp sao lưu, điểm khôi phục nội bộ và chọn thư mục sao lưu sau khi hoàn tất.</p>`;
-            if (step === 8)
-              body = `<div class="notice"><strong>Checklist mức sẵn sàng</strong><ul><li>${data.school ? "✓" : "○"} Tên trường</li><li>✓ ${data.campuses.length} cơ sở</li><li>✓ Năm học và danh sách tuần học</li><li>○ Danh sách lớp thật — có thể nhập sau</li><li>○ Bản sao lưu đầu tiên — tạo sau khi hoàn tất cấu hình</li></ul></div>`;
+              body = `<p>Có thể bổ sung lớp và giáo viên tại <strong>Thiết lập → Danh sách lớp</strong>, chọn công việc tại <strong>Công việc và checklist → Thư viện mẫu</strong>.</p><div class="notice warn">Kiểm tra và phê duyệt bộ tiêu chí mẫu trước khi dùng để chấm điểm.</div><p>Sau khi nhập dữ liệu, vào <strong>Sao lưu</strong> để tạo bản sao lưu ngoài thiết bị.</p>`;
             openModal(
-              `${step + 1}/9 • ${titles[step]}`,
-              `<div class="wizard-steps">${Array.from({ length: 9 }, (_, i) => `<span class="${i < step ? "done" : i === step ? "active" : ""}"></span>`).join("")}</div>${body}`,
-              `<button class="btn" id="wizardBack" ${step === 0 ? "disabled" : ""}>Quay lại</button><button class="btn" id="wizardSkip">${step === 8 ? "Để sau" : "Bỏ qua"}</button><button class="btn primary" id="wizardNext">${step === 8 ? "Hoàn tất" : "Tiếp tục"}</button>`,
+              `${step + 1}/4 • ${titles[step]}`,
+              `<div class="wizard-steps">${Array.from({ length: 4 }, (_, i) => `<span class="${i < step ? "done" : i === step ? "active" : ""}"></span>`).join("")}</div>${body}`,
+              `<button class="btn" id="wizardBack" ${step === 0 ? "disabled" : ""}>Quay lại</button><button class="btn" id="wizardSkip">${step === 3 ? "Để sau" : "Bỏ qua"}</button><button class="btn primary" id="wizardNext">${step === 3 ? "Hoàn tất" : "Tiếp tục"}</button>`,
               true,
             );
             $("#modalClose").style.display = "none";
@@ -5420,7 +5405,7 @@
               render();
             };
             $("#wizardSkip").onclick = () => {
-              if (step === 8) finish();
+              if (step === 3) finish();
               else {
                 capture();
                 step++;
@@ -5431,7 +5416,7 @@
               if (step === 0 && !$("#wSchool").value.trim())
                 return toast("Hãy nhập tên trường hoặc chọn Bỏ qua.", "bad");
               capture();
-              if (step < 8) {
+              if (step < 3) {
                 step++;
                 render();
               } else finish();
@@ -5540,7 +5525,7 @@
             const record = backupRecords[0];
             openModal(
               "Bản sao lưu đã ghi nhận",
-              `<div class="notice"><strong>${esc(record.name)}</strong></div><div class="split"><span>Hoàn tất</span><strong>${fmtDateTime(record.completed_at)}</strong></div><div class="split mt"><span>Phạm vi</span><strong>${esc({ quick: "Nhanh", full: "Đầy đủ", year: "Gói năm học", "academic-year": "Năm học" }[record.scope] || record.scope)}</strong></div><div class="split mt"><span>Dung lượng</span><strong>${formatBytes(record.size)}</strong></div><div class="split mt"><span>Mã kiểm tra</span><code>${esc(record.checksum)}</code></div><div class="notice warn mt">Đây là kết quả kiểm tra nhật ký và mã kiểm tra lúc tạo. Trình duyệt không thể tự đọc lại tệp đã tải xuống nếu thầy chưa chọn lại tệp.</div>`,
+              `<div class="notice"><strong>${esc(record.name)}</strong></div><div class="split"><span>Hoàn tất</span><strong>${fmtDateTime(record.completed_at)}</strong></div><div class="split mt"><span>Phạm vi</span><strong>${esc({ quick: "Nhanh", full: "Đầy đủ", year: "Gói năm học", "academic-year": "Năm học" }[record.scope] || record.scope)}</strong></div><div class="split mt"><span>Dung lượng</span><strong>${formatBytes(record.size)}</strong></div><div class="split mt"><span>Mã kiểm tra</span><code>${esc(record.checksum)}</code></div><div class="notice warn mt">Thông tin được ghi nhận lúc tạo bản sao lưu. Để kiểm tra tệp đã tải xuống, hãy chọn lại tệp.</div>`,
               `<button class="btn primary" id="closeBackupRecord">Đóng</button>`,
             );
             $("#closeBackupRecord").onclick = closeModal;
@@ -5591,7 +5576,7 @@
               );
               openModal(
                 "Chi tiết điểm khôi phục",
-                `<div class="notice">Điểm này không chứa dữ liệu tệp để tránh nhân đôi dung lượng.</div>${simpleTable(
+                `<div class="notice">Điểm khôi phục này không chứa tệp đính kèm.</div>${simpleTable(
                   ["Phân hệ", "Bản ghi"],
                   Object.entries(snapshot.counts || {})
                     .filter(([, count]) => count)
@@ -5620,7 +5605,7 @@
             );
           openModal(
             "Khôi phục điểm nội bộ",
-            `<div class="notice warn">Sẽ thay dữ liệu cấu trúc trong điểm <strong>${esc(snapshot.name)}</strong>. Dữ liệu tệp hiện tại được giữ vì điểm khôi phục không nhân đôi tệp.</div><p>${Number(snapshot.record_count || 0).toLocaleString("vi-VN")} bản ghi • ${fmtDateTime(snapshot.created_at)}</p>`,
+            `<div class="notice warn">Dữ liệu hiện tại sẽ được thay bằng dữ liệu tại điểm <strong>${esc(snapshot.name)}</strong>. Tệp đính kèm hiện tại được giữ nguyên.</div><p>${Number(snapshot.record_count || 0).toLocaleString("vi-VN")} bản ghi • ${fmtDateTime(snapshot.created_at)}</p>`,
             `<button class="btn" id="cancelInternalRestore">Hủy</button><button class="btn danger" id="confirmInternalRestore">Khôi phục</button>`,
           );
           $("#cancelInternalRestore").onclick = closeModal;
@@ -5777,7 +5762,7 @@
           try {
             let obj = JSON.parse(await file.text());
             if (obj.format === "TPT-ENCRYPTED-1") {
-              const password = await promptDialog("Nhập mật khẩu tệp sao lưu:");
+              const password = await promptDialog("Nhập mật khẩu đã đặt khi tạo tệp sao lưu.", "Mở tệp sao lưu");
               if (password === null) return;
               obj = JSON.parse(await decryptText(obj, password));
             }
@@ -5861,7 +5846,7 @@
             openModal(
               "Kiểm tra tệp phục hồi",
               `<div class="notice"><strong>Tệp hợp lệ.</strong> Chưa có dữ liệu nào bị thay đổi.</div>${identityWarnings.length ? `<div class="notice danger"><strong>Cảnh báo định danh:</strong> ${esc(identityWarnings.join("; "))}. Chỉ tiếp tục khi đây là dữ liệu cần chuyển trường/hồ sơ.</div>` : ""}<div class="split"><span>Ngày tạo</span><strong>${fmtDateTime(obj.exported_at)}</strong></div><div class="split mt"><span>Lược đồ</span><strong>${obj.schema} → ${APP.schema}</strong></div><div class="split mt"><span>Bản ghi</span><strong>${total.toLocaleString("vi-VN")}</strong></div><div class="split mt"><span>Tệp đã kiểm tra</span><strong>${files.length}</strong></div><div class="split mt"><span>Bản ghi mới / tệp mới hơn / giữ hiện tại</span><strong>${conflicts.newRows} / ${conflicts.incomingNewer} / ${conflicts.currentKept}</strong></div><div class="field mt"><label>Phương thức</label><select id="restoreMode"><option value="merge">Hợp nhất theo ID, phiên bản sửa đổi và thời điểm; mặc định giữ bản hiện tại khi không cũ hơn</option><option value="replace">Thay thế dữ liệu nghiệp vụ trong một giao dịch</option></select></div><div class="notice danger mt">Ứng dụng sẽ tạo điểm khôi phục nội bộ trước khi ghi. Điểm này không thay thế bản sao lưu ngoài thiết bị.</div>`,
-              `<button class="btn" id="cancelRestore">Hủy</button><button class="btn danger" id="confirmRestore">Xác nhận phục hồi</button>`,
+              `<button class="btn" id="cancelRestore">Hủy</button><button class="btn danger" id="confirmRestore">Khôi phục dữ liệu</button>`,
               true,
             );
             $("#cancelRestore").onclick = closeModal;
@@ -6048,7 +6033,7 @@
             showUserImport("teacher").catch((error) => toast(error.message, "bad"));
           if ($("#addSchool"))
             $("#addSchool").onclick = async () => {
-              const name = await promptDialog("Tên trường mới:");
+              const name = await promptDialog("Nhập tên trường cần thêm.", "Thêm trường");
               if (!name) return;
               try {
                 const school = await db.createSchool(name);
@@ -6805,7 +6790,7 @@
             ].filter(Boolean);
           openModal(
             `Đóng năm học ${year.name}`,
-            `${blockers.length ? `<div class="notice danger"><strong>Chưa đủ điều kiện đóng:</strong><ul>${blockers.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>Hãy xử lý hoặc xác nhận nghiệp vụ tại phân hệ tương ứng.</div>` : '<div class="notice"><strong>Đủ điều kiện kỹ thuật để đóng năm.</strong></div>'}<p>Khi xác nhận, ứng dụng tạo điểm khôi phục bảo vệ, báo cáo tổng kết chốt, gói năm học có mã kiểm tra rồi chuyển năm sang chỉ đọc.</p><label class="check-row"><input id="confirmCloseYearCheck" type="checkbox" ${blockers.length ? "disabled" : ""}> Tôi đã đối chiếu số liệu và hiểu gói tải xuống cần được lưu ngoài thiết bị.</label><div id="closeYearProgress" class="muted mt" role="status"></div>`,
+            `${blockers.length ? `<div class="notice danger"><strong>Chưa đủ điều kiện đóng:</strong><ul>${blockers.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>Hoàn tất các mục trên tại phân hệ tương ứng trước khi đóng năm học.</div>` : '<div class="notice"><strong>Có thể đóng năm học.</strong></div>'}<p>Khi xác nhận, ứng dụng tạo điểm khôi phục bảo vệ, báo cáo tổng kết chốt, gói năm học có mã kiểm tra rồi chuyển năm sang chỉ đọc.</p><label class="check-row"><input id="confirmCloseYearCheck" type="checkbox" ${blockers.length ? "disabled" : ""}> Tôi đã đối chiếu số liệu và hiểu gói tải xuống cần được lưu ngoài thiết bị.</label><div id="closeYearProgress" class="muted mt" role="status"></div>`,
             `<button class="btn" id="cancelCloseYear">Hủy</button><button class="btn danger" id="confirmCloseYear" ${blockers.length ? "disabled" : ""}>Chốt và đóng năm</button>`,
             true,
           );
@@ -7547,8 +7532,8 @@ async function removeClass(id) {
             if (
               dup &&
               !(await confirmDialog(
-                `${clean} trùng nội dung với tệp đã lưu. Chọn Đồng ý để giữ thêm một bản.`,
-                "Phát hiện tệp trùng",
+                `${clean} có nội dung giống một tệp đã lưu. Lưu thêm một bản?`,
+                "Lưu thêm bản trùng?",
               ))
             )
               continue;
