@@ -113,7 +113,7 @@
     );
   }
   const pageHead = (title, desc, actions = "") =>
-    `<div class="page-head"><div><h1>${esc(title)}</h1><p>${esc(desc)}</p></div><div class="page-actions">${actions}</div></div>`;
+    `<div class="page-head"><div><h1>${esc(title)}</h1>${desc ? `<p>${esc(desc)}</p>` : ""}</div><div class="page-actions">${actions}</div></div>`;
   function debounce(fn, ms) {
     let t;
     return (...a) => {

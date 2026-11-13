@@ -1430,7 +1430,7 @@
           setContent(
             pageHead(
               "Tổng quan",
-              "Thông tin cần hành động trong phạm vi đang chọn.",
+              "",
               canManage
                 ? `<button class="btn" data-go="reports">Tạo báo cáo</button><button class="btn primary" data-add="tasks">＋ Công việc</button>`
                 : "",
@@ -1498,7 +1498,7 @@
           setContent(
             pageHead(
               "Hôm nay",
-              "Tập trung công việc, lịch và ghi nhận nhanh trong ngày.",
+              "",
               `<button class="btn" id="finishDay">Kết thúc ngày</button><button class="btn primary" id="quickIncident">＋ Ghi nhận nhanh</button>`,
             ) +
               `
@@ -1570,7 +1570,7 @@
           setContent(
             pageHead(
               cfg.title,
-              cfg.desc,
+              "",
               `${key === "documents" ? "" : `<button class="btn" data-import-entity="${esc(key)}">Nhập hàng loạt</button>`}<button class="btn" data-export-entity="${esc(key)}">Xuất CSV</button><button class="btn primary" data-new-entity="${esc(key)}">＋ Thêm mới</button>`,
             ) +
               (key === "organization"
@@ -2579,7 +2579,7 @@
           setContent(
             pageHead(
               "Lịch hoạt động",
-              "Xem lịch tháng; cảnh báo thiếu địa điểm, phụ trách hoặc an toàn.",
+              "",
               `<button class="btn" id="importEvents">Nhập hàng loạt</button><button class="btn" onclick="window.print()">In lịch</button><button class="btn primary" id="newEvent">＋ Sự kiện</button>`,
             ) +
               `<div class="toolbar"><button class="btn small" id="prevMonth">‹</button><strong>Tháng ${m + 1}/${y}</strong><button class="btn small" id="nextMonth">›</button><button class="btn small" id="thisMonth">Hôm nay</button><span class="muted" style="margin-left:auto">${events.length} sự kiện trong phạm vi dữ liệu</span></div><div class="calendar-grid"><div class="dow">Thứ 2</div><div class="dow">Thứ 3</div><div class="dow">Thứ 4</div><div class="dow">Thứ 5</div><div class="dow">Thứ 6</div><div class="dow">Thứ 7</div><div class="dow">Chủ nhật</div>${cells
@@ -2679,7 +2679,7 @@
           setContent(
             pageHead(
               manager ? "Lỗi học sinh theo lớp" : "Lớp chủ nhiệm",
-              "Xem xếp hạng lớp và lọc ghi nhận theo học sinh trong tuần.",
+              "",
               '<button class="btn no-print" onclick="window.print()">In/Lưu PDF</button>',
             ) +
               `<article class="teacher-week-report"><div class="toolbar no-print">${manager ? `<label>Lớp <select id="teacherClassSelect">${data.classes.map((row) => `<option value="${esc(row.id)}" ${row.id === schoolClass?.id ? "selected" : ""}>${esc(row.class_name)}</option>`).join("")}</select></label>` : ""}<label>Tuần <select id="teacherWeekSelect">${data.weeks.map((week) => `<option value="${esc(week.id)}" ${week.id === data.week?.id ? "selected" : ""}>${esc(week.name)}${week.start_date ? ` (${fmtDate(week.start_date)} - ${fmtDate(week.end_date)})` : ""}</option>`).join("")}</select></label><button class="btn" id="teacherCurrentWeek" ${currentWeek ? "" : 'disabled title="Không có tuần học trong ngày hiện tại"'}>Tuần hiện tại</button><button class="btn" id="teacherPreviousWeek" ${previousWeek ? "" : 'disabled title="Chưa có tuần học trước đó"'}>Tuần trước (xem lại)</button></div><div class="card"><div class="card-head"><h2>${esc(schoolClass?.class_name || "Lớp chưa xác định")}</h2><span class="meta">${esc(data.week?.name || "Chưa chọn tuần")}</span></div><div class="card-body">${data.official ? "" : '<div class="notice warn">Bảng tuần chưa duyệt hoặc chưa khóa; chưa có xếp hạng chính thức.</div>'}${ranking ? `<div class="grid-3"><div class="split"><span>Hạng trong nhóm</span><strong>#${esc(ranking.rank)}</strong></div><div class="split"><span>Nhóm lớp</span><strong>${esc(ranking.class_group_name || "Chưa phân nhóm")}</strong></div><div class="split"><span>Tổng tuần</span><strong>${Number(ranking.total || 0).toFixed(1)} điểm</strong></div></div><div class="table-wrap mt"><table><thead><tr>${Object.keys(ranking.daily || {}).map((date) => `<th>${fmtDate(date)}</th>`).join("")}</tr></thead><tbody><tr>${Object.values(ranking.daily || {}).map((value) => `<td>${Number(value || 0).toFixed(1)}</td>`).join("")}</tr></tbody></table></div>` : '<div class="empty">Chưa có xếp hạng cho lớp trong tuần này.</div>'}</div></div><div class="card mt"><div class="card-head"><h2>Ghi nhận theo học sinh</h2><label class="no-print">Học sinh <select id="teacherStudentSelect"><option value="">Tất cả học sinh</option>${[...new Set(incidents.map((item) => item.person_name).filter(Boolean))].sort((a, b) => a.localeCompare(b, "vi")).map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join("")}</select></label><span class="meta">${incidents.length} dòng</span></div><div class="card-body"><div class="table-wrap"><table><thead><tr><th>Ngày</th><th>Họ và tên</th><th>Nội dung</th><th>Điểm</th></tr></thead><tbody>${incidents.map((item) => `<tr data-student-name="${esc(item.person_name || "")}"><td>${fmtDate(item.date)}</td><td>${esc(item.person_name || "—")}</td><td>${esc(item.rule || "—")}</td><td class="${Number(item.points) < 0 ? "negative" : Number(item.points) > 0 ? "positive" : ""}">${Number(item.points) > 0 ? "+" : ""}${Number(item.points || 0)}</td></tr>`).join("") || '<tr><td colspan="4" class="empty">Chưa có ghi nhận có tên trong tuần này.</td></tr>'}</tbody></table></div></div></div></article>`,
@@ -2723,7 +2723,7 @@
           setContent(
             pageHead(
               "Thi đua lớp",
-              "Nhập điểm từng ngày, duyệt, khóa và truy vết theo tuần.",
+              "",
               `${manager ? '<button class="btn" id="assignScoreGraders">Phân công Sao đỏ</button><button class="btn" id="criteriaConfig">Bộ tiêu chí</button>' : ""}<button class="btn" id="undoScore" ${state.lastScoreUndo && !["review", "approved", "locked"].includes(ctx.sheet?.status) ? "" : "disabled"}>↶ Hoàn tác</button>${manager && ctx.sheet && ctx.sheet.status !== "review" ? '<button class="btn danger" id="replaceScoreCriteria">Thay bộ tiêu chí</button><button class="btn danger" id="deleteScoreSheet">Xóa bảng tuần</button>' : ""}${manager && ctx.sheet?.status === "approved" ? '<button class="btn danger" id="unlockScoreSheet">Mở khóa bảng</button>' : ""}${manager && ["complete", "review"].includes(ctx.sheet?.status) ? `<button class="btn danger" id="scoreIncomplete">${ctx.sheet.status === "review" ? "Từ chối, yêu cầu kiểm tra lại" : "Đánh dấu chưa nhập đủ"}</button>` : ""}${manager ? `<button class="btn primary" id="scoreWorkflow">${workflowLabel(ctx.sheet)}</button>` : ""}`,
 
 
@@ -3808,7 +3808,7 @@
           setContent(
             pageHead(
               "Báo cáo",
-              "Tổng hợp số liệu đã xác nhận và truy ngược về bản ghi gốc.",
+              "",
               `<button class="btn" id="exportReportPackage">Gói báo cáo chốt</button><button class="btn" id="exportReportCsv">Xuất CSV</button><button class="btn" onclick="window.print()">In/Lưu PDF</button><button class="btn" id="saveReportDraft">Lưu nháp</button><button class="btn primary" id="finalizeReport">Chốt báo cáo</button>`,
             ) +
               `<div class="toolbar no-print"><select id="reportType"><option value="week">Báo cáo công tác tuần</option><option value="scores">Tổng hợp thi đua lớp</option><option value="faults">Chi tiết lỗi theo lớp</option><option value="fault-frequency">Thống kê tần suất lỗi</option><option value="tasks">Tiến độ công việc</option><option value="activities">Báo cáo hoạt động</option><option value="equipment">Báo cáo thiết bị</option></select><select id="reportPaper"><option value="landscape">A4 ngang</option><option value="portrait">A4 dọc</option></select><input id="reportRecipient" placeholder="Nơi nhận (tùy chọn)"><select id="reportSubmission"><option value="not_submitted">Chưa gửi</option><option value="submitted">Đã gửi</option><option value="accepted">Đã tiếp nhận</option></select><span class="muted">Số liệu nguồn không sửa tại báo cáo</span></div><div class="notice warn no-print"><strong>Nháp</strong> có thể tạo lại; <strong>báo cáo chốt</strong> lưu nội dung tĩnh, phiên bản, bộ lọc, mã kiểm tra và trạng thái gửi. Muốn sửa sau chốt phải tạo phiên bản mới.</div><article class="card" id="reportPreview"><div class="card-body">${await reportHTML("week", d)}</div></article><div class="card mt no-print"><div class="card-head"><h2>Phiên bản báo cáo đã lưu</h2><span class="meta">${saved.length} phiên bản</span></div><div class="card-body"><ul class="compact-list">${
@@ -5490,7 +5490,7 @@
           setContent(
             pageHead(
               "Sao lưu – khôi phục",
-              "Xuất, kiểm tra và khôi phục dữ liệu lưu trên máy chủ.",
+              "",
               `<button class="btn primary" id="backupNow">Tạo bản sao lưu</button>`,
             ) +
               `<div class="grid-3"><div class="card"><div class="card-head"><h2>Sao lưu gần nhất</h2></div><div class="card-body"><strong>${last ? fmtDateTime(last) : "Chưa có"}</strong><p>${overview.recordCount.toLocaleString("vi-VN")} bản ghi • ${attachmentCount} tệp</p><button class="btn small" id="verifyLastBackup" ${backupRecords.length ? "" : "disabled"}>Kiểm tra bản đã ghi nhận</button></div></div><div class="card"><div class="card-head"><h2>Phục hồi an toàn</h2></div><div class="card-body"><p>Kiểm tra định dạng, định danh, phiên bản và mã kiểm tra trước khi ghi.</p><button class="btn" id="restoreFile">Chọn tệp phục hồi</button></div></div><div class="card"><div class="card-head"><h2>Lưu trữ chính</h2></div><div class="card-body"><span class="badge blue">SQLite qua API máy chủ</span><p>Dữ liệu nghiệp vụ được lưu tập trung trên máy chủ.</p><small class="muted">Tệp xuất và thư mục sao lưu là các bản sao độc lập để phục hồi khi cần.</small></div></div></div><div class="notice warn mt"><strong>Phân biệt:</strong> tự lưu ghi lên máy chủ; điểm khôi phục bảo vệ trạng thái dữ liệu; bản sao lưu ngoài là tệp hoặc thư mục cục bộ; báo cáo chốt là hồ sơ nghiệp vụ bất biến.</div><div class="card mt"><div class="card-head"><h2>Ba phạm vi sao lưu ngoài</h2></div><div class="card-body">${simpleTable(
@@ -5934,7 +5934,7 @@
           setContent(
             pageHead(
               "Tài khoản của tôi",
-              "Cập nhật tên hiển thị hoặc đổi mật khẩu đăng nhập.",
+              "",
               "",
             ) +
               `<div class="grid-2"><div class="card"><div class="card-head"><h2>Thông tin cá nhân</h2></div><div class="card-body"><form id="ownAccountForm"><div class="field"><label>Tên đăng nhập</label><input value="${esc(user?.username || "")}" readonly aria-readonly="true"><small class="hint">Tên đăng nhập, vai trò, quyền và trường chỉ do Admin/Superadmin quản lý.</small></div><div class="field mt"><label class="required">Tên hiển thị</label><input name="displayName" value="${esc(user?.displayName || "")}" maxlength="120" required></div></form><button class="btn primary mt" id="saveOwnProfile">Lưu tên hiển thị</button></div></div><div class="card"><div class="card-head"><h2>Đổi mật khẩu</h2><span class="badge blue">${roleLabel}</span></div><div class="card-body"><form id="ownPasswordForm"><div class="field"><label class="required">Mật khẩu hiện tại</label><input name="currentPassword" type="password" autocomplete="current-password" minlength="10" required></div><div class="field mt"><label class="required">Mật khẩu mới</label><input name="password" type="password" autocomplete="new-password" minlength="10" required></div><div class="field mt"><label class="required">Nhập lại mật khẩu mới</label><input name="confirmPassword" type="password" autocomplete="new-password" minlength="10" required></div></form><div class="notice warn mt">Sau khi đổi mật khẩu, tất cả phiên đăng nhập của tài khoản sẽ kết thúc.</div><button class="btn primary mt" id="changeOwnPassword">Đổi mật khẩu</button></div></div></div>`,
@@ -6376,7 +6376,7 @@
           setContent(
             pageHead(
               "Trung tâm cấu hình",
-              "Điều chỉnh ứng dụng theo quy trình của từng trường mà không sửa mã nguồn.",
+              "",
               `<button class="btn" id="exportAllConfig">Xuất cấu hình</button><button class="btn" id="importAllConfig">Nhập cấu hình</button>`,
             ) +
               `<div class="settings-shell"><nav class="settings-menu" aria-label="Nhóm cấu hình">${SETTINGS_TABS.map(([id, label], i) => `<button data-setting-tab="${esc(id)}" class="${state.settingsTab === id ? "active" : ""}">${i + 1}. ${esc(label)}</button>`).join("")}</nav><section class="settings-panel" id="settingsPanel"><div class="empty">Đang tải cấu hình…</div></section></div>`,
@@ -7338,7 +7338,7 @@ async function removeClass(id) {
           setContent(
             pageHead(
               "Hồ sơ – minh chứng",
-              "Lưu trữ tài liệu, quản lý phiên bản và sắp xếp minh chứng theo thư mục.",
+              "",
               `<button class="btn" id="newFolder">Tạo thư mục</button><button class="btn primary" id="uploadDocuments" ${trash ? 'disabled title="Chọn một thư mục để tải tệp lên"' : ""}>Tải tệp lên</button>`,
             ) +
               `<div class="document-layout"><aside class="folder-pane" aria-label="Thư mục tài liệu"><strong>Thư mục</strong><div class="document-folder-list"><button class="folder-row ${activeFolder === "root" ? "active" : ""}" data-folder="root" aria-pressed="${activeFolder === "root"}">Tất cả tài liệu</button>${folders.map((f) => `<button class="folder-row ${activeFolder === f.id ? "active" : ""}" data-folder="${esc(f.id)}" aria-pressed="${activeFolder === f.id}">${esc(f.name)}</button>`).join("")}<button class="folder-row ${trash ? "active" : ""}" data-folder="trash" aria-pressed="${trash}">Thùng rác</button></div></aside><section class="document-library" aria-label="Thư viện tài liệu"><button type="button" class="drop-zone ${trash ? "hidden" : ""}" id="documentDrop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M12 16V4m-5 5 5-5 5 5M4 16v4h16v-4" stroke-linecap="round" stroke-linejoin="round"/></svg><span><strong>Kéo thả tệp vào đây hoặc bấm để chọn</strong><small>PDF, Word, Excel, PowerPoint, hình ảnh · Tải nhiều tệp hoặc dán ảnh từ bộ nhớ tạm</small></span></button><div class="document-library-head"><div><h2>${esc(folderName)}</h2><p>${visibleDocs.length} tài liệu${query || typeFilter !== "all" ? " phù hợp bộ lọc" : ""}</p></div><small class="muted">Dung lượng lưu trữ: ${formatBytes(used)}</small></div><div class="toolbar document-toolbar"><input class="grow" id="documentSearch" aria-label="Tìm tài liệu" value="${esc(query)}" placeholder="Tìm tên tài liệu, số hiệu hoặc thẻ…"><select id="documentTypeFilter" aria-label="Lọc loại tệp"><option value="all">Tất cả loại tệp</option><option value="pdf">PDF</option><option value="image">Hình ảnh</option><option value="office">Word / Excel / PowerPoint</option></select><button class="btn small" id="toggleDocumentView" aria-label="Chuyển sang ${state.documentView === "grid" ? "danh sách" : "dạng lưới"}">${state.documentView === "grid" ? "Xem danh sách" : "Xem dạng lưới"}</button></div><div class="${state.documentView === "grid" ? "file-grid" : "table-wrap"}" id="documentItems">${renderDocumentItems(visibleDocs, attachMap, trash)}</div></section></div>`,

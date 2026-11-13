@@ -218,3 +218,12 @@ test("fault reports export all deductions by class and rank occurrence counts", 
   controller.exportReportCSV("faults", data);
   assert.equal(csv.split("\r\n").length, 1);
 });
+
+test("page headings omit empty descriptions and preserve useful context and actions", () => {
+  const actions = '<button>Tạo báo cáo</button>';
+  const heading = utils.pageHead('Tổng quan', '', actions);
+  assert.match(heading, /<h1>Tổng quan<\/h1>/);
+  assert.ok(heading.includes(actions));
+  assert.doesNotMatch(heading, /<p>/);
+  assert.match(utils.pageHead('Tiến độ', 'Ngày <3>'), /<p>Ngày &lt;3&gt;<\/p>/);
+});
