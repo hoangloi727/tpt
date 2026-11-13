@@ -1563,7 +1563,7 @@
             pageHead(
               cfg.title,
               cfg.desc,
-              `<button class="btn" data-import-entity="${esc(key)}">Nhập hàng loạt</button><button class="btn" data-export-entity="${esc(key)}">Xuất CSV</button><button class="btn primary" data-new-entity="${esc(key)}">＋ Thêm mới</button>`,
+              `${key === "documents" ? "" : `<button class="btn" data-import-entity="${esc(key)}">Nhập hàng loạt</button>`}<button class="btn" data-export-entity="${esc(key)}">Xuất CSV</button><button class="btn primary" data-new-entity="${esc(key)}">＋ Thêm mới</button>`,
             ) +
               (key === "organization"
                 ? `<div class="tabs" aria-label="Đội/ban">${["", ...organizationUnits].map((unit) => `<button data-organization-unit="${esc(unit)}" class="${(state.organizationUnit || "") === unit ? "active" : ""}" aria-pressed="${(state.organizationUnit || "") === unit}">${esc(unit || "Tất cả")}</button>`).join("")}</div>`
@@ -1767,7 +1767,7 @@
             `<button class="btn" id="cancelForm">Hủy</button><button class="btn primary" id="saveEntity">Lưu</button>`,
             true,
           );
-          if (!id) enableFormBulkImport("#entityForm", {
+          if (!id && key !== "documents") enableFormBulkImport("#entityForm", {
             store: cfg.store,
             defaults: { school_year_id: state.yearId, semester_id: state.semesterId === "all" ? null : state.semesterId },
             prepare(data) {
@@ -7304,6 +7304,8 @@ async function removeClass(id) {
         }
 
         async function renderDocuments() {
+          const searchFocused = document.activeElement?.id === "documentSearch",
+            searchPosition = searchFocused ? document.activeElement.selectionStart : null;
           const [allDocs, folders, attachments] = await Promise.all([
               db.allIncludingDeleted("documents"), db.all("document_folders"), db.request("/attachments/metadata"),
             ]),
@@ -7336,19 +7338,31 @@ async function removeClass(id) {
                 .sort((a, b) => Number(a.version || 0) - Number(b.version || 0))
                 .map((a) => [a.document_id, a]),
             ),
-            used = attachments.reduce((n, a) => n + Number(a.size || 0), 0);
+            used = attachments.reduce((n, a) => n + Number(a.size || 0), 0),
+            typeFilter = state.documentTypeFilter || "all",
+            visibleDocs = docs.filter((doc) => documentFileMatchesType(attachMap.get(doc.id) || { extension: doc.type }, typeFilter)),
+            folderName = trash ? "Thùng rác" : folders.find((folder) => folder.id === activeFolder)?.name || "Tất cả tài liệu";
           setContent(
             pageHead(
               "Hồ sơ – minh chứng",
-              "Kho tài liệu ngoại tuyến: lưu tệp thật, thư mục, phiên bản, tìm kiếm và thùng rác.",
-              `<button class="btn" id="importDocumentRecords">Nhập hồ sơ hàng loạt</button><button class="btn" id="newFolder">＋ Thư mục</button><button class="btn primary" id="uploadDocuments">＋ Tải tệp</button>`,
+              "Lưu trữ tài liệu, quản lý phiên bản và sắp xếp minh chứng theo thư mục.",
+              `<button class="btn" id="newFolder">Tạo thư mục</button><button class="btn primary" id="uploadDocuments" ${trash ? 'disabled title="Chọn một thư mục để tải tệp lên"' : ""}>Tải tệp lên</button>`,
             ) +
-               `<div class="toolbar"><input class="grow" id="documentSearch" value="${esc(query)}" placeholder="Tìm tên, số hiệu, thẻ…"><select id="documentTypeFilter"><option value="all">Tất cả loại tệp</option><option value="pdf">PDF</option><option value="image">Hình ảnh</option><option value="office">Word/Excel/PowerPoint</option></select><button class="btn small" id="toggleDocumentView">${state.documentView === "grid" ? "☷ Danh sách" : "▦ Dạng lưới"}</button><span class="muted">${docs.length} tài liệu</span></div><div class="document-layout"><aside class="folder-pane"><strong>Thư mục</strong><button class="folder-row ${activeFolder === "root" ? "active" : ""}" data-folder="root">▧ Tất cả tài liệu</button>${folders.map((f) => `<button class="folder-row ${activeFolder === f.id ? "active" : ""}" data-folder="${esc(f.id)}">▸ ${esc(f.name)}</button>`).join("")}<button class="folder-row ${trash ? "active" : ""}" data-folder="trash">♲ Thùng rác</button><hr style="border:0;border-top:1px solid var(--line)"><small class="muted">Tổng dung lượng tệp</small><small>${formatBytes(used)}</small></aside><section><div class="drop-zone ${trash ? "hidden" : ""}" id="documentDrop">Kéo thả nhiều tệp vào đây hoặc dán ảnh từ bộ nhớ tạm</div><div class="${state.documentView === "grid" ? "file-grid" : "table-wrap"} mt" id="documentItems">${renderDocumentItems(docs, attachMap, trash)}</div></section></div>`,
+              `<div class="document-layout"><aside class="folder-pane" aria-label="Thư mục tài liệu"><strong>Thư mục</strong><div class="document-folder-list"><button class="folder-row ${activeFolder === "root" ? "active" : ""}" data-folder="root" aria-pressed="${activeFolder === "root"}">Tất cả tài liệu</button>${folders.map((f) => `<button class="folder-row ${activeFolder === f.id ? "active" : ""}" data-folder="${esc(f.id)}" aria-pressed="${activeFolder === f.id}">${esc(f.name)}</button>`).join("")}<button class="folder-row ${trash ? "active" : ""}" data-folder="trash" aria-pressed="${trash}">Thùng rác</button></div></aside><section class="document-library" aria-label="Thư viện tài liệu"><button type="button" class="drop-zone ${trash ? "hidden" : ""}" id="documentDrop"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M12 16V4m-5 5 5-5 5 5M4 16v4h16v-4" stroke-linecap="round" stroke-linejoin="round"/></svg><span><strong>Kéo thả tệp vào đây hoặc bấm để chọn</strong><small>PDF, Word, Excel, PowerPoint, hình ảnh · Tải nhiều tệp hoặc dán ảnh từ bộ nhớ tạm</small></span></button><div class="document-library-head"><div><h2>${esc(folderName)}</h2><p>${visibleDocs.length} tài liệu${query || typeFilter !== "all" ? " phù hợp bộ lọc" : ""}</p></div><small class="muted">Dung lượng lưu trữ: ${formatBytes(used)}</small></div><div class="toolbar document-toolbar"><input class="grow" id="documentSearch" aria-label="Tìm tài liệu" value="${esc(query)}" placeholder="Tìm tên tài liệu, số hiệu hoặc thẻ…"><select id="documentTypeFilter" aria-label="Lọc loại tệp"><option value="all">Tất cả loại tệp</option><option value="pdf">PDF</option><option value="image">Hình ảnh</option><option value="office">Word / Excel / PowerPoint</option></select><button class="btn small" id="toggleDocumentView" aria-label="Chuyển sang ${state.documentView === "grid" ? "danh sách" : "dạng lưới"}">${state.documentView === "grid" ? "Xem danh sách" : "Xem dạng lưới"}</button></div><div class="${state.documentView === "grid" ? "file-grid" : "table-wrap"}" id="documentItems">${renderDocumentItems(visibleDocs, attachMap, trash)}</div></section></div>`,
           );
           $("#documentSearch").oninput = debounce(() => {
             state.documentSearch = $("#documentSearch").value;
             renderDocuments();
           }, 220);
+          if (searchFocused) {
+            $("#documentSearch").focus();
+            $("#documentSearch").setSelectionRange(searchPosition, searchPosition);
+          }
+          $("#documentTypeFilter").value = typeFilter;
+          $("#documentTypeFilter").onchange = () => {
+            state.documentTypeFilter = $("#documentTypeFilter").value;
+            renderDocuments();
+          };
           $("#toggleDocumentView").onclick = () => {
             state.documentView =
               state.documentView === "grid" ? "list" : "grid";
@@ -7366,13 +7380,10 @@ async function removeClass(id) {
             await saveDocumentFiles([...e.target.files]);
             e.target.value = "";
           };
-          $("#importDocumentRecords").onclick = async () => {
-            await entityForm("documents");
-            $("#openBulkImport").click();
-          };
           $("#newFolder").onclick = createFolder;
           const dz = $("#documentDrop");
           if (dz) {
+            dz.onclick = () => $("#documentFileInput").click();
             dz.ondragover = (e) => {
               e.preventDefault();
               dz.classList.add("drag");
@@ -7385,7 +7396,7 @@ async function removeClass(id) {
             };
           }
           document.onpaste = async (e) => {
-            if (state.page !== "documents") return;
+            if (state.page !== "documents" || trash) return;
             const files = [...(e.clipboardData?.items || [])]
               .filter((x) => x.kind === "file")
               .map((x) => x.getAsFile())
@@ -7397,7 +7408,7 @@ async function removeClass(id) {
         }
         function renderDocumentItems(docs, attachMap, trash) {
           if (!docs.length)
-            return '<div class="empty">Chưa có tài liệu phù hợp.</div>';
+            return `<div class="empty document-empty"><strong>${state.documentSearch || state.documentTypeFilter && state.documentTypeFilter !== "all" ? "Không tìm thấy tài liệu" : trash ? "Thùng rác trống" : "Chưa có tài liệu"}</strong><span>${state.documentSearch || state.documentTypeFilter && state.documentTypeFilter !== "all" ? "Thử từ khóa khác hoặc chọn tất cả loại tệp." : trash ? "Tài liệu đã xóa sẽ xuất hiện ở đây để khôi phục." : "Tải tệp đầu tiên lên để bắt đầu lưu trữ hồ sơ và minh chứng."}</span></div>`;
           if (state.documentView === "list")
             return `<table><thead><tr><th>Tên tài liệu</th><th>Loại</th><th>Dung lượng</th><th>Cập nhật</th><th>Thao tác</th></tr></thead><tbody>${docs
               .map((d) => {
@@ -7408,9 +7419,16 @@ async function removeClass(id) {
           return docs
             .map((d) => {
               const a = attachMap.get(d.id);
-              return `<article class="file-card"><span class="file-icon">${fileIcon(a?.extension)}</span><strong class="file-name" title="${esc(d.name)}">${d.pinned ? "★ " : ""}${esc(d.name)}</strong><small>${esc((a?.extension || d.type || "Tệp").toUpperCase())} • ${formatBytes(a?.size || 0)}</small><div class="row-actions mt">${documentActions(d, trash)}</div></article>`;
+              return `<article class="file-card"><div class="file-preview" data-file-type="${esc(a?.extension || "")}"><svg aria-hidden="true" viewBox="0 0 40 48" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 2h16l10 10v34H6V2h2Z" fill="white" stroke-linejoin="round"/><path d="M24 2v11h10M12 24h16M12 30h16M12 36h10" stroke-linecap="round" stroke-linejoin="round"/></svg><span>${esc((a?.extension || "Hồ sơ").toUpperCase())}</span></div><div class="file-details"><strong class="file-name" title="${esc(d.name)}">${esc(d.name)}</strong>${d.pinned ? '<span class="badge">Đã ghim</span>' : ""}<small>${a ? formatBytes(a.size || 0) : "Chưa có tệp đính kèm"} · ${fmtDateTime(d.updated_at)}</small>${d.tags ? `<small class="file-tags">${esc(d.tags)}</small>` : ""}</div><div class="row-actions">${documentActions(d, trash)}</div></article>`;
             })
             .join("");
+        }
+        function documentFileMatchesType(attachment, type) {
+          const extension = String(attachment?.extension || "").toLowerCase();
+          if (type === "pdf") return extension === "pdf";
+          if (type === "image") return /^(png|jpe?g|webp|gif|svg)$/.test(extension);
+          if (type === "office") return /^(docx?|xlsx?|pptx?|csv)$/.test(extension);
+          return true;
         }
         function documentActions(d, trash) {
           return trash
@@ -7778,7 +7796,6 @@ async function removeClass(id) {
             `<form id="folderForm"><div class="field"><label class="required">Tên thư mục</label><input name="name" required maxlength="80"></div><div class="field mt"><label>Thư mục cha</label><select name="parent_id"><option value="root">Thư mục gốc</option>${folders.map((x) => `<option value="${esc(x.id)}" ${state.documentFolderId === x.id ? "selected" : ""}>${esc(x.name)}</option>`).join("")}</select></div></form>`,
             `<button class="btn" id="cancelFolder">Hủy</button><button class="btn primary" id="saveFolder">Tạo</button>`,
           );
-          enableFormBulkImport("#folderForm", { store: "document_folders", defaults: { active: true }, unique: [["parent_id", "name"]] });
           $("#cancelFolder").onclick = closeModal;
           $("#saveFolder").onclick = async () => {
             const f = $("#folderForm");

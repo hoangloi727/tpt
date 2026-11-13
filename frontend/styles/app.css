@@ -598,7 +598,7 @@
         border: 1px solid var(--line);
         border-radius: 8px;
         background: #fff;
-        color: var(--text);
+        color: var(--ink);
         padding: 8px 10px;
         text-align: left;
       }
@@ -1203,22 +1203,38 @@
       }
       .document-layout {
         display: grid;
-        grid-template-columns: 230px minmax(0, 1fr);
-        gap: 10px;
+        grid-template-columns: 210px minmax(0, 1fr);
+        gap: 20px;
+      }
+      .document-library {
+        min-width: 0;
       }
       .folder-pane {
+        align-self: start;
         background: #fff;
         border: 1px solid var(--line);
-        border-radius: 10px;
-        padding: 9px;
-        min-height: 420px;
+        border-radius: 12px;
+        padding: 12px;
+      }
+      .folder-pane > strong {
+        display: block;
+        margin: 2px 8px 10px;
+        font-size: 12px;
+        color: var(--muted);
       }
       .folder-row {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-        padding: 7px;
-        border-radius: 6px;
+        display: block;
+        width: 100%;
+        border: 0;
+        background: transparent;
+        color: var(--ink);
+        text-align: left;
+        padding: 10px;
+        border-radius: 7px;
+        min-height: 40px;
+      }
+      .folder-row:hover {
+        background: #f2f6fb;
       }
       .folder-row.active {
         background: var(--blue-soft);
@@ -1226,38 +1242,184 @@
         font-weight: 700;
       }
       .drop-zone {
-        border: 2px dashed #a9c7e2;
-        border-radius: 10px;
-        padding: 18px;
-        text-align: center;
-        background: #f8fbfe;
-        color: #526b82;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 18px;
+        width: 100%;
+        border: 1px dashed #8eb3d6;
+        border-radius: 12px;
+        padding: 26px 22px;
+        text-align: left;
+        background: #f4f8fd;
+        color: #294b70;
+        font: inherit;
       }
+      .drop-zone > svg {
+        flex: 0 0 32px;
+        width: 32px;
+        height: 32px;
+        color: var(--blue);
+      }
+      .drop-zone strong,
+      .drop-zone small {
+        display: block;
+      }
+      .drop-zone strong {
+        font-size: 15px;
+      }
+      .drop-zone small {
+        margin-top: 6px;
+        line-height: 1.5;
+      }
+      .drop-zone:hover,
       .drop-zone.drag {
         border-color: var(--blue);
         background: var(--blue-soft);
       }
+      .document-library-head {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 14px;
+        margin: 24px 0 14px;
+      }
+      .document-library-head h2 {
+        margin: 0;
+        font-size: 18px;
+        overflow-wrap: anywhere;
+      }
+      .document-library-head p {
+        margin: 4px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .document-toolbar {
+        margin-bottom: 16px;
+      }
       .file-grid {
         display: grid;
-        grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-        gap: 9px;
+        grid-template-columns: repeat(auto-fill, minmax(min(100%, 230px), 1fr));
+        gap: 14px;
       }
       .file-card {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
         background: #fff;
         border: 1px solid var(--line);
-        border-radius: 9px;
-        padding: 10px;
+        border-radius: 12px;
+        padding: 14px;
+        min-width: 0;
+      }
+      .file-card:hover {
+        border-color: #8eb3d6;
+      }
+      .file-preview {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        min-height: 92px;
+        border-radius: 8px;
+        background: #f1f6fc;
+        color: #365c85;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+      }
+      .file-preview svg {
+        width: 36px;
+        height: 44px;
+      }
+      .file-preview[data-file-type="pdf"] {
+        color: #9f3541;
+        background: #fcf2f3;
+      }
+      .file-preview[data-file-type="xlsx"],
+      .file-preview[data-file-type="xls"],
+      .file-preview[data-file-type="csv"] {
+        color: #28654d;
+        background: #edf7f1;
+      }
+      .file-details {
+        flex: 1;
         min-width: 0;
       }
       .file-card .file-name {
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        overflow: hidden;
+        white-space: normal;
+        overflow-wrap: anywhere;
+        margin: 0 0 8px;
+        line-height: 1.5;
+      }
+      .file-details small {
         display: block;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.6;
+      }
+      .file-details .badge {
+        margin-bottom: 6px;
+      }
+      .file-details .file-tags {
+        margin-top: 4px;
         white-space: nowrap;
         overflow: hidden;
         text-overflow: ellipsis;
-        margin: 5px 0;
       }
-      .file-icon {
-        font-size: 25px;
+      .file-card > .row-actions {
+        padding-top: 10px;
+        border-top: 1px solid var(--line);
+        gap: 16px;
+      }
+      .document-empty {
+        grid-column: 1 / -1;
+        display: grid;
+        gap: 8px;
+        padding: 54px 20px;
+        background: #fff;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+      }
+      .document-empty strong {
+        color: var(--ink);
+        font-size: 15px;
+      }
+      .document-empty span {
+        line-height: 1.6;
+      }
+      @media (min-width: 851px) {
+        body:not(.sidebar-collapsed) .document-layout {
+          grid-template-columns: minmax(0, 1fr);
+        }
+        body:not(.sidebar-collapsed) .document-layout > .folder-pane {
+          display: none;
+        }
+      }
+      @media (max-width: 850px) {
+        .document-folder-list {
+          display: flex;
+          gap: 4px;
+          overflow-x: auto;
+          scrollbar-width: thin;
+        }
+        .document-folder-list .folder-row {
+          flex: 0 0 auto;
+          width: auto;
+          white-space: nowrap;
+        }
+        .document-library-head {
+          align-items: start;
+          flex-wrap: wrap;
+        }
+        .drop-zone {
+          padding: 20px 16px;
+          gap: 12px;
+        }
       }
       .storage-meter {
         height: 9px;
