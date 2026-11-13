@@ -517,7 +517,11 @@
         function bindActivation() {
           $("#toggleActivationCode").onclick = () => {
             const input = $("#activationCode");
-            input.type = input.type === "password" ? "text" : "password";
+            const visible = input.type === "password";
+            input.type = visible ? "text" : "password";
+            $("#toggleActivationCode").setAttribute("aria-pressed", String(visible));
+            $("#toggleActivationCode").setAttribute("aria-label", visible ? "Ẩn mật khẩu" : "Hiện mật khẩu");
+            $("#passwordEyeSlash").classList.toggle("hidden", !visible);
           };
           $("#activationForm").onsubmit = async (e) => {
             e.preventDefault();

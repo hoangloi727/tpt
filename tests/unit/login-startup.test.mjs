@@ -164,3 +164,27 @@ test("score subtabs reuse context and calculate rankings only once", async () =>
   assert.equal(entries,2);
   assert.ok(buttons.every(button=>!button.disabled));
 });
+
+test("password eye toggles visibility and its accessible state", () => {
+  const input = { type: "password", value: "unchanged" };
+  const attributes = {};
+  const toggle = { setAttribute: (name, value) => { attributes[name] = value; } };
+  let slashHidden = true;
+  const nodes = {
+    '#activationCode': input,
+    '#toggleActivationCode': toggle,
+    '#passwordEyeSlash': { classList: { toggle: (_name, hidden) => { slashHidden = hidden; } } },
+    '#activationForm': {},
+  };
+  const context = vm.createContext({ $: id => nodes[id] });
+  const code = source.slice(source.indexOf("        function bindActivation()"), source.indexOf("        function updateActivationMode()"));
+  vm.runInContext(code + "\nbindActivation();", context);
+  for (const visible of [true, false]) {
+    toggle.onclick();
+    assert.equal(input.type, visible ? 'text' : 'password');
+    assert.equal(attributes['aria-pressed'], String(visible));
+    assert.equal(attributes['aria-label'], visible ? 'Ẩn mật khẩu' : 'Hiện mật khẩu');
+    assert.equal(slashHidden, !visible);
+    assert.equal(input.value, 'unchanged');
+  }
+});

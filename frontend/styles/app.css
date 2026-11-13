@@ -1097,16 +1097,37 @@
       }
       .password-wrap {
         display: grid;
-        grid-template-columns: 1fr 42px;
+        grid-template-columns: minmax(0, 1fr) 42px;
+        border: 1px solid #cbd7e3;
+        border-radius: 7px;
+        background: #fff;
       }
-      .password-wrap input {
-        border-radius: 8px 0 0 8px;
+      .password-wrap:focus-within {
+        outline: 3px solid rgba(11, 107, 203, 0.35);
+        outline-offset: 2px;
+      }
+      .field .password-wrap input {
+        min-width: 0;
+        border: 0;
+        border-radius: 7px 0 0 7px;
+      }
+      .password-wrap input:focus-visible {
+        outline: none;
       }
       .password-wrap button {
-        border: 1px solid #cbd7e3;
-        border-left: 0;
+        display: grid;
+        place-items: center;
+        border: 0;
+        color: var(--muted);
+        background: transparent;
+        border-radius: 0 7px 7px 0;
+      }
+      .password-wrap button:hover {
+        color: var(--blue);
         background: #f7fafc;
-        border-radius: 0 8px 8px 0;
+      }
+      .password-wrap button:focus-visible {
+        outline-offset: -3px;
       }
       .activation-status {
         min-height: 22px;
