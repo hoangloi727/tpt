@@ -316,10 +316,10 @@
           }
           updateLabel() {
             const el = $("#sessionChip");
-            if (el)
-              el.textContent = state.user
-                ? `${state.user.displayName} • ${state.user.role === "superadmin" ? "Superadmin" : state.user.role === "admin" ? "Admin" : state.user.role === "teacher" ? "Giáo viên" : "Sao đỏ"}`
-                : `Khóa sau ${state.unlockTimeoutMinutes} phút`;
+            if (el) {
+              el.textContent = state.user?.displayName || state.user?.username || "Tài khoản";
+              el.title = el.textContent;
+            }
           }
           async lock(message = "Ứng dụng đã khóa.") {
             if (
@@ -331,6 +331,8 @@
             state.setupRequired = false;
             state.unlocked = false;
             await cancelScheduledMaintenance();
+            const accountMenu = $("#accountMenu");
+            if (accountMenu) accountMenu.open = false;
             resetSessionState();
             db?.disconnectMemory?.();
             closeModal();
@@ -768,7 +770,29 @@
           }
           document.title = `${schoolName} - Trợ lý Tổng phụ trách Đội`;
         }
+        function bindAccountMenu() {
+          const menu = $("#accountMenu"), trigger = menu.querySelector("summary");
+          $("#editPersonalInfo").onclick = () => {
+            menu.open = false;
+            return go("account");
+          };
+          $("#logoutMenu").onclick = () => {
+            menu.open = false;
+            return sessionLock.lock("Đã đăng xuất. Hãy đăng nhập để tiếp tục.");
+          };
+          document.addEventListener("click", (event) => {
+            if (menu.open && !menu.contains(event.target)) menu.open = false;
+          });
+          menu.addEventListener("keydown", (event) => {
+            if (event.key === "Escape" && menu.open) {
+              event.preventDefault();
+              menu.open = false;
+              trigger.focus();
+            }
+          });
+        }
         function bindShell() {
+          bindAccountMenu();
           new MutationObserver(syncNavChildren).observe($("#content"), {
             subtree: true,
             childList: true,
@@ -5943,12 +5967,10 @@
             pageHead(
               "Tài khoản của tôi",
               "Cập nhật tên hiển thị hoặc đổi mật khẩu đăng nhập.",
-              '<button class="btn danger" id="logoutAccount">Đăng xuất</button>',
+              "",
             ) +
               `<div class="grid-2"><div class="card"><div class="card-head"><h2>Thông tin cá nhân</h2></div><div class="card-body"><form id="ownAccountForm"><div class="field"><label>Tên đăng nhập</label><input value="${esc(user?.username || "")}" readonly aria-readonly="true"><small class="hint">Tên đăng nhập, vai trò, quyền và trường chỉ do Admin/Superadmin quản lý.</small></div><div class="field mt"><label class="required">Tên hiển thị</label><input name="displayName" value="${esc(user?.displayName || "")}" maxlength="120" required></div></form><button class="btn primary mt" id="saveOwnProfile">Lưu tên hiển thị</button></div></div><div class="card"><div class="card-head"><h2>Đổi mật khẩu</h2><span class="badge blue">${roleLabel}</span></div><div class="card-body"><form id="ownPasswordForm"><div class="field"><label class="required">Mật khẩu hiện tại</label><input name="currentPassword" type="password" autocomplete="current-password" minlength="10" required></div><div class="field mt"><label class="required">Mật khẩu mới</label><input name="password" type="password" autocomplete="new-password" minlength="10" required></div><div class="field mt"><label class="required">Nhập lại mật khẩu mới</label><input name="confirmPassword" type="password" autocomplete="new-password" minlength="10" required></div></form><div class="notice warn mt">Sau khi đổi mật khẩu, tất cả phiên đăng nhập của tài khoản sẽ kết thúc.</div><button class="btn primary mt" id="changeOwnPassword">Đổi mật khẩu</button></div></div></div>`,
           );
-          $("#logoutAccount").onclick = () =>
-            sessionLock.lock("Đã đăng xuất. Hãy đăng nhập để tiếp tục.");
           $("#saveOwnProfile").onclick = async () => {
             const form = $("#ownAccountForm");
             if (!form.reportValidity()) return;

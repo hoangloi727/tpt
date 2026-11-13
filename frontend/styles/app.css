@@ -2128,3 +2128,115 @@
       .modal-layer:has(#bulkText) .modal {
         max-width: calc(100vw - 10px);
       }
+
+      .account-menu {
+        position: relative;
+        z-index: 1;
+        margin-left: auto;
+        min-width: 0;
+        max-width: 190px;
+      }
+      .account-menu > summary {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        min-height: 38px;
+        padding: 7px 9px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        color: var(--ink);
+        cursor: pointer;
+        list-style: none;
+      }
+      .account-menu > summary::-webkit-details-marker {
+        display: none;
+      }
+      .account-menu > summary:hover,
+      .account-menu[open] > summary {
+        background: var(--blue-soft);
+        color: var(--blue2);
+      }
+      .account-menu svg {
+        width: 20px;
+        height: 20px;
+        flex: 0 0 auto;
+      }
+      .account-menu .account-chevron {
+        width: 14px;
+        height: 14px;
+      }
+      .account-name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        font-size: 12px;
+        font-weight: 650;
+      }
+      .account-dropdown {
+        position: absolute;
+        top: calc(100% + 8px);
+        right: 0;
+        width: 250px;
+        max-width: calc(100vw - 14px);
+        padding: 6px;
+        background: #fff;
+        border-radius: 10px;
+        box-shadow: 0 8px 28px rgba(9, 22, 36, 0.18);
+      }
+      .account-dropdown button {
+        display: block;
+        width: 100%;
+        min-height: 44px;
+        padding: 10px 12px;
+        border: 0;
+        border-radius: 6px;
+        background: transparent;
+        color: var(--ink);
+        text-align: left;
+      }
+      .account-dropdown button:hover {
+        background: var(--blue-soft);
+      }
+      .account-dropdown #logoutMenu {
+        color: var(--red);
+      }
+      .topbar #schoolSelect {
+        flex: 0 1 220px;
+        width: 220px;
+        min-width: 120px;
+        max-width: 220px;
+      }
+      .topbar .searchbox {
+        min-width: 110px;
+      }
+      @media (min-width: 851px) {
+        .topbar .context-select {
+          flex-shrink: 1;
+          min-width: 75px;
+        }
+      }
+      @media (max-width: 520px) {
+        :root {
+          --top: 106px;
+        }
+        .topbar {
+          flex-wrap: wrap;
+        }
+        .topbar .searchbox {
+          min-width: 0;
+          order: 1;
+          flex: 1 0 100%;
+          max-width: none;
+        }
+        .account-menu {
+          max-width: calc(100vw - 235px);
+        }
+        .account-menu > summary {
+          min-height: 44px;
+          gap: 5px;
+          padding: 7px;
+        }
+        .account-menu > summary > svg:first-child {
+          display: none;
+        }
+      }

@@ -157,11 +157,20 @@
         </div>
         <button class="btn primary" id="quickAdd">＋ Thêm nhanh</button>
         <div class="status-line">
-          <span class="session-chip" id="sessionChip">Khóa sau 10 phút</span>
-          <span class="save-state" id="saveState">Chưa thay đổi</span
-          ><span class="dot" id="networkDot"></span
-          ><span id="networkText">Trực tuyến</span>
+          <span class="dot" id="networkDot"></span>
+          <span id="networkText">Trực tuyến</span>
         </div>
+        <details class="account-menu" id="accountMenu">
+          <summary>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 21v-2a7 7 0 0 1 14 0v2" stroke-linecap="round"/></svg>
+            <span class="account-name" id="sessionChip">Tài khoản</span>
+            <svg class="account-chevron" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="m4 6 4 4 4-4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </summary>
+          <div class="account-dropdown">
+            <button type="button" id="editPersonalInfo">Chỉnh sửa thông tin cá nhân</button>
+            <button type="button" id="logoutMenu">Đăng xuất</button>
+          </div>
+        </details>
       </header>
       <main class="content" id="content" tabindex="-1"></main>
     </div>
