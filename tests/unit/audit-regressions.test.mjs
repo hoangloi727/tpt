@@ -458,7 +458,7 @@ test("class incident view lets managers switch classes and keeps teachers in the
 });
 
 test("class incident UI filters students and retains class selection when changing weeks", async () => {
-  const source = appSource.slice(appSource.indexOf("async function renderTeacherClass("), appSource.indexOf("async function renderScores("));
+  const source = appSource.slice(appSource.indexOf("function teacherViolationChart("), appSource.indexOf("async function renderScores("));
   const elements = new Map(), requests = [], rows = ["Student A", "Student B"].map(studentName => ({ dataset: { studentName } }));
   let html;
   const weeks = [{ id: "week", name: "Week", start_date: "2026-09-14", end_date: "2026-09-20" }];

@@ -910,6 +910,11 @@ export class SqliteRepository {
       throw error;
     }
     row.class_ids = [...new Set(row.class_ids.filter(Boolean))];
+    if (row.class_ids.length > 1) {
+      const error = new Error("Mỗi Sao đỏ chỉ được phân công chấm một lớp.");
+      error.status = 400;
+      throw error;
+    }
     if (row.deleted_at) return;
     const duplicate = draft.stores.score_grader_assignments.find(
       (assignment) =>

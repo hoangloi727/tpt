@@ -20,8 +20,8 @@ test("grader import replaces assignments, transfers ownership and commits swaps 
   const users = ["a", "b", "c"].map((id) => ({ id: `user-${id}`, role: "user", graderClassId: id }));
   await repository.bulkPut("classes", classes, options);
   await repository.bulkPut(store, [
-    { id: "assignment-a", user_id: "user-a", school_year_id: "year", class_ids: ["b", "d"] },
-    { id: "assignment-b", user_id: "user-b", school_year_id: "year", class_ids: ["a", "e"] },
+    { id: "assignment-a", user_id: "user-a", school_year_id: "year", class_ids: ["b"] },
+    { id: "assignment-b", user_id: "user-b", school_year_id: "year", class_ids: ["a"] },
     { id: "assignment-c", user_id: "user-c", school_year_id: "year", class_ids: ["c"] },
     { id: "other-year", user_id: "user-a", school_year_id: "other", class_ids: [] },
   ], options);
@@ -29,22 +29,24 @@ test("grader import replaces assignments, transfers ownership and commits swaps 
   const original = repository.all(store);
   const transfer = importRows([["a", "a"]]);
   assert.equal(transfer.parsed[0].errors.length, 0);
-  assert.deepEqual(transfer.changes.map((row) => [row.id, row.class_ids]), [["assignment-a", ["a"]], ["assignment-b", ["e"]]]);
+  assert.deepEqual(transfer.changes.map((row) => [row.id, row.class_ids]), [["assignment-a", ["a"]], ["assignment-b", []]]);
   await repository.bulkPut(store, transfer.changes, options);
   assert.deepEqual(repository.all(store).find((row) => row.id === "assignment-c"), original[2]);
   assert.deepEqual(repository.all(store).find((row) => row.id === "other-year"), original[3]);
-  const swap = importRows([["a", "e"], ["b", "a"], ["a", "d"]]);
+  const swap = importRows([["a", "e"], ["b", "a"]]);
   await repository.bulkPut(store, swap.changes, options);
-  assert.deepEqual(repository.all(store).find((row) => row.id === "assignment-a").class_ids, ["e", "d"]);
+  assert.deepEqual(repository.all(store).find((row) => row.id === "assignment-a").class_ids, ["e"]);
   assert.deepEqual(repository.all(store).find((row) => row.id === "assignment-b").class_ids, ["a"]);
   assert.deepEqual(importRows([["a", "d"], ["b", "d"]]).changes, []);
   assert.deepEqual(importRows([["missing", "d"]]).changes, []);
+  assert.deepEqual(importRows([["a", "d"], ["a", "e"]]).changes, []);
   const beforeFailure = structuredClone(repository.state);
   const owner = repository.all(store).find((row) => row.id === "assignment-a");
   await assert.rejects(repository.bulkPut(store, [{ ...owner, class_ids: ["a"] }], options), { status: 409 });
   assert.deepEqual(repository.state, beforeFailure);
   await assert.rejects(repository.bulkPut(store, [{ ...owner, class_ids: ["missing"] }], options), { status: 400 });
   await assert.rejects(repository.bulkPut(store, [{ ...owner, revision: owner.revision - 1 }], options), { status: 409 });
+  await assert.rejects(repository.bulkPut(store, [{ ...owner, class_ids: ["d", "e"] }], options), { status: 400 });
   assert.deepEqual(repository.state, beforeFailure);
   const reopened = await new SqliteRepository(await new SqliteDatabase(join(directory, "test.sqlite")).open(), join(directory, "absent.json")).open();
   assert.deepEqual(reopened.all(store), repository.all(store));

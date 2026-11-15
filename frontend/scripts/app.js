@@ -2160,38 +2160,11 @@
                 : [],
             ),
             expected = expectedCriterionIds.size,
-            classColumns = [
-              ["todo", "Chưa chấm"],
-              ["doing", "Đang chấm"],
-              ["done", "Hoàn thành"],
-            ],
-            classProgress = classes
-              .filter(
-                (schoolClass) =>
-                  schoolClass.active !== false && state.scoreClassIds.has(schoolClass.id),
-              )
-              .map((schoolClass) => {
-                const filled = new Set(
-                  entries
-                    .filter(
-                      (entry) =>
-                        entry.sheet_id === sheet?.id &&
-                        entry.class_id === schoolClass.id &&
-                        entry.entry_date === scoreDate &&
-                        expectedCriterionIds.has(scoreEntryCriterionId(entry)),
-                    )
-                    .map((entry) => scoreEntryCriterionId(entry)),
-                ).size;
-                return {
-                  ...schoolClass,
-                  filled,
-                  status: !filled ? "todo" : filled === expected ? "done" : "doing",
-                };
-              }),
+            classProgress = classes.filter((row) => row.active !== false && state.scoreClassIds.has(row.id)),
             overdueDays =
               currentWeek && sheet && expected
                 ? scoreWeekdays(currentWeek, sheet)
-                    .filter((day) => day.date < scoreDate)
+                    .filter((day) => day.date <= scoreDate)
                     .map((day) => ({
                       ...day,
                       items: classProgress.flatMap((schoolClass) => {
@@ -2214,27 +2187,16 @@
                     .filter((day) => day.items.length)
                 : [];
           if (currentWeek) state.weekId = currentWeek.id;
-          if (!overdueDays.some((day) => day.date === state.overdueScoreDate))
-            state.overdueScoreDate = overdueDays.at(-1)?.date || "";
-          const selectedOverdueDay = overdueDays.find(
-            (day) => day.date === state.overdueScoreDate,
-          );
           setContent(
-            pageHead(
-              "Tổng quan Sao đỏ",
-              `Ngày ${fmtDate(scoreDate)} · Chọn Chấm điểm để ghi nhận nề nếp cho các lớp được phân công.`,
-              state.scoreClassIds.size ? '<button class="btn primary" data-go="scores">Chấm điểm hôm nay</button>' : "",
-            ) +
-              `${!sheet ? '<div class="notice warn mb">Admin chưa khởi tạo bảng chấm điểm cho tuần này.</div>' : ""}${overdueDays.length ? `<section class="card mb"><div class="card-head"><h2>Quá hạn chấm điểm • ${esc(currentWeek?.name || "Tuần đang chọn")}</h2><span class="badge red">${new Set(overdueDays.flatMap((day) => day.items.map((item) => item.id))).size} lớp cần chấm</span></div><div class="card-body"><div class="tabs">${overdueDays.map((day) => `<button data-overdue-score-date="${esc(day.date)}" class="${day.date === state.overdueScoreDate ? "active" : ""}">${esc(day.label)} ${fmtDate(day.date)} <span class="badge red">${day.items.length}</span></button>`).join("")}</div><div class="grid-3 mt">${selectedOverdueDay.items.map((item) => `<article class="task-card"><strong>${esc(item.class_name)}</strong><small class="muted">${item.filled}/${expected} tiêu chí đã chấm</small></article>`).join("")}</div></div></section>` : ""}<div class="role-workspace-intro"><h2>Các lớp được phân công</h2><p>Theo dõi lớp chưa chấm, đang chấm và đã hoàn thành trong ngày.</p></div><div class="kanban score-status-kanban">${classColumns.map(([status, label]) => { const items = classProgress.filter((schoolClass) => schoolClass.status === status); return `<section class="kanban-col"><h3>${label} • ${items.length}</h3>${items.map((schoolClass) => `<article class="task-card"><strong>${esc(schoolClass.class_name)}</strong><small class="muted">${expected ? `${schoolClass.filled}/${expected} tiêu chí đã chấm` : "Chưa có tiêu chí áp dụng"}</small></article>`).join("") || '<div class="empty">Không có lớp.</div>'}</section>`; }).join("")}</div>`,
+            pageHead("Ngày chưa chấm", `${classProgress.map((row) => row.class_name).join(", ") || "Chưa được phân công lớp"} · ${currentWeek?.name || "Tuần đang chọn"}`) +
+            `${!sheet ? '<div class="notice warn">Admin chưa khởi tạo bảng chấm điểm cho tuần này.</div>' : !expected ? '<div class="notice warn">Chưa có tiêu chí áp dụng.</div>' : !classProgress.length ? '<div class="empty">Bạn chưa được phân công lớp. Hãy liên hệ Admin.</div>' : overdueDays.length ? `<div class="card"><div class="card-head"><h2>Cần hoàn thành</h2><span class="badge">${overdueDays.length} ngày</span></div><div class="card-body">${overdueDays.map((day) => `<div class="split mb"><div><strong>${esc(day.label)} · ${fmtDate(day.date)}</strong><br><small>${day.items.map((item) => `${esc(item.class_name)}: ${item.filled}/${expected} tiêu chí`).join(" · ")}</small></div><button class="btn primary" data-pending-score-date="${esc(day.date)}">${day.items.some((item) => item.filled) ? "Chấm tiếp" : "Chấm điểm"}</button></div>`).join("")}</div></div>` : '<div class="empty">Đã chấm đủ các ngày đến hôm nay trong tuần này.</div>'}`,
           );
-          bindCommonActions();
-          $$('[data-overdue-score-date]').forEach(
-            (button) =>
-              (button.onclick = () => {
-                state.overdueScoreDate = button.dataset.overdueScoreDate;
-                renderSaoDoScoreDashboard();
-              }),
-          );
+          $$('[data-pending-score-date]').forEach((button) => {
+            button.onclick = () => {
+              state.scoreDate = button.dataset.pendingScoreDate;
+              go("scores");
+            };
+          });
           clearTimeout(state.dailyDashboardTimer);
           const nextDay = new Date();
           nextDay.setHours(24, 0, 1, 0);
@@ -2656,6 +2618,17 @@
           };
         }
 
+        function teacherViolationChart(incidents, field) {
+          const counts = new Map();
+          for (const item of incidents) {
+            if (!(Number(item.points) < 0)) continue;
+            const label = item[field] || (field === "person_name" ? "Chưa ghi tên" : "Chưa rõ lỗi");
+            counts.set(label, (counts.get(label) || 0) + 1);
+          }
+          const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
+          return total ? `<p class="muted">${total} lượt vi phạm · Tỉ lệ theo số lượt</p><ul class="teacher-chart-bars">${[...counts].sort((a, b) => b[1] - a[1]).map(([label, count]) => `<li><div class="split"><span>${esc(label)}</span><strong>${count} · ${(count / total * 100).toFixed(1)}%</strong></div><meter min="0" max="${total}" value="${count}" aria-label="${esc(label)}: ${count} trên ${total} lượt">${count}/${total}</meter></li>`).join("")}</ul>` : '<p class="empty">Chưa có vi phạm trừ điểm trong tuần này.</p>';
+        }
+
         async function renderTeacherClass(classId = "") {
           const manager = ["admin", "superadmin"].includes(state.user?.role);
           let data = await db.teacherClassWeek(state.yearId, state.weekId, classId);
@@ -2681,13 +2654,20 @@
           const ranking = data.ranking,
             schoolClass = data.assignment.class,
             incidents = data.incidents || [];
+          const recentWeeks = weeks.filter((week) => data.week && week.start_date <= data.week.start_date).slice(-5);
+          const history = await Promise.all(recentWeeks.map(async (week) => {
+            const report = week.id === data.week?.id ? data : await db.teacherClassWeek(state.yearId, week.id, schoolClass?.id);
+            return { week, rank: report.official ? report.ranking?.rank : null };
+          }));
+          const rankMax = Math.max(1, ...history.map((item) => Number(item.rank) || 0));
+          const charts = `<section class="teacher-trends"><h2>Xếp hạng 5 tuần gần nhất</h2><p class="muted">Hạng trong nhóm của lớp · Hạng 1 là cao nhất · Tính đến tuần đang chọn</p><div class="teacher-rank-chart">${history.map(({ week, rank }) => `<div><strong>${rank ? `#${esc(rank)}` : "—"}</strong><div class="teacher-rank-track">${rank ? `<span style="height:${Math.round((rankMax - Number(rank) + 1) / rankMax * 100)}%"></span>` : ""}</div><span>${esc(week.name)}</span>${rank ? "" : '<small>Chưa có hạng chính thức</small>'}</div>`).join("") || '<p>Chưa có tuần học.</p>'}</div></section><div class="teacher-distributions"><section><h2>Tỉ lệ từng lỗi</h2>${teacherViolationChart(incidents, "rule")}</section><section><h2>Tỉ lệ lỗi theo học sinh</h2>${teacherViolationChart(incidents, "person_name")}</section></div>`;
           setContent(
             pageHead(
               manager ? "Lỗi học sinh theo lớp" : "Lớp chủ nhiệm",
               "Theo dõi điểm thi đua và ghi nhận của học sinh theo từng tuần.",
               '<button class="btn no-print" onclick="window.print()">In/Lưu PDF</button>',
             ) +
-              `<article class="teacher-week-report"><div class="toolbar teacher-week-controls no-print">${manager ? `<label>Lớp <select id="teacherClassSelect">${data.classes.map((row) => `<option value="${esc(row.id)}" ${row.id === schoolClass?.id ? "selected" : ""}>${esc(row.class_name)}</option>`).join("")}</select></label>` : ""}<label>Tuần <select id="teacherWeekSelect">${data.weeks.map((week) => `<option value="${esc(week.id)}" ${week.id === data.week?.id ? "selected" : ""}>${esc(week.name)}${week.start_date ? ` (${fmtDate(week.start_date)} - ${fmtDate(week.end_date)})` : ""}</option>`).join("")}</select></label><button class="btn" id="teacherCurrentWeek" ${currentWeek ? "" : 'disabled title="Không có tuần học trong ngày hiện tại"'}>Tuần hiện tại</button><button class="btn" id="teacherPreviousWeek" ${previousWeek ? "" : 'disabled title="Chưa có tuần học trước đó"'}>Tuần trước (xem lại)</button></div><div class="card"><div class="card-head"><h2>${esc(schoolClass?.class_name || "Lớp chưa xác định")}</h2><span class="meta">${esc(data.week?.name || "Chưa chọn tuần")}</span></div><div class="card-body">${data.official ? "" : '<div class="notice warn">Bảng tuần chưa duyệt hoặc chưa khóa; chưa có xếp hạng chính thức.</div>'}${ranking ? `<div class="grid-3"><div class="split"><span>Hạng trong nhóm</span><strong>#${esc(ranking.rank)}</strong></div><div class="split"><span>Nhóm lớp</span><strong>${esc(ranking.class_group_name || "Chưa phân nhóm")}</strong></div><div class="split"><span>Tổng tuần</span><strong>${Number(ranking.total || 0).toFixed(1)} điểm</strong></div></div><div class="table-wrap mt"><table><thead><tr>${Object.keys(ranking.daily || {}).map((date) => `<th>${fmtDate(date)}</th>`).join("")}</tr></thead><tbody><tr>${Object.values(ranking.daily || {}).map((value) => `<td>${Number(value || 0).toFixed(1)}</td>`).join("")}</tr></tbody></table></div>` : '<div class="empty">Chưa có xếp hạng cho lớp trong tuần này.</div>'}</div></div><div class="card mt"><div class="card-head"><h2>Ghi nhận theo học sinh</h2><label class="no-print">Học sinh <select id="teacherStudentSelect"><option value="">Tất cả học sinh</option>${[...new Set(incidents.map((item) => item.person_name).filter(Boolean))].sort((a, b) => a.localeCompare(b, "vi")).map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join("")}</select></label><span class="meta" id="teacherIncidentCount" role="status">${incidents.length} ghi nhận</span></div><div class="card-body"><div class="table-wrap"><table><thead><tr><th>Ngày</th><th>Họ và tên</th><th>Nội dung</th><th>Điểm</th></tr></thead><tbody>${incidents.map((item) => `<tr data-student-name="${esc(item.person_name || "")}"><td>${fmtDate(item.date)}</td><td>${esc(item.person_name || "—")}</td><td>${esc(item.rule || "—")}</td><td class="${Number(item.points) < 0 ? "negative" : Number(item.points) > 0 ? "positive" : ""}">${Number(item.points) > 0 ? "+" : ""}${Number(item.points || 0)}</td></tr>`).join("") || '<tr><td colspan="4" class="empty">Chưa có ghi nhận có tên trong tuần này.</td></tr>'}</tbody></table></div></div></div></article>`,
+              `<article class="teacher-week-report"><div class="toolbar teacher-week-controls no-print">${manager ? `<label>Lớp <select id="teacherClassSelect">${data.classes.map((row) => `<option value="${esc(row.id)}" ${row.id === schoolClass?.id ? "selected" : ""}>${esc(row.class_name)}</option>`).join("")}</select></label>` : ""}<label>Tuần <select id="teacherWeekSelect">${data.weeks.map((week) => `<option value="${esc(week.id)}" ${week.id === data.week?.id ? "selected" : ""}>${esc(week.name)}${week.start_date ? ` (${fmtDate(week.start_date)} - ${fmtDate(week.end_date)})` : ""}</option>`).join("")}</select></label><button class="btn" id="teacherCurrentWeek" ${currentWeek ? "" : 'disabled title="Không có tuần học trong ngày hiện tại"'}>Tuần hiện tại</button><button class="btn" id="teacherPreviousWeek" ${previousWeek ? "" : 'disabled title="Chưa có tuần học trước đó"'}>Tuần trước (xem lại)</button></div><div class="card"><div class="card-head"><h2>${esc(schoolClass?.class_name || "Lớp chưa xác định")}</h2><span class="meta">${esc(data.week?.name || "Chưa chọn tuần")}</span></div><div class="card-body">${data.official ? "" : '<div class="notice warn">Bảng tuần chưa duyệt hoặc chưa khóa; chưa có xếp hạng chính thức.</div>'}${ranking ? `<div class="grid-3"><div class="split"><span>Hạng trong nhóm</span><strong>#${esc(ranking.rank)}</strong></div><div class="split"><span>Nhóm lớp</span><strong>${esc(ranking.class_group_name || "Chưa phân nhóm")}</strong></div><div class="split"><span>Tổng tuần</span><strong>${Number(ranking.total || 0).toFixed(1)} điểm</strong></div></div><div class="table-wrap mt"><table><thead><tr>${Object.keys(ranking.daily || {}).map((date) => `<th>${fmtDate(date)}</th>`).join("")}</tr></thead><tbody><tr>${Object.values(ranking.daily || {}).map((value) => `<td>${Number(value || 0).toFixed(1)}</td>`).join("")}</tr></tbody></table></div>` : '<div class="empty">Chưa có xếp hạng cho lớp trong tuần này.</div>'}</div></div>${charts}<details class="teacher-details mt"><summary>Xem chi tiết ghi nhận học sinh</summary><div class="card mt"><div class="card-head"><h2>Ghi nhận theo học sinh</h2><label class="no-print">Học sinh <select id="teacherStudentSelect"><option value="">Tất cả học sinh</option>${[...new Set(incidents.map((item) => item.person_name).filter(Boolean))].sort((a, b) => a.localeCompare(b, "vi")).map((name) => `<option value="${esc(name)}">${esc(name)}</option>`).join("")}</select></label><span class="meta" id="teacherIncidentCount" role="status">${incidents.length} ghi nhận</span></div><div class="card-body"><div class="table-wrap"><table><thead><tr><th>Ngày</th><th>Họ và tên</th><th>Nội dung</th><th>Điểm</th></tr></thead><tbody>${incidents.map((item) => `<tr data-student-name="${esc(item.person_name || "")}"><td>${fmtDate(item.date)}</td><td>${esc(item.person_name || "—")}</td><td>${esc(item.rule || "—")}</td><td class="${Number(item.points) < 0 ? "negative" : Number(item.points) > 0 ? "positive" : ""}">${Number(item.points) > 0 ? "+" : ""}${Number(item.points || 0)}</td></tr>`).join("") || '<tr><td colspan="4" class="empty">Chưa có ghi nhận có tên trong tuần này.</td></tr>'}</tbody></table></div></div></div></details></article>`,
           );
           if (manager) $("#teacherClassSelect").onchange = (event) => renderTeacherClass(event.target.value);
           $("#teacherStudentSelect").onchange = (event) => {
@@ -2730,7 +2710,7 @@
             pageHead(
               "Thi đua lớp",
               "",
-              `${manager ? '<button class="btn" id="assignScoreGraders">Phân công Sao đỏ</button><button class="btn" id="criteriaConfig">Bộ tiêu chí</button>' : ""}<button class="btn" id="undoScore" ${state.lastScoreUndo && !["review", "approved", "locked"].includes(ctx.sheet?.status) ? "" : "disabled"}>↶ Hoàn tác</button>${manager && ctx.sheet && ctx.sheet.status !== "review" ? '<button class="btn danger" id="replaceScoreCriteria">Thay bộ tiêu chí</button><button class="btn danger" id="deleteScoreSheet">Xóa bảng tuần</button>' : ""}${manager && ctx.sheet?.status === "approved" ? '<button class="btn danger" id="unlockScoreSheet">Mở khóa bảng</button>' : ""}${manager && ["complete", "review"].includes(ctx.sheet?.status) ? `<button class="btn danger" id="scoreIncomplete">${ctx.sheet.status === "review" ? "Từ chối, yêu cầu kiểm tra lại" : "Đánh dấu chưa nhập đủ"}</button>` : ""}${manager ? `<button class="btn primary" id="scoreWorkflow">${workflowLabel(ctx.sheet)}</button>` : ""}`,
+              `${manager ? '<button class="btn" id="assignScoreGraders">Phân công Sao đỏ</button><button class="btn" id="criteriaConfig">Bộ tiêu chí</button>' : ""}<button class="btn" id="undoScore" ${state.lastScoreUndo && !["review", "approved", "locked"].includes(ctx.sheet?.status) ? "" : "disabled"}>↶ Hoàn tác</button>${manager && ctx.sheet && ctx.sheet.status !== "review" ? '<button class="btn danger" id="replaceScoreCriteria">Thay bộ tiêu chí</button><button class="btn danger" id="deleteScoreSheet">Xóa bảng tuần</button>' : ""}${manager && ctx.sheet?.status === "approved" ? '<button class="btn danger" id="unlockScoreSheet">Mở khóa bảng</button>' : ""}${manager && ["complete", "review"].includes(ctx.sheet?.status) ? `<button class="btn danger" id="scoreIncomplete">${ctx.sheet.status === "review" ? "Từ chối, yêu cầu kiểm tra lại" : "Đánh dấu chưa nhập đủ"}</button>` : ""}${manager ? `<button class="btn primary" id="scoreWorkflow">${ctx.sheet ? ctx.sheet.status === "locked" ? "Mở lại tuần" : "Chốt tuần" : workflowLabel(ctx.sheet)}</button>` : ""}`,
 
 
             ) +
@@ -2771,7 +2751,18 @@
             $("#assignScoreGraders").onclick = showScoreGraderAssignments;
           if ($("#criteriaConfig")) $("#criteriaConfig").onclick = showRulesetConfig;
           if ($("#scoreWorkflow"))
-            $("#scoreWorkflow").onclick = () => scoreWorkflow(ctx).catch((error) => toast(error.message, "bad"));
+            $("#scoreWorkflow").onclick = async (event) => {
+              const button = event.currentTarget;
+              button.disabled = true;
+              try {
+                await closeScoreWeek(ctx);
+              } catch (error) {
+                toast(error.message, "bad");
+                await renderScores();
+              } finally {
+                button.disabled = false;
+              }
+            };
           if ($("#scoreIncomplete"))
             $("#scoreIncomplete").onclick = () => scoreWorkflow(ctx, true).catch((error) => toast(error.message, "bad"));
           if ($("#deleteScoreSheet"))
@@ -2828,7 +2819,7 @@
           );
           openModal(
             "Phân công chấm điểm theo lớp",
-            `<div class="notice">Mỗi lớp chỉ giao cho một Sao đỏ trong năm học đang chọn. Admin và Superadmin luôn có thể quản lý tất cả lớp.</div><div class="field mt"><label>Sao đỏ chấm điểm</label><select id="scoreGraderUser">${users.map((user) => `<option value="${esc(user.id)}">${esc(graderClassLabel(user, allClasses))} — ${esc(user.displayName)} (${esc(user.username)})</option>`).join("")}</select></div><div class="toolbar mt"><button class="btn small" id="selectAllGraderClasses" type="button">Chọn lớp còn trống</button><button class="btn small" id="clearGraderClasses" type="button">Bỏ chọn tất cả</button>${classGroups.length ? `<label class="muted">Chọn nhanh nhóm <select id="graderClassGroup"><option value="">— Chọn nhóm —</option>${classGroups.map((group) => `<option value="${esc(group.id)}">${esc(group.name)}</option>`).join("")}</select></label>` : ""}</div><div class="form-grid" id="scoreGraderClasses"></div>`,
+            `<div class="notice">Mỗi Sao đỏ chỉ chấm một lớp; mỗi lớp chỉ giao cho một Sao đỏ trong năm học đang chọn. Admin và Superadmin luôn có thể quản lý tất cả lớp.</div><div class="field mt"><label>Sao đỏ chấm điểm</label><select id="scoreGraderUser">${users.map((user) => `<option value="${esc(user.id)}">${esc(graderClassLabel(user, allClasses))} — ${esc(user.displayName)} (${esc(user.username)})</option>`).join("")}</select></div><div class="toolbar mt"><button class="btn small" id="selectAllGraderClasses" type="button">Chọn lớp còn trống</button><button class="btn small" id="clearGraderClasses" type="button">Bỏ chọn tất cả</button>${classGroups.length ? `<label class="muted">Chọn nhanh nhóm <select id="graderClassGroup"><option value="">— Chọn nhóm —</option>${classGroups.map((group) => `<option value="${esc(group.id)}">${esc(group.name)}</option>`).join("")}</select></label>` : ""}</div><div class="form-grid" id="scoreGraderClasses"></div>`,
             '<button class="btn" id="cancelScoreGrader">Hủy</button><button class="btn" id="bulkScoreGrader">Nhập phân công hàng loạt</button><button class="btn primary" id="saveScoreGrader">Lưu phân công</button>',
             true,
           );
@@ -2867,7 +2858,7 @@
                     const groupName = classGroups.find((group) =>
                       group.class_ids?.includes(schoolClass.id),
                     )?.name;
-                    return `<label class="check-row"><input type="checkbox" data-grader-class="${esc(schoolClass.id)}" ${checked ? "checked" : ""} ${owner ? "disabled" : ""}><span><strong>${esc(schoolClass.class_name)}</strong><br><small class="muted">${owner ? `Đã giao: ${esc(owner)}` : `${esc(campusName(schoolClass.campus_id))}${groupName ? ` • ${esc(groupName)}` : ""}`}</small></span></label>`;
+                    return `<label class="check-row"><input type="radio" name="graderTargetClass" data-grader-class="${esc(schoolClass.id)}" ${checked ? "checked" : ""} ${owner ? "disabled" : ""}><span><strong>${esc(schoolClass.class_name)}</strong><br><small class="muted">${owner ? `Đã giao: ${esc(owner)}` : `${esc(campusName(schoolClass.campus_id))}${groupName ? ` • ${esc(groupName)}` : ""}`}</small></span></label>`;
                   })
                   .join("")
               : '<div class="empty">Chưa có lớp trong năm học này.</div>';
@@ -3491,7 +3482,22 @@
             `<div class="field mt"><label>Bộ tiêu chí mới</label><select id="replacementCriteriaSet">${alternatives.map((set) => `<option value="${esc(set.id)}">${esc(set.name)} • v${esc(set.version || "1.0")}</option>`).join("")}</select></div>`,
           );
         }
-        async function scoreWorkflow(ctx, returnToIncomplete = false) {
+        async function closeScoreWeek(ctx) {
+          if (!canManageScores()) return;
+          if (!ctx.sheet || ctx.sheet.status === "locked") return scoreWorkflow(ctx);
+          let current = ctx;
+          for (let step = 0; step < 4; step++) {
+            if (!await scoreWorkflow(current, false, true)) return;
+            current = await scoreContext();
+            if (current.sheet?.status === "locked") {
+              toast("Đã chốt tuần và lưu xếp hạng chính thức");
+              await renderScores();
+              return;
+            }
+          }
+          throw new Error("Chưa chốt xong tuần. Hãy tải lại để kiểm tra trạng thái bảng.");
+        }
+        async function scoreWorkflow(ctx, returnToIncomplete = false, silent = false) {
           if (!canManageScores()) return;
           if (!ctx.sheet) {
             const availableSets = ctx.sets.filter(
@@ -3606,8 +3612,11 @@
           } else if (sheet.status === "locked") return unlockSheet(sheet);
           await db.put("weekly_score_sheets", sheet);
           state.lastScoreUndo = null;
-          toast("Đã cập nhật trạng thái bảng tuần");
-          renderScores();
+          if (!silent) {
+            toast("Đã cập nhật trạng thái bảng tuần");
+            renderScores();
+          }
+          return true;
         }
         function unlockSheet(sheet) {
           openModal(

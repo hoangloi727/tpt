@@ -411,6 +411,7 @@
           ...(current || {}), user_id: grader.id, school_year_id: schoolYearId, class_ids: [],
         });
         const change = changes.get(grader.id);
+        if (change.class_ids.length && !change.class_ids.includes(target.id)) errors.push("Mỗi Sao đỏ chỉ được phân công chấm một lớp");
         if (!change.class_ids.includes(target.id)) change.class_ids.push(target.id);
       }
       return item;
