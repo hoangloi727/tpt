@@ -2635,9 +2635,12 @@
             const shape = count === total
               ? `<circle cx="100" cy="100" r="96" fill="${color}" />`
               : `<path d="M100 100 L${100 + 96 * Math.cos(start)} ${100 + 96 * Math.sin(start)} A96 96 0 ${count / total > 0.5 ? 1 : 0} 1 ${100 + 96 * Math.cos(angle)} ${100 + 96 * Math.sin(angle)} Z" fill="${color}" />`;
-            return { label, count, color, shape };
+            const tooltip = `${label} · ${(count / total * 100).toFixed(1)}%`;
+            const offset = (start + angle) / 2;
+            const slice = `<g class="teacher-pie-slice" tabindex="0" role="img" aria-label="${esc(tooltip)}" style="--slice-x:${Math.cos(offset) * 6}px;--slice-y:${Math.sin(offset) * 6}px"><g class="teacher-pie-segment">${shape}</g><foreignObject class="teacher-pie-tooltip" x="0" y="185" width="200" height="100" aria-hidden="true"><div xmlns="http://www.w3.org/1999/xhtml">${esc(tooltip)}</div></foreignObject></g>`;
+            return { label, count, color, shape: slice };
           });
-          return `<p class="muted">${total} lượt vi phạm · Tỉ lệ theo số lượt</p><svg class="teacher-pie-chart" viewBox="0 0 200 200" role="img" aria-label="${field === "person_name" ? "Tỉ lệ lỗi theo học sinh" : "Tỉ lệ từng lỗi"}. Chi tiết trong chú giải bên dưới.">${items.map((item) => item.shape).join("")}</svg><ul class="teacher-pie-legend">${items.map(({ label, count, color }) => `<li><span class="teacher-pie-key" style="background:${color}" aria-hidden="true"></span><span>${esc(label)}</span><strong>${count} · ${(count / total * 100).toFixed(1)}%</strong></li>`).join("")}</ul>`;
+          return `<svg class="teacher-pie-chart" viewBox="-10 -10 220 220" role="group" aria-label="${field === "person_name" ? "Tỉ lệ lỗi theo học sinh" : "Tỉ lệ từng lỗi"}. Chi tiết trong chú giải bên dưới.">${items.map((item) => item.shape).join("")}</svg><ul class="teacher-pie-legend">${items.map(({ label, count, color }) => `<li><span class="teacher-pie-key" style="background:${color}" aria-hidden="true"></span><span>${esc(label)}</span><strong>${count} · ${(count / total * 100).toFixed(1)}%</strong></li>`).join("")}</ul>`;
         }
 
         async function renderTeacherClass(classId = "") {
@@ -2671,7 +2674,7 @@
             return { week, rank: report.official ? report.ranking?.rank : null };
           }));
           const rankMax = Math.max(1, ...history.map((item) => Number(item.rank) || 0));
-          const charts = `<section class="teacher-trends"><h2>Xếp hạng 5 tuần gần nhất</h2><p class="muted">Hạng trong nhóm của lớp · Hạng 1 là cao nhất · Tính đến tuần đang chọn</p><div class="teacher-rank-chart">${history.map(({ week, rank }) => `<div><strong>${rank ? `#${esc(rank)}` : "—"}</strong><div class="teacher-rank-track">${rank ? `<span style="height:${Math.round((rankMax - Number(rank) + 1) / rankMax * 100)}%"></span>` : ""}</div><span>${esc(week.name)}</span>${rank ? "" : '<small>Chưa có hạng chính thức</small>'}</div>`).join("") || '<p>Chưa có tuần học.</p>'}</div></section><div class="teacher-distributions"><section><h2>Tỉ lệ từng lỗi</h2>${teacherViolationChart(incidents, "rule")}</section><section><h2>Tỉ lệ lỗi theo học sinh</h2>${teacherViolationChart(incidents, "person_name")}</section></div>`;
+          const charts = `<section class="teacher-trends"><h2>Xếp hạng 5 tuần gần nhất</h2><div class="teacher-rank-chart">${history.map(({ week, rank }) => `<div><strong>${rank ? `#${esc(rank)}` : "—"}</strong><div class="teacher-rank-track">${rank ? `<span style="height:${Math.round((rankMax - Number(rank) + 1) / rankMax * 100)}%"></span>` : ""}</div><span>${esc(week.name)}</span>${rank ? "" : '<small>Chưa có hạng chính thức</small>'}</div>`).join("") || '<p>Chưa có tuần học.</p>'}</div></section><div class="teacher-distributions"><section><h2>Tỉ lệ từng lỗi</h2>${teacherViolationChart(incidents, "rule")}</section><section><h2>Tỉ lệ lỗi theo học sinh</h2>${teacherViolationChart(incidents, "person_name")}</section></div>`;
           setContent(
             pageHead(
               manager ? "Lỗi học sinh theo lớp" : "Lớp chủ nhiệm",

@@ -2417,3 +2417,15 @@
 .teacher-details summary { cursor: pointer; padding: 16px 0; color: var(--blue2); font-weight: 600; }
 @media (max-width: 700px) { .teacher-distributions { grid-template-columns: 1fr; gap: 20px; } .teacher-rank-chart { gap: 6px; font-size: 12px; } }
 @media print { .teacher-details > * { display: block !important; } }
+
+.teacher-pie-chart { overflow: visible; }
+.teacher-pie-segment { transition: transform 150ms ease-out; }
+.teacher-pie-slice { outline: none; }
+.teacher-pie-slice:hover .teacher-pie-segment,
+.teacher-pie-slice:focus .teacher-pie-segment { transform: translate(var(--slice-x), var(--slice-y)); stroke: var(--card); stroke-width: 1; }
+.teacher-pie-tooltip { visibility: hidden; pointer-events: none; overflow: visible; }
+.teacher-pie-tooltip div { background: var(--ink); color: var(--card); padding: 7px 10px; border-radius: 6px; font-size: 12px; text-align: center; overflow-wrap: anywhere; }
+.teacher-pie-slice:hover .teacher-pie-tooltip,
+.teacher-pie-slice:focus .teacher-pie-tooltip { visibility: visible; }
+@media (prefers-reduced-motion: reduce) { .teacher-pie-segment { transition: none; } }
+@media print { .teacher-pie-tooltip { display: none; } }
