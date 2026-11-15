@@ -470,12 +470,18 @@ test("class incident UI filters students and retains class selection when changi
     } },
     today: () => "2026-09-15", visibleSchoolWeeks: rows => rows, esc: value => String(value ?? ""), fmtDate: value => value || "", pageHead: () => "",
     setContent: value => { html = value; },
-    $: selector => { if (!elements.has(selector)) elements.set(selector, {}); return elements.get(selector); },
+    $: selector => { if (!elements.has(selector)) elements.set(selector, { classList: { toggle() {} }, setAttribute(name, value) { this[name] = value; } }); return elements.get(selector); },
     $$: () => rows,
   });
   vm.runInContext(source, context);
   await context.renderTeacherClass();
   assert.match(html, /teacherClassSelect/);
+  assert.equal(elements.get("#teacherOverviewPanel").hidden, false);
+  assert.equal(elements.get("#teacherDetailsPanel").hidden, true);
+  elements.get("#teacherDetailsTab").onclick();
+  assert.equal(elements.get("#teacherOverviewPanel").hidden, true);
+  assert.equal(elements.get("#teacherDetailsPanel").hidden, false);
+  assert.equal(elements.get("#teacherDetailsTab")["aria-pressed"], "true");
   elements.get("#teacherStudentSelect").onchange({ target: { value: "Student A" } });
   assert.deepEqual(rows.map(row => row.hidden), [false, true]);
   elements.get("#teacherStudentSelect").onchange({ target: { value: "" } });
@@ -483,6 +489,9 @@ test("class incident UI filters students and retains class selection when changi
   await elements.get("#teacherClassSelect").onchange({ target: { value: "second" } });
   await elements.get("#teacherWeekSelect").onchange({ target: { value: "week" } });
   assert.equal(requests.at(-1)[2], "second");
+  assert.equal(elements.get("#teacherDetailsPanel").hidden, false);
+  elements.get("#teacherOverviewTab").onclick();
+  assert.equal(elements.get("#teacherDetailsPanel").hidden, true);
   context.state.user.role = "teacher";
   await context.renderTeacherClass();
   assert.doesNotMatch(html, /teacherClassSelect/);
