@@ -14,6 +14,10 @@ test('teacher charts count negative incidents, preserve unnamed pupils and exclu
   ];
   const rules = context.teacherViolationChart(incidents, 'rule');
   assert.match(rules, /3 lượt vi phạm/);
+  assert.match(rules, /<svg[^>]+role="img"/);
+  assert.equal((rules.match(/<path /g) || []).length, 2);
+  assert.doesNotMatch(rules, /NaN|<meter/);
+  assert.match(context.teacherViolationChart([incidents[0]], 'rule'), /<circle /);
   assert.match(rules, /2 · 66.7%/);
   assert.match(rules, /&lt;Lỗi>/);
   assert.doesNotMatch(rules, /Khen/);

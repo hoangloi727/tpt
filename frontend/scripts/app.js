@@ -2626,7 +2626,18 @@
             counts.set(label, (counts.get(label) || 0) + 1);
           }
           const total = [...counts.values()].reduce((sum, count) => sum + count, 0);
-          return total ? `<p class="muted">${total} lượt vi phạm · Tỉ lệ theo số lượt</p><ul class="teacher-chart-bars">${[...counts].sort((a, b) => b[1] - a[1]).map(([label, count]) => `<li><div class="split"><span>${esc(label)}</span><strong>${count} · ${(count / total * 100).toFixed(1)}%</strong></div><meter min="0" max="${total}" value="${count}" aria-label="${esc(label)}: ${count} trên ${total} lượt">${count}/${total}</meter></li>`).join("")}</ul>` : '<p class="empty">Chưa có vi phạm trừ điểm trong tuần này.</p>';
+          if (!total) return '<p class="empty">Chưa có vi phạm trừ điểm trong tuần này.</p>';
+          let angle = -Math.PI / 2;
+          const items = [...counts].sort((a, b) => b[1] - a[1]).map(([label, count], index) => {
+            const start = angle;
+            angle += count / total * Math.PI * 2;
+            const color = `hsl(${(index * 137.508 + 210) % 360} 60% 42%)`;
+            const shape = count === total
+              ? `<circle cx="100" cy="100" r="96" fill="${color}" />`
+              : `<path d="M100 100 L${100 + 96 * Math.cos(start)} ${100 + 96 * Math.sin(start)} A96 96 0 ${count / total > 0.5 ? 1 : 0} 1 ${100 + 96 * Math.cos(angle)} ${100 + 96 * Math.sin(angle)} Z" fill="${color}" />`;
+            return { label, count, color, shape };
+          });
+          return `<p class="muted">${total} lượt vi phạm · Tỉ lệ theo số lượt</p><svg class="teacher-pie-chart" viewBox="0 0 200 200" role="img" aria-label="${field === "person_name" ? "Tỉ lệ lỗi theo học sinh" : "Tỉ lệ từng lỗi"}. Chi tiết trong chú giải bên dưới.">${items.map((item) => item.shape).join("")}</svg><ul class="teacher-pie-legend">${items.map(({ label, count, color }) => `<li><span class="teacher-pie-key" style="background:${color}" aria-hidden="true"></span><span>${esc(label)}</span><strong>${count} · ${(count / total * 100).toFixed(1)}%</strong></li>`).join("")}</ul>`;
         }
 
         async function renderTeacherClass(classId = "") {
