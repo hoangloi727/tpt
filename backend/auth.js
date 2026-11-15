@@ -21,6 +21,9 @@ const conflict = (message) => {
   return error;
 };
 
+const usernameConflicts = (a, b) => a.username === b.username &&
+  (a.role === "superadmin" || b.role === "superadmin" || a.schoolId === b.schoolId);
+
 const normalizeUsername = (value) => String(value || "").trim().toLowerCase();
 
 const validatePassword = (password) => {
@@ -74,7 +77,6 @@ export class UserStore {
     }
     const users = Array.isArray(stored?.users) ? stored.users : [];
     const importedUsers = [];
-    const importedUsernames = new Set();
     const importedIds = new Set();
     for (const source of users) {
       if (!source || typeof source !== "object" || Array.isArray(source)) continue;
@@ -83,11 +85,10 @@ export class UserStore {
       if (
         !id ||
         !USERNAME_PATTERN.test(username) ||
-        importedUsernames.has(username) ||
+        importedUsers.some((user) => usernameConflicts(user, { username, role: String(source.role || "").trim().toLowerCase(), schoolId: source.schoolId || this.defaultSchoolId })) ||
         importedIds.has(id)
       )
         continue;
-      importedUsernames.add(username);
       importedIds.add(id);
       const sourceRole = String(source.role || "").trim().toLowerCase();
       const role = ["superadmin", "admin", "teacher"].includes(sourceRole)
@@ -191,7 +192,8 @@ export class UserStore {
 
   async authenticate(username, password, schoolId) {
     const normalized = normalizeUsername(username);
-    const user = this.state.users.find((item) => item.username === normalized);
+    const user = this.state.users.find((item) => item.username === normalized &&
+      (item.role === "superadmin" || item.schoolId === schoolId));
     if (
       !user ||
       user.disabled ||
@@ -262,7 +264,7 @@ export class UserStore {
       : "user";
     const credentials = await this.passwordFields(password);
     return this.mutate((draft) => {
-      if (draft.users.some((user) => user.username === normalized)) {
+      if (draft.users.some((user) => usernameConflicts(user, { username: normalized, role: normalizedRole, schoolId }))) {
         throw conflict("Tên đăng nhập đã tồn tại.");
       }
       const stamp = now();
@@ -298,9 +300,6 @@ export class UserStore {
       }
       if (changes.username && normalizeUsername(changes.username) !== user.username) {
         const username = this.validateUsername(changes.username);
-        if (draft.users.some((item) => item.id !== id && item.username === username)) {
-          throw conflict("Tên đăng nhập đã tồn tại.");
-        }
         user.username = username;
       }
       if (changes.displayName !== undefined) {
@@ -318,6 +317,8 @@ export class UserStore {
       if (!user.root && changes.disabled !== undefined) user.disabled = !!changes.disabled;
       if (user.role !== "user") user.graderClassId = null;
       else if (changes.graderClassId !== undefined) user.graderClassId = changes.graderClassId;
+      if (draft.users.some((item) => item.id !== id && usernameConflicts(item, user)))
+        throw conflict("Tên đăng nhập đã tồn tại.");
       this.assertUniqueGraderClass(draft, user);
       user.permissions = normalizePermissions(changes.permissions ?? user.permissions, user.role);
       if (credentials) Object.assign(user, credentials);

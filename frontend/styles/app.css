@@ -2374,3 +2374,28 @@
           font-size: 16px;
         }
       }
+
+/* Role workspaces keep the daily task and week controls easy to reach. */
+.role-workspace-intro { margin: 24px 0 16px; }
+.role-workspace-intro h2 { margin: 0 0 6px; font-size: 18px; }
+.role-workspace-intro p, .score-entry-guide { color: var(--ink); line-height: 1.6; }
+.score-status-kanban .task-card { padding: 18px; }
+.score-status-kanban .task-card strong { font-size: 18px; }
+.teacher-week-controls { padding: 16px; background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); margin-bottom: 20px; gap: 12px; }
+.teacher-week-controls label { display: flex; align-items: center; gap: 10px; }
+.teacher-week-report .card-head { flex-wrap: wrap; gap: 12px; }
+.teacher-week-report .card-head label { display: flex; align-items: center; gap: 10px; }
+.teacher-week-report select, .teacher-week-controls .btn, .score-day-picker button, .incident-score-button { min-height: 44px; }
+.teacher-week-report td { padding-top: 14px; padding-bottom: 14px; }
+.teacher-week-report select:focus-visible, .score-day-picker button:focus-visible, .incident-score-button:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+@media (max-width: 700px) {
+  .score-status-kanban { display: grid; grid-template-columns: 1fr; }
+  .teacher-week-controls label, .teacher-week-report .card-head label { width: 100%; flex-wrap: wrap; }
+  .teacher-week-controls select, .teacher-week-report .card-head select { width: 100%; min-width: 0; max-width: 100%; font-size: 16px; }
+  .teacher-week-controls .btn { flex: 1; white-space: normal; }
+  .teacher-week-report .grid-3 { grid-template-columns: 1fr; gap: 14px; }
+  .score-day-picker { overflow-x: auto; flex-wrap: nowrap; padding-bottom: 8px; }
+  .score-day-picker button { flex-shrink: 0; min-width: 88px; }
+  .score-table .score-input { min-height: 44px; font-size: 16px; }
+}
+@media print { .teacher-week-report .no-print { display: none !important; } }

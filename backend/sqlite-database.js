@@ -43,6 +43,25 @@ export class SqliteDatabase {
       CREATE INDEX IF NOT EXISTS auth_users_school
         ON auth_users (school_id, role);
     `);
+    if (this.database.prepare("SELECT sql FROM sqlite_master WHERE name = 'auth_users'").get().sql.includes("COLLATE NOCASE UNIQUE")) {
+      this.database.transaction(() => {
+        this.database.exec(`
+          ALTER TABLE auth_users RENAME TO auth_users_legacy;
+          CREATE TABLE auth_users (
+            id TEXT PRIMARY KEY,
+            username TEXT NOT NULL COLLATE NOCASE,
+            school_id TEXT,
+            role TEXT NOT NULL,
+            data TEXT NOT NULL
+          );
+          INSERT INTO auth_users SELECT * FROM auth_users_legacy;
+          DROP TABLE auth_users_legacy;
+          CREATE INDEX auth_users_school ON auth_users (school_id, role);
+        `);
+      }).immediate();
+    }
+    this.database.exec(`CREATE UNIQUE INDEX IF NOT EXISTS auth_users_school_username
+      ON auth_users (COALESCE(school_id, ''), username)`);
     return this;
   }
 
