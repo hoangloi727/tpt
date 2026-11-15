@@ -501,6 +501,21 @@ export const createApiHandler = ({ repository, sessions, users }) =>
         });
       }
 
+      if (request.method === "DELETE" && url.pathname.startsWith("/api/admin/schools/")) {
+        if (user.role !== "superadmin" || !destructiveAuthorized()) return forbidden(response);
+        const schoolId = decodeURIComponent(url.pathname.slice("/api/admin/schools/".length));
+        if (schoolId === user.selectedSchoolId)
+          return sendJson(response, 400, { error: "Hãy chuyển sang trường khác trước khi xóa trường này." });
+        if (!repository.school(schoolId))
+          return sendJson(response, 404, { error: "Không tìm thấy trường." });
+        const [school] = repository.all("schools", false, schoolId);
+        await repository.remove("schools", school.id, false, {
+          schoolId, actorId: user.id, actorName: user.displayName || user.username,
+        });
+        sessions.revokeSchool(schoolId);
+        return sendJson(response, 200, { ok: true });
+      }
+
       if (url.pathname === "/api/admin/schools") {
         if (user.role !== "superadmin") return forbidden(response);
         if (request.method === "GET")

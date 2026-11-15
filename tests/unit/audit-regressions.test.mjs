@@ -607,3 +607,31 @@ test("report list batch omits saved report bodies while individual read retains 
   const full = await apiRequest(repository,{role:"admin"},"/stores/generated_reports/report");
   assert.equal(full.result.html,"<p>Full report</p>");
 });
+
+test('school deletion requires superadmin confirmation, preserves records and revokes school sessions', async () => {
+  const repository = await openRepository();
+  await repository.createSchool('First', 'first');
+  await repository.createSchool('Second', 'second');
+  await repository.put('classes', { id: 'kept', class_name: '6A' }, { schoolId: 'second' });
+  const sessions = new SessionManager();
+  const victim = sessions.create({ id: 'teacher', selectedSchoolId: 'second' });
+  const handler = createApiHandler({ repository, sessions, users: {} });
+  const remove = async (role, schoolId, confirmed) => {
+    const { token } = sessions.create({ id: 'actor', role, selectedSchoolId: 'first' });
+    const request = Readable.from([]);
+    request.method = 'DELETE';
+    request.headers = { authorization: `Bearer ${token}` };
+    if (confirmed) request.headers['x-destructive-authorization'] = sessions.authorizeDestructive(`Bearer ${token}`);
+    let status;
+    await handler(request, { writeHead(value) { status = value; }, end() {} }, new URL(`http://localhost/api/admin/schools/${schoolId}`));
+    return status;
+  };
+  assert.equal(await remove('admin', 'second', true), 403);
+  assert.equal(await remove('superadmin', 'second', false), 403);
+  assert.equal(await remove('superadmin', 'first', true), 400);
+  assert.equal(await remove('superadmin', 'second', true), 200);
+  assert.equal(repository.school('second'), null);
+  assert.ok(repository.get('classes', 'kept', 'second'));
+  assert.equal(sessions.verify(`Bearer ${victim.token}`), null);
+  assert.ok(repository.school('first'));
+});

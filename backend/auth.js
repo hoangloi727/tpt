@@ -399,6 +399,12 @@ export class SessionManager {
     return { token, user };
   }
 
+  revokeSchool(schoolId) {
+    for (const [token, session] of this.sessions) {
+      if (session.user.selectedSchoolId === schoolId) this.sessions.delete(token);
+    }
+  }
+
   revokeUser(userId) {
     for (const [token, session] of this.sessions) {
       if (session.user.id === userId) this.sessions.delete(token);

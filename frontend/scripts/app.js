@@ -6034,7 +6034,7 @@
             pageHead(
               "Quản lý người dùng",
               `Tài khoản thuộc ${state.user?.selectedSchoolName || "trường đang chọn"}.`,
-              `${isSuperadmin ? '<button class="btn" id="addSchool">＋ Thêm trường</button>' : ""}<button class="btn" id="importUsers">Nhập Sao đỏ (Excel/CSV)</button><button class="btn" id="importTeachers">Nhập Giáo viên (Excel/CSV)</button><button class="btn primary" id="addUser">＋ Thêm người dùng</button>`,
+              `${isSuperadmin ? '<button class="btn" id="addSchool">＋ Thêm trường</button><button class="btn danger" id="deleteSchool">Xóa trường</button>' : ""}<button class="btn" id="importUsers">Nhập Sao đỏ (Excel/CSV)</button><button class="btn" id="importTeachers">Nhập Giáo viên (Excel/CSV)</button><button class="btn primary" id="addUser">＋ Thêm người dùng</button>`,
             ) +
               `<div class="tabs" aria-label="Loại tài khoản">${roleOptions.map(([role, label]) => `<button data-user-role="${role}" class="${state.userRoleFilter === role ? "active" : ""}" aria-pressed="${state.userRoleFilter === role}">${esc(label)} (${role === "all" ? users.length : users.filter((user) => user.role === role).length})</button>`).join("")}</div>` +
               `<div class="notice"><strong>Admin có toàn quyền trong trường này</strong> và có thể quản lý User/Admin, nhưng không thể tạo hoặc quản lý Superadmin. Superadmin dùng bộ chọn trường trên thanh điều hướng để đổi phạm vi.</div><div class="table-wrap"><table><thead><tr><th>Tài khoản</th><th>Tên hiển thị</th><th>Vai trò</th><th>Quyền</th><th>Trạng thái</th><th>Lần đăng nhập cuối</th><th>Thao tác</th></tr></thead><tbody>${users
@@ -6072,6 +6072,23 @@
             showUserImport("user").catch((error) => toast(error.message, "bad"));
           $("#importTeachers").onclick = () =>
             showUserImport("teacher").catch((error) => toast(error.message, "bad"));
+          if ($("#deleteSchool"))
+            $("#deleteSchool").onclick = () => {
+              const schools = state.loginSchools.filter((school) => school.id !== state.user.selectedSchoolId);
+              if (!schools.length) return toast("Cần có trường khác để tiếp tục sử dụng trước khi xóa trường.", "bad");
+              confirmDestructive(
+                "Trường bị xóa sẽ không thể đăng nhập; các phiên đang mở sẽ kết thúc. Dữ liệu được giữ lại để có thể phục hồi. Không thể xóa trường đang đăng nhập.",
+                async () => {
+                  const id = $("#deleteSchoolSelect").value;
+                  await db.deleteSchool(id);
+                  state.loginSchools = state.loginSchools.filter((school) => school.id !== id);
+                  updateSchoolBranding();
+                  toast("Đã xóa trường");
+                },
+                "Xóa trường", "Xóa trường",
+                `<div class="field mt"><label for="deleteSchoolSelect">Trường cần xóa</label><select id="deleteSchoolSelect">${schools.map((school) => `<option value="${esc(school.id)}">${esc(school.name)}</option>`).join("")}</select></div>`,
+              );
+            };
           if ($("#addSchool"))
             $("#addSchool").onclick = async () => {
               const name = await promptDialog("Nhập tên trường cần thêm.", "Thêm trường");

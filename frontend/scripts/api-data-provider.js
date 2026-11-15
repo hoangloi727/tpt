@@ -233,6 +233,10 @@
       });
     }
 
+    deleteSchool(id) {
+      return this.request(`/admin/schools/${encodeURIComponent(id)}`, { method: "DELETE" });
+    }
+
     deleteUser(id) {
       return this.request(`/admin/users/${encodeURIComponent(id)}`, {
         method: "DELETE",
