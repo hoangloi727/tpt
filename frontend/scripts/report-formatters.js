@@ -58,9 +58,36 @@
       };
     }
 
+    function reportHistory(type, history) {
+      return type === "rank-weeks" && state.campusId !== "all"
+        ? history.filter((row) => row.campus_id === state.campusId) : history;
+    }
+
+    function rankTable(type, history) {
+      if (type === "rank-weeks") return {
+        head: ["Tuần", "Nhóm lớp", "Lớp", "Hạng"],
+        rows: history.map((row) => [row.week, row.class_group_name || "Chưa phân nhóm", row.class_name, row.rank]),
+      };
+      const classes = new Map();
+      for (const row of history) {
+        if (!classes.has(row.id)) classes.set(row.id, { name: row.class_name, counts: new Map() });
+        const counts = classes.get(row.id).counts;
+        if (!counts.has(row.rank)) counts.set(row.rank, []);
+        counts.get(row.rank).push(row.week);
+      }
+      return {
+        head: ["Lớp", "Hạng trong nhóm", "Số lần", "Các tuần đạt hạng"],
+        rows: [...classes.values()].sort((a, b) => a.name.localeCompare(b.name, "vi", { numeric: true }))
+          .flatMap(({ name, counts }) => [...counts].sort(([a], [b]) => a - b)
+            .map(([rank, weeks]) => [name, rank, weeks.length, weeks.join(", ")])),
+      };
+    }
+
     async function reportHTML(type, d) {
       const title = {
         week: "BÁO CÁO CÔNG TÁC TUẦN",
+        "rank-weeks": "XẾP HẠNG THI ĐUA CÁC TUẦN",
+        "rank-counts": "SỐ LẦN ĐẠT TỪNG HẠNG THEO LỚP",
         scores: "TỔNG HỢP THI ĐUA LỚP",
         faults: "CHI TIẾT LỖI THEO LỚP",
         "fault-frequency": "THỐNG KÊ TẦN SUẤT LỖI",
@@ -69,6 +96,20 @@
         equipment: "BÁO CÁO THIẾT BỊ ĐỘI",
       }[type];
       let body = "";
+      const historyReport = type === "rank-weeks" || type === "rank-counts";
+      if (historyReport) {
+        const history = reportHistory(type, d.rankHistory);
+        const { head, rows } = rankTable(type, history);
+        body = rows.length ? simpleTable(head, rows) : "<p>Chưa có xếp hạng chính thức trong phạm vi đã chọn.</p>";
+        if (rows.length && type === "rank-weeks") {
+          body = '<p>Vàng: hạng 1. Đỏ nhạt: hạng cuối trong nhóm.</p><table><thead><tr>' +
+            head.map((label) => `<th>${label}</th>`).join("") + "</tr></thead><tbody>" +
+            rows.map((cells, i) => `<tr>${cells.map((cell, j) => {
+              const color = j === 3 ? Number(cell) === 1 ? "rank-first" : history[i].last ? "rank-last" : "" : "";
+              return `<td class="${color}">${esc(cell)}</td>`;
+            }).join("")}</tr>`).join("") + "</tbody></table>";
+        }
+      }
       if (type === "faults" || type === "fault-frequency") {
         const table = faultTable(type, d);
         body = '<p>Mỗi ghi nhận trừ điểm được tính là một lần xảy ra, trong tuần và cơ sở đã chọn.</p>' +
@@ -150,12 +191,14 @@
           ]),
         );
       }
-      return `<div class="center"><small>${esc(d.school?.name || "TRƯỜNG TH-THCS")}</small><h2 style="margin:8px 0">${title}</h2><p>${esc(d.week?.name || "")} • ${esc(campusName(state.campusId))}</p></div><div class="split"><small>Tạo lúc: ${fmtDateTime(now())}</small><small>Phạm vi dữ liệu: ${esc(d.week?.name || "Năm học")} / ${esc(campusName(state.campusId))}</small></div><hr style="border:0;border-top:1px solid var(--line)">${body}<div style="display:grid;grid-template-columns:1fr 1fr;text-align:center;margin-top:35px"><div><strong>Người lập báo cáo</strong></div><div><strong>Xác nhận của nhà trường</strong></div></div>`;
+      return `<div class="center"><small>${esc(d.school?.name || "TRƯỜNG TH-THCS")}</small><h2 style="margin:8px 0">${title}</h2><p>${esc(historyReport ? "Các tuần trong kỳ đã chọn" : d.week?.name || "")} • ${esc(type === "rank-counts" ? "Toàn trường" : campusName(state.campusId))}</p></div><div class="split"><small>Tạo lúc: ${fmtDateTime(now())}</small><small>Phạm vi dữ liệu: ${esc(historyReport ? "Các tuần trong kỳ đã chọn" : d.week?.name || "Năm học")} / ${esc(type === "rank-counts" ? "Toàn trường" : campusName(state.campusId))}</small></div><hr style="border:0;border-top:1px solid var(--line)">${body}<div style="display:grid;grid-template-columns:1fr 1fr;text-align:center;margin-top:35px"><div><strong>Người lập báo cáo</strong></div><div><strong>Xác nhận của nhà trường</strong></div></div>`;
     }
     function exportReportCSV(type, d) {
       let head = [],
         rows = [];
-      if (type === "faults" || type === "fault-frequency") {
+      if (type === "rank-weeks" || type === "rank-counts") {
+        ({ head, rows } = rankTable(type, reportHistory(type, d.rankHistory)));
+      } else if (type === "faults" || type === "fault-frequency") {
         const table = faultTable(type, d);
         ({ head, rows } = table);
         if (type === "faults" && table.groups.length) {

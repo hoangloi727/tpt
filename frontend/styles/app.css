@@ -2429,3 +2429,11 @@
 .teacher-pie-slice:focus .teacher-pie-tooltip { visibility: visible; }
 @media (prefers-reduced-motion: reduce) { .teacher-pie-segment { transition: none; } }
 @media print { .teacher-pie-tooltip { display: none; } }
+
+td.rank-first, td.rank-last {
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+  color: #201b15;
+}
+td.rank-first { background-color: #ffe477; }
+td.rank-last { background-color: #ffd5d5; }

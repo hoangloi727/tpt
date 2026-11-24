@@ -1341,7 +1341,7 @@
           state.modalReturnFocus?.focus?.();
         }
 
-        async function scoped(store) {
+        async function scoped(store, campusId = state.campusId) {
           const week = (state.cache.weeks || []).find((row) =>
             row.id === state.weekId && row.school_year_id === state.yearId,
           ),
@@ -1357,8 +1357,8 @@
                 x.semester_id === state.semesterId) &&
               (!x.campus_id ||
                 x.campus_id === "all" ||
-                state.campusId === "all" ||
-                x.campus_id === state.campusId) &&
+                campusId === "all" ||
+                x.campus_id === campusId) &&
               (store !== "tasks" || !x.due_date ||
                 (week && x.due_date >= week.start_date && x.due_date <= week.end_date) ||
                 (isCurrentWeek && x.status !== "done" && x.due_date > currentDate)),
@@ -3852,7 +3852,7 @@
               "",
               `<button class="btn" id="exportReportPackage">Gói báo cáo chốt</button><button class="btn" id="exportReportCsv">Xuất CSV</button><button class="btn" onclick="window.print()">In/Lưu PDF</button><button class="btn" id="saveReportDraft">Lưu nháp</button><button class="btn primary" id="finalizeReport">Chốt báo cáo</button>`,
             ) +
-              `<div class="toolbar no-print"><select id="reportType"><option value="week">Báo cáo công tác tuần</option><option value="scores">Tổng hợp thi đua lớp</option><option value="faults">Chi tiết lỗi theo lớp</option><option value="fault-frequency">Thống kê tần suất lỗi</option><option value="tasks">Tiến độ công việc</option><option value="activities">Báo cáo hoạt động</option><option value="equipment">Báo cáo thiết bị</option></select><select id="reportPaper"><option value="landscape">A4 ngang</option><option value="portrait">A4 dọc</option></select><input id="reportRecipient" placeholder="Nơi nhận (tùy chọn)"><select id="reportSubmission"><option value="not_submitted">Chưa gửi</option><option value="submitted">Đã gửi</option><option value="accepted">Đã tiếp nhận</option></select><span class="muted">Số liệu nguồn không sửa tại báo cáo</span></div><div class="notice warn no-print"><strong>Nháp</strong> có thể tạo lại; <strong>báo cáo chốt</strong> lưu nội dung tĩnh, phiên bản, bộ lọc, mã kiểm tra và trạng thái gửi. Muốn sửa sau chốt phải tạo phiên bản mới.</div><article class="card" id="reportPreview"><div class="card-body">${await reportHTML("week", d)}</div></article><div class="card mt no-print"><div class="card-head"><h2>Phiên bản báo cáo đã lưu</h2><span class="meta">${saved.length} phiên bản</span></div><div class="card-body"><ul class="compact-list">${
+              `<div class="toolbar no-print"><select id="reportType"><option value="week">Báo cáo công tác tuần</option><option value="scores">Tổng hợp thi đua lớp</option><option value="rank-weeks">Xếp hạng thi đua các tuần</option><option value="rank-counts">Số lần đạt từng hạng theo lớp (toàn trường)</option><option value="faults">Chi tiết lỗi theo lớp</option><option value="fault-frequency">Thống kê tần suất lỗi</option><option value="tasks">Tiến độ công việc</option><option value="activities">Báo cáo hoạt động</option><option value="equipment">Báo cáo thiết bị</option></select><select id="reportPaper"><option value="landscape">A4 ngang</option><option value="portrait">A4 dọc</option></select><input id="reportRecipient" placeholder="Nơi nhận (tùy chọn)"><select id="reportSubmission"><option value="not_submitted">Chưa gửi</option><option value="submitted">Đã gửi</option><option value="accepted">Đã tiếp nhận</option></select><span class="muted">Số liệu nguồn không sửa tại báo cáo</span></div><div class="notice warn no-print"><strong>Nháp</strong> có thể tạo lại; <strong>báo cáo chốt</strong> lưu nội dung tĩnh, phiên bản, bộ lọc, mã kiểm tra và trạng thái gửi. Muốn sửa sau chốt phải tạo phiên bản mới.</div><article class="card" id="reportPreview"><div class="card-body">${await reportHTML("week", d)}</div></article><div class="card mt no-print"><div class="card-head"><h2>Phiên bản báo cáo đã lưu</h2><span class="meta">${saved.length} phiên bản</span></div><div class="card-body"><ul class="compact-list">${
                 saved
                   .slice(0, 30)
                   .map(
@@ -3863,11 +3863,38 @@
                 '<li class="muted">Chưa lưu phiên bản báo cáo.</li>'
               }</ul></div></div>`,
           );
-          $("#reportType").onchange = async () =>
-            ($("#reportPreview .card-body").innerHTML = await reportHTML(
-              $("#reportType").value,
-              d,
-            ));
+          $("#reportType").onchange = async () => {
+            const type = $("#reportType").value;
+            const actions = [$("#exportReportCsv"), $("#saveReportDraft"), $("#finalizeReport")];
+            actions.forEach((button) => button.disabled = true);
+            try {
+              if (["rank-weeks", "rank-counts"].includes(type) && !d.rankHistory) {
+                const [weeks, sheets, snapshots] = await Promise.all(
+                  ["school_weeks", "weekly_score_sheets", "ranking_snapshots"].map((store) => scoped(store, "all")),
+                );
+                const official = new Set(sheets.filter((sheet) =>
+                  ["approved", "locked"].includes(sheet.status)).map((sheet) => sheet.id));
+                const latest = new Map();
+                for (const snapshot of snapshots.filter((row) => official.has(row.sheet_id))
+                  .sort((a, b) => String(a.updated_at || a.created_at).localeCompare(String(b.updated_at || b.created_at)))) {
+                  latest.set(snapshot.week_id, snapshot);
+                }
+                d.rankHistory = sortWeeksAscending(visibleSchoolWeeks(weeks, state.cache.years)).flatMap((week) => {
+                  const rows = latest.get(week.id)?.rows || [];
+                  const last = new Map();
+                  for (const row of rows) last.set(row.class_group_id, Math.max(last.get(row.class_group_id) || 0, row.rank));
+                  return rows.map((row) => ({ ...row, week: week.name, last: Number(row.rank) === last.get(row.class_group_id) }));
+                });
+              }
+              const html = await reportHTML(type, d);
+              if ($("#reportType")?.value === type) {
+                $("#reportPreview .card-body").innerHTML = html;
+                actions.forEach((button) => button.disabled = false);
+              }
+            } catch (error) {
+              if ($("#reportType")?.value === type) $("#reportPreview .card-body").textContent = "Không tải được báo cáo: " + error.message;
+            }
+          };
           $("#exportReportCsv").onclick = () =>
             exportReportCSV($("#reportType").value, d);
           $("#exportReportPackage").onclick = () =>
@@ -3878,8 +3905,8 @@
             await setting("paper_orientation", $("#reportPaper").value);
             toast("Đã đổi khổ in báo cáo");
           };
-          $("#saveReportDraft").onclick = () => saveCurrentReport("draft");
-          $("#finalizeReport").onclick = () => confirmFinalizeCurrentReport();
+          $("#saveReportDraft").onclick = () => saveCurrentReport("draft", d.rankHistory);
+          $("#finalizeReport").onclick = () => confirmFinalizeCurrentReport(d.rankHistory);
           $$("[data-open-report]").forEach(
             (b) =>
               (b.onclick = async () => {
@@ -3898,7 +3925,7 @@
           );
         }
 
-        async function saveCurrentReport(status) {
+        async function saveCurrentReport(status, rankHistory) {
           const type = $("#reportType").value,
             html = $("#reportPreview .card-body").innerHTML,
             data = await reportData(),
@@ -3907,13 +3934,14 @@
               scope: {
                 year_id: state.yearId,
                 semester_id: state.semesterId,
-                week_id: state.weekId,
-                campus_id: state.campusId,
+                week_id: ["rank-counts", "rank-weeks"].includes(type) ? null : state.weekId,
+                campus_id: type === "rank-counts" ? "all" : state.campusId,
               },
               tasks: data.tasks,
               events: data.events,
               activities: data.activities,
               ranking: data.rank,
+              ...(["rank-weeks", "rank-counts"].includes(type) ? { rankHistory: type === "rank-weeks" && state.campusId !== "all" ? rankHistory.filter((row) => row.campus_id === state.campusId) : rankHistory } : {}),
               ...(["faults", "fault-frequency"].includes(type) ? { score_entries: data.ctx.entries, classes: data.ctx.classes } : {}),
             },
             sourceChecksum = await sha256Text(stableJSON(source)),
@@ -3953,7 +3981,7 @@
             generated_at: now(),
             finalized_at: status === "finalized" ? now() : null,
             school_year_id: state.yearId,
-            campus_id: state.campusId,
+            campus_id: source.scope.campus_id,
           });
           if (status === "finalized")
             await createInternalSnapshot(`Sau chốt báo cáo ${report.name}`, {
@@ -3971,7 +3999,7 @@
           return report;
         }
 
-        function confirmFinalizeCurrentReport() {
+        function confirmFinalizeCurrentReport(rankHistory) {
           openModal(
             "Chốt báo cáo",
             `<div class="notice warn"><strong>Sau khi chốt, phiên bản này không sửa trực tiếp.</strong> Nếu số liệu thay đổi, hãy tạo và chốt phiên bản mới.</div><label class="check-row"><input id="confirmFinalizeCheck" type="checkbox"> Tôi đã đối chiếu nội dung, bộ lọc, nơi nhận và trạng thái gửi.</label>`,
@@ -3993,7 +4021,7 @@
             $("#reportRecipient").value = values.recipient;
             $("#reportSubmission").value = values.submission;
             $("#reportPreview .card-body").innerHTML = values.html;
-            await saveCurrentReport("finalized");
+            await saveCurrentReport("finalized", rankHistory);
           };
         }
 

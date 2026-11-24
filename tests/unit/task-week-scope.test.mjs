@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import vm from 'node:vm';
 
 const source = await readFile(new URL('../../frontend/scripts/app.js', import.meta.url), 'utf8');
-const code = source.slice(source.indexOf('        async function scoped(store)'), source.indexOf('        const canManageScores'));
+const code = source.slice(source.indexOf('        async function scoped('), source.indexOf('        const canManageScores'));
 
 test('other weeks show tasks by deadline while preserving date boundaries, undated tasks and other scopes', async () => {
   const rows = [

@@ -227,3 +227,22 @@ test("page headings omit empty descriptions and preserve useful context and acti
   assert.doesNotMatch(heading, /<p>/);
   assert.match(utils.pageHead('Tiến độ', 'Ngày <3>'), /<p>Ngày &lt;3&gt;<\/p>/);
 });
+
+test("weekly rank exports highlight extremes and count each rank per class", async () => {
+  vm.runInContext(await readFile(new URL("../../frontend/scripts/report-formatters.js", import.meta.url), "utf8"), context);
+  let csv;
+  const reports = context.window.TPTAppModules.reportFormatters.createController({
+    esc: utils.esc, state: { campusId: "north" }, campusName: () => "", simpleTable: () => "",
+    fmtDateTime: String, now: Date.now, today: () => "", csvSafe: String,
+    download: (content) => { csv = content; },
+  });
+  const rankHistory = [1, 3, 1].map((rank, index) => ({
+    id: "a", campus_id: "north", class_name: "6A", rank, week: "Tuần " + (index + 1), last: rank === 3,
+  }));
+  rankHistory.push({ id: "b", campus_id: "south", class_name: "6B", rank: 1, week: "Tuần 2" });
+  const html = await reports.reportHTML("rank-weeks", { rankHistory });
+  assert.equal(html.match(/class="rank-first"/g).length, 2);
+  assert.equal(html.match(/class="rank-last"/g).length, 1);
+  reports.exportReportCSV("rank-counts", { rankHistory });
+  assert.match(csv, /6A,1,2,Tuần 1, Tuần 3\r\n6A,3,1,Tuần 2\r\n6B,1,1,Tuần 2$/);
+});
