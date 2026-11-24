@@ -3883,7 +3883,7 @@
                   const rows = latest.get(week.id)?.rows || [];
                   const last = new Map();
                   for (const row of rows) last.set(row.class_group_id, Math.max(last.get(row.class_group_id) || 0, row.rank));
-                  return rows.map((row) => ({ ...row, week: week.name, last: Number(row.rank) === last.get(row.class_group_id) }));
+                  return rows.map((row) => ({ ...row, week_id: week.id, week: week.name, last: Number(row.rank) === last.get(row.class_group_id) }));
                 });
               }
               const html = await reportHTML(type, d);

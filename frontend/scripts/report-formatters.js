@@ -64,10 +64,17 @@
     }
 
     function rankTable(type, history) {
-      if (type === "rank-weeks") return {
-        head: ["Tuần", "Nhóm lớp", "Lớp", "Hạng"],
-        rows: history.map((row) => [row.week, row.class_group_name || "Chưa phân nhóm", row.class_name, row.rank]),
-      };
+      if (type === "rank-weeks") {
+        const weeks = new Map();
+        for (const row of history) {
+          const id = row.week_id || row.week;
+          if (!weeks.has(id)) weeks.set(id, { name: row.week, rows: [], colors: [] });
+          const week = weeks.get(id);
+          week.rows.push([row.class_group_name || "Chưa phân nhóm", row.class_name, row.rank]);
+          week.colors.push(Number(row.rank) === 1 ? "rank-first" : row.last ? "rank-last" : "");
+        }
+        return { head: ["Nhóm lớp", "Lớp", "Hạng"], groups: [...weeks.values()] };
+      }
       const classes = new Map();
       for (const row of history) {
         if (!classes.has(row.id)) classes.set(row.id, { name: row.class_name, counts: new Map() });
@@ -102,17 +109,15 @@
       const historyReport = type === "rank-weeks" || type === "rank-counts";
       if (historyReport) {
         const history = reportHistory(type, d.rankHistory);
-        const { head, rows, groups } = rankTable(type, history);
+        const { head, groups } = rankTable(type, history);
         if (!history.length) body = "<p>Chưa có xếp hạng chính thức trong phạm vi đã chọn.</p>";
-        else if (groups) {
+        else if (type === "rank-counts") {
           body = groups.map((group) => `<section><h3>Lớp ${esc(group.name)}</h3>${simpleTable(head, group.rows)}</section>`).join("");
         } else {
-          body = '<p>Vàng: hạng 1. Đỏ nhạt: hạng cuối trong nhóm.</p><table><thead><tr>' +
-            head.map((label) => `<th>${label}</th>`).join("") + "</tr></thead><tbody>" +
-            rows.map((cells, i) => `<tr>${cells.map((cell, j) => {
-              const color = j === 3 ? Number(cell) === 1 ? "rank-first" : history[i].last ? "rank-last" : "" : "";
-              return `<td class="${color}">${esc(cell)}</td>`;
-            }).join("")}</tr>`).join("") + "</tbody></table>";
+          body = '<p>Vàng: hạng 1. Đỏ nhạt: hạng cuối trong nhóm.</p>' +
+            groups.map((week) => `<section><h3>${esc(week.name)}</h3><table><thead><tr>${head.map((label) => `<th>${label}</th>`).join("")}</tr></thead><tbody>${
+              week.rows.map(([group, name, rank], i) => `<tr><td>${esc(group)}</td><td>${esc(name)}</td><td class="${week.colors[i]}">${esc(rank)}</td></tr>`).join("")
+            }</tbody></table></section>`).join("");
         }
       }
       if (type === "faults" || type === "fault-frequency") {
@@ -204,10 +209,9 @@
       if (type === "rank-weeks" || type === "rank-counts") {
         const table = rankTable(type, reportHistory(type, d.rankHistory));
         head = table.head;
-        rows = table.rows || [];
-        if (table.groups?.length) {
+        if (table.groups.length) {
           [head, ...rows] = table.groups.flatMap((group, index) => [
-            ...(index ? [[]] : []), ["Lớp", group.name], table.head, ...group.rows,
+            ...(index ? [[]] : []), type === "rank-weeks" ? [group.name] : ["Lớp", group.name], table.head, ...group.rows,
           ]);
         }
       } else if (type === "faults" || type === "fault-frequency") {

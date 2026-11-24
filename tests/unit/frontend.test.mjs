@@ -243,6 +243,10 @@ test("weekly rank exports highlight extremes and count each rank per class", asy
   const html = await reports.reportHTML("rank-weeks", { rankHistory });
   assert.equal(html.match(/class="rank-first"/g).length, 2);
   assert.equal(html.match(/class="rank-last"/g).length, 1);
+  assert.deepEqual([...html.matchAll(/<section><h3>(.*?)<\/h3>/g)].map((match) => match[1]), ["Tuần 1", "Tuần 2", "Tuần 3"]);
+  reports.exportReportCSV("rank-weeks", { rankHistory });
+  assert.deepEqual(csv.trim().split("\r\n\r\n"), [1, 3, 1].map((rank, i) =>
+    `Tuần ${i + 1}\r\nNhóm lớp,Lớp,Hạng\r\nChưa phân nhóm,6A,${rank}`));
   reports.exportReportCSV("rank-counts", { rankHistory });
   const header = "Hạng trong nhóm,Số lần,Các tuần đạt hạng";
   assert.deepEqual(csv.trim().split("\r\n"), [
