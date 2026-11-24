@@ -76,10 +76,13 @@
         counts.get(row.rank).push(row.week);
       }
       return {
-        head: ["Lớp", "Hạng trong nhóm", "Số lần", "Các tuần đạt hạng"],
-        rows: [...classes.values()].sort((a, b) => a.name.localeCompare(b.name, "vi", { numeric: true }))
-          .flatMap(({ name, counts }) => [...counts].sort(([a], [b]) => a - b)
-            .map(([rank, weeks]) => [name, rank, weeks.length, weeks.join(", ")])),
+        head: ["Hạng trong nhóm", "Số lần", "Các tuần đạt hạng"],
+        groups: [...classes.values()].sort((a, b) => a.name.localeCompare(b.name, "vi", { numeric: true }))
+          .map(({ name, counts }) => ({
+            name,
+            rows: [...counts].sort(([a], [b]) => a - b)
+              .map(([rank, weeks]) => [rank, weeks.length, weeks.join(", ")]),
+          })),
       };
     }
 
@@ -99,9 +102,11 @@
       const historyReport = type === "rank-weeks" || type === "rank-counts";
       if (historyReport) {
         const history = reportHistory(type, d.rankHistory);
-        const { head, rows } = rankTable(type, history);
-        body = rows.length ? simpleTable(head, rows) : "<p>Chưa có xếp hạng chính thức trong phạm vi đã chọn.</p>";
-        if (rows.length && type === "rank-weeks") {
+        const { head, rows, groups } = rankTable(type, history);
+        if (!history.length) body = "<p>Chưa có xếp hạng chính thức trong phạm vi đã chọn.</p>";
+        else if (groups) {
+          body = groups.map((group) => `<section><h3>Lớp ${esc(group.name)}</h3>${simpleTable(head, group.rows)}</section>`).join("");
+        } else {
           body = '<p>Vàng: hạng 1. Đỏ nhạt: hạng cuối trong nhóm.</p><table><thead><tr>' +
             head.map((label) => `<th>${label}</th>`).join("") + "</tr></thead><tbody>" +
             rows.map((cells, i) => `<tr>${cells.map((cell, j) => {
@@ -197,7 +202,14 @@
       let head = [],
         rows = [];
       if (type === "rank-weeks" || type === "rank-counts") {
-        ({ head, rows } = rankTable(type, reportHistory(type, d.rankHistory)));
+        const table = rankTable(type, reportHistory(type, d.rankHistory));
+        head = table.head;
+        rows = table.rows || [];
+        if (table.groups?.length) {
+          [head, ...rows] = table.groups.flatMap((group, index) => [
+            ...(index ? [[]] : []), ["Lớp", group.name], table.head, ...group.rows,
+          ]);
+        }
       } else if (type === "faults" || type === "fault-frequency") {
         const table = faultTable(type, d);
         ({ head, rows } = table);
